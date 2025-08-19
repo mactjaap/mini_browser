@@ -106,8 +106,8 @@ int main(void) {
         SDL_DestroyWindow(win); SDL_Quit(); return 0;
     }
 
-    const char *URL_HTML = "https://httpbin.org/html";
-    const char *URL_TEXT = "https://example.org/";
+    const char *URL_HTML = "https://macip.net";
+    const char *URL_TEXT = "https://why2025.org/";
     const char *url = URL_HTML;
 
     int need_fetch = 1;

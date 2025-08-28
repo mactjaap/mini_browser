@@ -1,8 +1,5 @@
 # mini_browser
-Mini browser for the WHY2025 badge
-
-
-# mini_browser — tiny text-mode web for the WHY2025 badge
+tiny text-mode web for the WHY2025 badge
 
 **mini_browser** is a ridiculously small, fast, text-centric browser built for the WHY2025 badge.  
 It fetches pages with `libcurl`, strips them down to text, collects links, and renders everything with a 5×7 bitmap font via SDL.

@@ -95,7 +95,7 @@ It fetches pages with `libcurl`, strips them down to text, collects links, and r
 
 ---
 
-## 🧭 Nerdy sites to try
+## 🧭 Sites to try
 
 - Wikipedia: `https://en.wikipedia.org/wiki/Main_Page`  
   (or the mobile view: `https://en.m.wikipedia.org/`)

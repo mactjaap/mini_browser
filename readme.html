@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>mini_browser — WHY2025 badge</title>
+</head>
+<body>
+
+<h1>mini_browser — tiny text-mode web for the WHY2025 badge</h1>
+
+<p><b>mini_browser</b> is a small, fast, text-centric browser built for the WHY2025 badge.<br>
+It fetches pages with libcurl, strips them down to text, collects links, and renders everything with a 5×7 bitmap font via SDL.</p>
+
+<hr>
+
+<h2>What it can do</h2>
+<ul>
+<li>Follow links — Every &lt;a href&gt; is collected and numbered like [12]. Use Tab / Shift+Tab to select, Enter to open.</li>
+<li>Type URLs directly — Type in the address bar; Enter to go. Bare hosts auto-expand (e.g. example.org → https://example.org).</li>
+<li>Google search box — A minimal search control is baked in for Google’s homepage.</li>
+<li>Redirects — Handles 3xx redirects.</li>
+<li>Relative URLs — Resolves paths like /foo, ../bar, //host/…</li>
+<li>Entity decoding — Decodes &amp;amp; &amp;lt; &amp;gt; &amp;quot; &#39;</li>
+<li>Keyboard-only — Optimized for the badge keyboard.</li>
+</ul>
+
+<h2>Keys & shortcuts</h2>
+<ul>
+<li>Type: edit URL/search field</li>
+<li>Enter: open typed URL or selected link</li>
+<li>Backspace: delete in the address bar</li>
+<li>Tab / Shift+Tab: next/previous link</li>
+<li>↑ / k: scroll up</li>
+<li>↓ / j: scroll down</li>
+<li>PageUp / PageDown: faster scrolling</li>
+<li>Home: jump to top</li>
+<li>Ctrl+R: reload</li>
+<li>Ctrl+Q / Esc: quit</li>
+<li>Ctrl+H: open https://httpbin.org/html</li>
+<li>Ctrl+E: open https://badge.why2025.org/</li>
+</ul>
+
+<h2>How it works</h2>
+<ol>
+<li>Fetch — libcurl downloads up to MAX_BYTES (16 KB by default) with timeouts.</li>
+<li>Parse — A tiny HTML walker:
+  <ul>
+  <li>Skips &lt;head&gt;, &lt;script&gt;, &lt;style&gt;</li>
+  <li>Emits text, collapses whitespace, decodes entities</li>
+  <li>Captures &lt;a href&gt; targets, appends numbered markers like [7]</li>
+  <li>Resolves relative URLs against the current page</li>
+  </ul>
+</li>
+<li>Wrap — Text is wrapped to display width (monospace 5×7 font).</li>
+<li>Render — SDL draws the URL bar and text content; navigation by keyboard.</li>
+</ol>
+
+<h2>Google search (minimal)</h2>
+<p>On www.google.com, the browser exposes a minimal search input:</p>
+<ul>
+<li>Press Enter while the search box is selected, type your query, Enter again</li>
+<li>Navigates to https://www.google.com/search?q=…</li>
+<li>You can also type https://www.google.com/search?q=your+query directly in the bar</li>
+</ul>
+<p><b>Tip:</b> If you mainly search, set the start URL to <code>https://www.google.com/search?q=</code> and just type your terms after q=.</p>
+
+<h2>Known limits</h2>
+<ul>
+<li>No CSS/JS/Images — text only, scripts/styles skipped.</li>
+<li>ASCII-first — Non-ASCII glyphs simplified, unknowns → ?</li>
+<li>No cookies/sessions — no persistent jar.</li>
+<li>Body truncated to MAX_BYTES (default 16 KB).</li>
+</ul>
+
+<h2>Nerdy sites to try</h2>
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/Main_Page">Wikipedia</a></li>
+<li><a href="https://en.m.wikipedia.org/">Wikipedia mobile</a></li>
+<li><a href="https://curl.se/">curl</a></li>
+<li><a href="https://www.openbsd.org/">OpenBSD</a></li>
+<li><a href="https://sqlite.org/docs.html">SQLite docs</a></li>
+<li><a href="https://man7.org/linux/man-pages/">Linux man pages</a></li>
+<li><a href="https://www.rfc-editor.org/rfc/">RFC Editor</a></li>
+<li><a href="https://news.ycombinator.com/">Hacker News</a></li>
+<li><a href="http://cat-v.org/">cat-v (Plan 9)</a></li>
+<li><a href="https://www.kernel.org/">Linux kernel</a></li>
+<li><a href="https://busybox.net/">BusyBox</a></li>
+<li><a href="https://www.lua.org/">Lua</a></li>
+<li><a href="https://musl.libc.org/">musl libc</a></li>
+<li><a href="https://github.com/">GitHub</a> (use raw URLs for text)</li>
+</ul>
+
+<h2>Navigation quick-reference</h2>
+<ul>
+<li>Open a link: Tab to [n], Enter</li>
+<li>Back to typing: start typing; selection clears</li>
+<li>Reload: Ctrl+R</li>
+<li>Quit: Ctrl+Q or Esc</li>
+</ul>
+
+<h2>Credits</h2>
+<p>Built on BadgeVMS, SDL, and libcurl.<br>
+Font: custom 5×7 ASCII bitmap.<br>
+Crafted for the WHY2025 badge by the community.</p>
+
+</body>
+</html>

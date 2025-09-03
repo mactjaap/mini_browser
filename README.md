@@ -102,3 +102,4 @@ These dedicated keys provide instant navigation:
 - Built on **BadgeVMS**, **SDL**, and **libcurl**.  
 - Font: custom **5×7 ASCII bitmap**.  
 - Developed for the WHY2025 badge community.
+- Lots of copy and paste example code .... but it seems to work.

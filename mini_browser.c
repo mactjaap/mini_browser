@@ -21,14 +21,22 @@
 #define MAX_LINKS     128
 
 /* ---------- Home + special-key targets ---------- */
-#define HOME_URL          "https://urlvanish.com/47b2c6ec"
-#define SPECIAL_URL_124   "https://vanegten.com"
-#define SPECIAL_URL_125   "https://www.google.com"
+#define HOME_URL          "http://bit.ly/4n6t9aO"
+#define SPECIAL_URL_124   "https://text.npr.org"
+#define SPECIAL_URL_125   "https://news.ycombinator.com/"
+#define SPECIAL_URL_126   "http://www.textfiles.com/"
+#define SPECIAL_URL_127   "https://en.m.wikipedia.org/"
+#define SPECIAL_URL_128   "https://ohmeadhbh.github.io/bobcat/"
+#define SPECIAL_URL_129   "https://greycoder.com/a-list-of-text-only-new-sites/"
 
 /* ---------- Accelerator + special scancodes ---------- */
 #define SC_ACCELERATOR    ((SDL_Scancode)0xE3)  /* your keyboard's special key */
 #define SC_SPECIAL_124    ((SDL_Scancode)0x124)
 #define SC_SPECIAL_125    ((SDL_Scancode)0x125)
+#define SC_SPECIAL_126    ((SDL_Scancode)0x126)
+#define SC_SPECIAL_127    ((SDL_Scancode)0x127)
+#define SC_SPECIAL_128    ((SDL_Scancode)0x128)
+#define SC_SPECIAL_129    ((SDL_Scancode)0x129)
 
 /* ---------- 5x7 bitmap font (ASCII 32..127) ---------- */
 static const unsigned char font5x7[96][5] = {
@@ -646,7 +654,7 @@ int main(void) {
                     continue;
                 }
 
-                /* Special one-shot keys -> direct navigate */
+                /* Special one-shot keys -> direct navigate. Top of WHY2025 badge keyboard  [] /\ X O & <>  */
                 if (sc == SC_SPECIAL_124) {
                     strncpy(url_buf, SPECIAL_URL_124, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
@@ -663,6 +671,38 @@ int main(void) {
                     inhibit_text_once = true;
                     continue;
                 }
+                if (sc == SC_SPECIAL_126) {
+                    strncpy(url_buf, SPECIAL_URL_126, URL_MAX);
+                    url_buf[URL_MAX-1] = 0;
+                    need_fetch = 1;
+                    sel_link = -1;
+                    inhibit_text_once = true;
+                    continue;
+                }       
+                if (sc == SC_SPECIAL_127) {
+                    strncpy(url_buf, SPECIAL_URL_127, URL_MAX);
+                    url_buf[URL_MAX-1] = 0;
+                    need_fetch = 1;
+                    sel_link = -1;
+                    inhibit_text_once = true;
+                    continue;
+                }
+                if (sc == SC_SPECIAL_128) {
+                    strncpy(url_buf, SPECIAL_URL_128, URL_MAX);
+                    url_buf[URL_MAX-1] = 0;
+                    need_fetch = 1;
+                    sel_link = -1;
+                    inhibit_text_once = true;
+                    continue;
+                }
+                if (sc == SC_SPECIAL_129) {
+                    strncpy(url_buf, SPECIAL_URL_129, URL_MAX);
+                    url_buf[URL_MAX-1] = 0;
+                    need_fetch = 1;
+                    sel_link = -1;
+                    inhibit_text_once = true;
+                    continue;
+                } 
 
                 /* Accelerator combos (E,H,R,Q) */
                 if (accel_down) {

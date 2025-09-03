@@ -91,7 +91,6 @@ These dedicated keys provide instant navigation:
 - [RFC Editor](https://www.rfc-editor.org/rfc/)  
 - [Plan 9 / cat-v](http://cat-v.org/)  
 - [Kernel.org](https://www.kernel.org/)  
-- [BusyBox](https://busybox.net/)  
 - [Lua](https://www.lua.org/)  
 - [musl libc](https://musl.libc.org/)
 

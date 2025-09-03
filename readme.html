@@ -1,109 +1,131 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>mini_browser — WHY2025 badge</title>
+  <meta charset="utf-8">
+  <title>Mini Browser</title>
 </head>
 <body>
+<h1>Mini Browser</h1>
 
-<h1>mini_browser — tiny text-mode web for the WHY2025 badge</h1>
+<p>A compact, text-oriented web browser for the WHY2025 badge.</p>
 
-<p><b>mini_browser</b> is a small, fast, text-centric browser built for the WHY2025 badge.<br>
-It fetches pages with libcurl, strips them down to text, collects links, and renders everything with a 5×7 bitmap font via SDL.</p>
+<p><code>Mini Browser</code> is a lightweight, SDL-based browser that retrieves and renders plain text web pages.
+It is designed for constrained environments where speed, memory efficiency, and simplicity are essential.</p>
 
 <hr>
 
-<!-- https://urlvanish.com/47b2c6ec -->
+<h2>Features</h2>
 
-<h2>What it can do</h2>
 <ul>
-<li>Follow links — Every &lt;a href&gt; is collected and numbered like [12]. Use Tab / Shift+Tab to select, Enter to open.</li>
-<li>Type URLs directly — Type in the address bar; Enter to go. Bare hosts auto-expand (e.g. example.org → https://example.org).</li>
-<li>Google search box — A minimal search control is baked in for Google’s homepage.</li>
-<li>Redirects — Handles 3xx redirects.</li>
-<li>Relative URLs — Resolves paths like /foo, ../bar, //host/…</li>
-<li>Entity decoding — Decodes &amp;amp; &amp;lt; &amp;gt; &amp;quot; &#39;</li>
-<li>Keyboard-only — Optimized for the badge keyboard.</li>
+  <li><b>Link navigation</b><br>
+      All &lt;a href&gt; targets are extracted and indexed numerically as [n].<br>
+      Use Tab / Shift+Tab to select a link, and Enter to open it.</li>
+
+  <li><b>Direct URL input</b><br>
+      Type into the address bar, press Enter to navigate.<br>
+      Bare hostnames are automatically expanded (e.g. example.org -&gt; https://example.org).</li>
+
+  <li><b>Redirect handling</b><br>
+      Supports standard HTTP 3xx redirects.</li>
+
+  <li><b>Relative URL resolution</b><br>
+      Handles relative paths (/foo, ../bar, //host/...) against the active base URL.</li>
+
+  <li><b>Entity decoding</b><br>
+      Decodes common HTML entities (&amp;amp;, &amp;lt;, &amp;gt;, &amp;quot;, &#39;).</li>
+
+  <li><b>Keyboard-only interface</b><br>
+      Fully controlled using the badge keyboard.</li>
 </ul>
 
-<h2>Keys & shortcuts</h2>
+<hr>
+
+<h2>Keyboard Shortcuts</h2>
+
 <ul>
-<li>Type: edit URL/search field</li>
-<li>Enter: open typed URL or selected link</li>
-<li>Backspace: delete in the address bar</li>
-<li>Tab / Shift+Tab: next/previous link</li>
-<li>↑ / k: scroll up</li>
-<li>↓ / j: scroll down</li>
-<li>PageUp / PageDown: faster scrolling</li>
-<li>Home: jump to top</li>
-<li>Ctrl+R: reload</li>
-<li>Ctrl+Q / Esc: quit</li>
-<li>Ctrl+H: open https://httpbin.org/html</li>
-<li>Ctrl+E: open https://badge.why2025.org/</li>
+  <li><b>Typing</b>: edit URL/search field</li>
+  <li><b>Enter</b>: open typed URL or currently selected link</li>
+  <li><b>Backspace</b>: delete character in address bar</li>
+  <li><b>Tab / Shift+Tab</b>: select next/previous link</li>
+  <li><b>Up / k</b>: scroll up</li>
+  <li><b>Down / j</b>: scroll down</li>
+  <li><b>PageUp / PageDown</b>: faster scrolling</li>
+  <li><b>Home</b>: jump to top of page</li>
+  <li><b>Esc</b>: quit</li>
+  <li><b>Special keys</b>: jump directly to predefined sites (see below)</li>
 </ul>
 
-<h2>How it works</h2>
-<ol>
-<li>Fetch — libcurl downloads up to MAX_BYTES (16 KB by default) with timeouts.</li>
-<li>Parse — A tiny HTML walker:
-  <ul>
-  <li>Skips &lt;head&gt;, &lt;script&gt;, &lt;style&gt;</li>
-  <li>Emits text, collapses whitespace, decodes entities</li>
-  <li>Captures &lt;a href&gt; targets, appends numbered markers like [7]</li>
-  <li>Resolves relative URLs against the current page</li>
-  </ul>
-</li>
-<li>Wrap — Text is wrapped to display width (monospace 5×7 font).</li>
-<li>Render — SDL draws the URL bar and text content; navigation by keyboard.</li>
-</ol>
+<hr>
 
-<h2>Google search (minimal)</h2>
-<p>On www.google.com, the browser exposes a minimal search input:</p>
-<ul>
-<li>Press Enter while the search box is selected, type your query, Enter again</li>
-<li>Navigates to https://www.google.com/search?q=…</li>
-<li>You can also type https://www.google.com/search?q=your+query directly in the bar</li>
-</ul>
-<p><b>Tip:</b> If you mainly search, set the start URL to <code>https://www.google.com/search?q=</code> and just type your terms after q=.</p>
+<h2>Special Keys</h2>
 
-<h2>Known limits</h2>
+<p>These dedicated keys provide instant navigation:</p>
+
 <ul>
-<li>No CSS/JS/Images — text only, scripts/styles skipped.</li>
-<li>ASCII-first — Non-ASCII glyphs simplified, unknowns → ?</li>
-<li>No cookies/sessions — no persistent jar.</li>
-<li>Body truncated to MAX_BYTES (default 16 KB).</li>
+  <li>[SQUARE / RED] &rarr; <a href="http://bit.ly/4n6t9aO">Home</a></li>
+  <li>[TRIANGLE / ORANGE] &rarr; <a href="https://text.npr.org">NPR Text</a></li>
+  <li>[CROSS / YELLOW] &rarr; <a href="https://news.ycombinator.com/">Hacker News</a></li>
+  <li>[CIRCLE / GREEN] &rarr; <a href="http://www.textfiles.com/">Textfiles Archive</a></li>
+  <li>[CLOUD / BLUE] &rarr; <a href="https://en.m.wikipedia.org/">Wikipedia (mobile)</a></li>
+  <li>[DIAMOND / PURPLE] &rarr; <a href="https://ohmeadhbh.github.io/bobcat/">Bobcat Browser</a></li>
+  <li>[EXTRA 1] &rarr; <a href="https://greycoder.com/a-list-of-text-only-new-sites/">Greycoder Text News</a></li>
 </ul>
 
-<h2>Nerdy sites to try</h2>
+<hr>
+
+<h2>Implementation Overview</h2>
+
 <ul>
-<li><a href="https://en.wikipedia.org/wiki/Main_Page">Wikipedia</a></li>
-<li><a href="https://en.m.wikipedia.org/">Wikipedia mobile</a></li>
-<li><a href="https://curl.se/">curl</a></li>
-<li><a href="https://www.openbsd.org/">OpenBSD</a></li>
-<li><a href="https://sqlite.org/docs.html">SQLite docs</a></li>
-<li><a href="https://man7.org/linux/man-pages/">Linux man pages</a></li>
-<li><a href="https://www.rfc-editor.org/rfc/">RFC Editor</a></li>
-<li><a href="https://news.ycombinator.com/">Hacker News</a></li>
-<li><a href="http://cat-v.org/">cat-v (Plan 9)</a></li>
-<li><a href="https://www.kernel.org/">Linux kernel</a></li>
-<li><a href="https://busybox.net/">BusyBox</a></li>
-<li><a href="https://www.lua.org/">Lua</a></li>
-<li><a href="https://musl.libc.org/">musl libc</a></li>
-<li><a href="https://github.com/">GitHub</a> (use raw URLs for text)</li>
+  <li><b>Fetch</b>: pages retrieved with libcurl (up to 16 KB by default).</li>
+  <li><b>Parse</b>: minimal HTML walker:
+    <ul>
+      <li>skips &lt;head&gt;, &lt;script&gt;, &lt;style&gt;</li>
+      <li>collapses whitespace and decodes entities</li>
+      <li>extracts and indexes links</li>
+    </ul>
+  </li>
+  <li><b>Wrap</b>: text wrapped to fit viewport width using a fixed 5x7 bitmap font.</li>
+  <li><b>Render</b>: SDL draws the address bar, separators, and text viewport.</li>
 </ul>
 
-<h2>Navigation quick-reference</h2>
+<hr>
+
+<h2>Known Limitations</h2>
+
 <ul>
-<li>Open a link: Tab to [n], Enter</li>
-<li>Back to typing: start typing; selection clears</li>
-<li>Reload: Ctrl+R</li>
-<li>Quit: Ctrl+Q or Esc</li>
+  <li><b>No CSS/JS/Images</b> — purely text output.</li>
+  <li><b>ASCII focus</b> — non-ASCII simplified to ?.</li>
+  <li><b>No cookies or sessions</b> — no persistence across requests.</li>
+  <li><b>Content cap</b> — maximum page size 16 KB.</li>
 </ul>
+
+<hr>
+
+<h2>Recommended Sites</h2>
+
+<ul>
+  <li><a href="https://en.m.wikipedia.org/">Wikipedia (mobile)</a></li>
+  <li><a href="https://news.ycombinator.com/">Hacker News</a></li>
+  <li><a href="https://www.openbsd.org/">OpenBSD</a></li>
+  <li><a href="https://sqlite.org/docs.html">SQLite Documentation</a></li>
+  <li><a href="https://man7.org/linux/man-pages/">Linux Man Pages</a></li>
+  <li><a href="https://www.rfc-editor.org/rfc/">RFC Editor</a></li>
+  <li><a href="http://cat-v.org/">Plan 9 / cat-v</a></li>
+  <li><a href="https://www.kernel.org/">Kernel.org</a></li>
+  <li><a href="https://www.lua.org/">Lua</a></li>
+  <li><a href="https://musl.libc.org/">musl libc</a></li>
+</ul>
+
+<hr>
 
 <h2>Credits</h2>
-<p>Built on BadgeVMS, SDL, and libcurl.<br>
-Font: custom 5×7 ASCII bitmap.<br>
-Crafted for the WHY2025 badge by the community.</p>
+
+<ul>
+  <li>Built on <b>BadgeVMS</b>, <b>SDL</b>, and <b>libcurl</b>.</li>
+  <li>Font: custom <b>5x7 ASCII bitmap</b>.</li>
+  <li>Developed for the WHY2025 badge community.</li>
+  <li>Lots of copy and paste example code ... but it seems to work.</li>
+</ul>
 
 </body>
 </html>

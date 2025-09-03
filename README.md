@@ -37,10 +37,8 @@ It is designed for constrained environments where speed, memory efficiency, and 
 - **Enter**: open typed URL or currently selected link  
 - **Backspace**: delete character in address bar  
 - **Tab / Shift+Tab**: select next/previous link  
-- **↑ / k**: scroll up  
-- **↓ / j**: scroll down  
-- **PageUp / PageDown**: faster scrolling  
-- **Home**: jump to top of page  
+- **↑: scroll up  
+- **↓: scroll down  
 - **Esc**: quit  
 - **Special keys**: jump directly to predefined sites (see below)
 

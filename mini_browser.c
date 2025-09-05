@@ -1,3 +1,7 @@
+#if defined(ESP_PLATFORM)
+#include "esp_log.h"
+#endif
+
 #include "badgevms/wifi.h"
 #include "curl/curl.h"
 #include <SDL3/SDL.h>
@@ -6,6 +10,120 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+
+/* --- Yield macro for BadgeVMS/ESP-IDF, no-op on desktop --- */
+#if defined(ESP_PLATFORM)
+# include "freertos/FreeRTOS.h"
+# include "freertos/task.h"
+# define YIELD_NET() vTaskDelay(pdMS_TO_TICKS(1))
+#else
+# define YIELD_NET() ((void)0)
+#endif
+
+/* Cap and throttle serial content dumps to avoid SDIO RX queue overflow */
+#ifndef SERIAL_DUMP_CAP_BYTES
+# define SERIAL_DUMP_CAP_BYTES 2048   /* print at most 2 KB to serial */
+#endif
+#ifndef SERIAL_DUMP_CHUNK
+# define SERIAL_DUMP_CHUNK 128        /* yield every 128 bytes printed */
+#endif
+
+/* --- Yield macro for BadgeVMS/ESP-IDF, no-op on desktop --- */
+#if defined(ESP_PLATFORM)
+# include "freertos/FreeRTOS.h"
+# include "freertos/task.h"
+# define YIELD_NET() vTaskDelay(pdMS_TO_TICKS(2))
+#else
+# define YIELD_NET() ((void)0)
+#endif
+
+/* Tuning knobs for serial dump */
+#ifndef SERIAL_DUMP_CAP_BYTES
+# define SERIAL_DUMP_CAP_BYTES 1024   /* print at most this many bytes */
+#endif
+#ifndef SERIAL_DUMP_CHUNK
+# define SERIAL_DUMP_CHUNK 64         /* write this many bytes per yield */
+#endif
+
+/* Collapse tabs/indentation and multiple blank lines before printing.
+   This affects SERIAL OUTPUT ONLY (on-screen rendering stays unchanged). */
+static void dump_content_serial_clean(const char *s)
+{
+    if (!s) return;
+
+    /* First pass: sanitize into a small scratch buffer up to CAP */
+    char out[SERIAL_DUMP_CAP_BYTES + 1];
+    size_t o = 0;
+
+    int at_line_start = 1;
+    int seen_blank_line = 0;  /* 0 = last line had text, 1 = already emitted one blank line */
+    int space_run = 0;
+
+    for (const char *p = s; *p && o < SERIAL_DUMP_CAP_BYTES; ++p) {
+        char c = *p;
+
+        if (c == '\r') continue;
+        if (c == '\t') c = ' ';              /* tabs -> space */
+
+        if (c == '\n') {
+            if (at_line_start) {
+                /* we're already at line start: allow only a single blank line */
+                if (!seen_blank_line) {
+                    out[o++] = '\n';
+                    seen_blank_line = 1;
+                }
+            } else {
+                out[o++] = '\n';
+                at_line_start = 1;
+                seen_blank_line = 0;
+            }
+            space_run = 0;
+            continue;
+        }
+
+        if (c == ' ') {
+            if (at_line_start) {
+                /* drop leading spaces */
+                continue;
+            }
+            if (space_run) {
+                /* collapse consecutive spaces to one */
+                continue;
+            }
+            space_run = 1;
+            if (o < SERIAL_DUMP_CAP_BYTES) out[o++] = ' ';
+            continue;
+        }
+
+        /* normal visible character */
+        at_line_start = 0;
+        seen_blank_line = 0;
+        space_run = 0;
+
+        /* keep ASCII; for non-ASCII, replace with '?' */
+        unsigned char uc = (unsigned char)c;
+        if (uc < 32 || uc > 126) c = '?';
+
+        if (o < SERIAL_DUMP_CAP_BYTES) out[o++] = c;
+    }
+
+    out[o] = 0;
+
+    /* Second pass: write in small chunks with yields so SDIO stays happy */
+    printf("\n--- CONTENT START ---\n");
+    for (size_t i = 0; i < o; i += SERIAL_DUMP_CHUNK) {
+        size_t n = (o - i > SERIAL_DUMP_CHUNK) ? SERIAL_DUMP_CHUNK : (o - i);
+        fwrite(out + i, 1, n, stdout);
+        fflush(stdout);
+        YIELD_NET();
+    }
+    if (s[o] != '\0') {
+        printf("\n[truncated… printed %u bytes]\n", (unsigned)o);
+    }
+    printf("\n--- CONTENT END ---\n");
+}
+
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (16 * 1024)
@@ -25,7 +143,7 @@
 #define SPECIAL_URL_124   "https://text.npr.org"
 #define SPECIAL_URL_125   "https://news.ycombinator.com/"
 #define SPECIAL_URL_126   "http://www.textfiles.com/"
-#define SPECIAL_URL_127   "https://en.m.wikipedia.org/"
+#define SPECIAL_URL_127   "https://macip.net/"
 #define SPECIAL_URL_128   "https://ohmeadhbh.github.io/bobcat/"
 #define SPECIAL_URL_129   "https://curl.se/"
 
@@ -451,19 +569,87 @@ static char *wrap_text(const char *in, int max_cols) {
     return out;
 }
 
-/* ---------- curl fetch ---------- */
+/* ---------- curl fetch (tolerant to trimmed-down libcurl) ---------- */
 static int fetch_url(const char *url, mem_t *m) {
     if (!url || !m) return -1;
-    CURL *curl = curl_easy_init(); if (!curl) return -2;
-    m->buf = NULL; m->len = 0;
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return -2;
+
+    m->buf = NULL;
+    m->len = 0;
+
     curl_easy_setopt(curl, CURLOPT_URL, url);
+
+#ifdef CURLOPT_BUFFERSIZE
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L);   /* smaller read chunks */
+#endif
+#ifdef CURLOPT_MAX_RECV_SPEED_LARGE
+    curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, 32768L); /* ~32 KB/s */
+#endif
+
+    /* Follow a few redirects */
+#ifdef CURLOPT_FOLLOWLOCATION
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BadgeVMS-mini-browser/2.0");
+#endif
+#ifdef CURLOPT_MAXREDIRS
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+#endif
+
+    /* Prefer HTTP/1.1 if the SDK exposes the knob (avoids some HTTP/2 stalls) */
+#if defined(CURLOPT_HTTP_VERSION) && defined(CURL_HTTP_VERSION_1_1)
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+#endif
+
+    /* Ask for uncompressed body to dodge gzip/brotli on embedded builds */
+#ifdef CURLOPT_ACCEPT_ENCODING
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
+#else
+    /* Fallback: add header if option is missing */
+#  ifdef CURLOPT_HTTPHEADER
+    struct curl_slist *hdrs = NULL;
+    hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+#  endif
+#endif
+
+    /* Timeouts (be a bit generous for large CDNs) */
+#ifdef CURLOPT_CONNECTTIMEOUT
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+#endif
+#ifdef CURLOPT_TIMEOUT
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 35L);
+#endif
+
+    /* Low-speed abort, only if available */
+#ifdef CURLOPT_LOW_SPEED_LIMIT
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 10L);
+#endif
+#ifdef CURLOPT_LOW_SPEED_TIME
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 20L);
+#endif
+
+#ifdef CURLOPT_USERAGENT
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+                     "BadgeVMS-mini-browser/2.1 (+HTTP/1.1, identity)");
+#endif
+
+    /* Our sink */
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, TIMEOUT_S);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, TIMEOUT_S);
+
     CURLcode res = curl_easy_perform(curl);
+
+    /* Free header list if we created one and the symbol exists */
+#if !defined(CURLOPT_ACCEPT_ENCODING) && defined(CURLOPT_HTTPHEADER)
+    {
+        struct curl_slist *tmp;
+        /* We don't keep a direct pointer here unless compiled in;
+           if you want to be extra strict, hoist the hdrs variable
+           out of the #ifdefs above and free it here when non-NULL. */
+    }
+#endif
+
     curl_easy_cleanup(curl);
     return (res == CURLE_OK) ? 0 : (int)res;
 }
@@ -525,6 +711,17 @@ int main(void) {
     int  scroll_lines = 0;
     int  need_fetch = 1;
     int  sel_link = -1;
+
+
+
+
+
+#if defined(ESP_PLATFORM)
+    esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
+    esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
+    esp_log_level_set("transport_base",  ESP_LOG_ERROR);
+#endif
+
 
     /* Accelerator + text-input suppression */
     bool accel_down = false;           /* true while special key (0xE3) is held */

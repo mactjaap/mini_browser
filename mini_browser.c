@@ -22,7 +22,7 @@
 #endif
 
 /* ---------- Limits & layout ---------- */
-#define MAX_BYTES     (16 * 1024)
+#define MAX_BYTES     (64 * 1024)
 #define TIMEOUT_S     10
 #define URL_MAX       256
 #define PAD_LR        10

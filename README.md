@@ -29,6 +29,10 @@ It is designed for constrained environments where speed, memory efficiency, and 
 - **Keyboard-only interface**  
   Fully controlled using the badge keyboard.
 
+- **URL bar with icon**
+  - Cyan square at the top-left with a **yellow magnifying glass** icon.
+  - Long URLs are left-clipped with an ellipsis (`...example.com/page`).
+
 ---
 
 ## Keyboard Shortcuts

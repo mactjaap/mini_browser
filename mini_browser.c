@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 /* --- Yield macro for BadgeVMS/ESP-IDF, no-op on desktop --- */
 #if defined(ESP_PLATFORM)
 # include "freertos/FreeRTOS.h"
@@ -124,7 +123,6 @@ static void dump_content_serial_clean(const char *s)
     printf("\n--- CONTENT END ---\n");
 }
 
-
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (16 * 1024)
 #define TIMEOUT_S     10
@@ -138,11 +136,38 @@ static void dump_content_serial_clean(const char *s)
 #define LINE_SPACING  2
 #define MAX_LINKS     128
 
+/* --------- simple history (LIFO) --------- */
+#define HIST_MAX 16
+static char history[HIST_MAX][URL_MAX];
+static int  hist_top = 0; /* number of entries in stack */
+
+static void hist_push(const char *u) {
+    if (!u || !*u) return;
+    if (hist_top < HIST_MAX) {
+        strncpy(history[hist_top], u, URL_MAX);
+        history[hist_top][URL_MAX-1] = 0;
+        hist_top++;
+    } else {
+        /* full: drop oldest */
+        memmove(history, history + 1, (HIST_MAX - 1) * URL_MAX);
+        strncpy(history[HIST_MAX - 1], u, URL_MAX);
+        history[HIST_MAX - 1][URL_MAX-1] = 0;
+    }
+}
+
+static int hist_pop(char *out /* URL_MAX */) {
+    if (hist_top == 0) return 0;
+    hist_top--;
+    strncpy(out, history[hist_top], URL_MAX);
+    out[URL_MAX-1] = 0;
+    return 1;
+}
+
 /* ---------- Home + special-key targets ---------- */
 #define HOME_URL          "https://minibrowser.tjaap.com"
 #define SPECIAL_URL_124   "https://text.npr.org"
 #define SPECIAL_URL_125   "https://news.ycombinator.com/"
-#define SPECIAL_URL_126   "http://www.textfiles.com/"
+#define SPECIAL_URL_126   "https://ifconfig.co"
 #define SPECIAL_URL_127   "https://macip.net/"
 #define SPECIAL_URL_128   "https://ohmeadhbh.github.io/bobcat/"
 #define SPECIAL_URL_129   "https://curl.se/"
@@ -605,7 +630,6 @@ static int fetch_url(const char *url, mem_t *m) {
 #ifdef CURLOPT_ACCEPT_ENCODING
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
 #else
-    /* Fallback: add header if option is missing */
 #  ifdef CURLOPT_HTTPHEADER
     struct curl_slist *hdrs = NULL;
     hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
@@ -640,13 +664,10 @@ static int fetch_url(const char *url, mem_t *m) {
 
     CURLcode res = curl_easy_perform(curl);
 
-    /* Free header list if we created one and the symbol exists */
 #if !defined(CURLOPT_ACCEPT_ENCODING) && defined(CURLOPT_HTTPHEADER)
     {
         struct curl_slist *tmp;
-        /* We don't keep a direct pointer here unless compiled in;
-           if you want to be extra strict, hoist the hdrs variable
-           out of the #ifdefs above and free it here when non-NULL. */
+        (void)tmp; /* placeholder to keep section balanced */
     }
 #endif
 
@@ -712,16 +733,11 @@ int main(void) {
     int  need_fetch = 1;
     int  sel_link = -1;
 
-
-
-
-
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
     esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
     esp_log_level_set("transport_base",  ESP_LOG_ERROR);
 #endif
-
 
     /* Accelerator + text-input suppression */
     bool accel_down = false;           /* true while special key (0xE3) is held */
@@ -853,6 +869,7 @@ int main(void) {
 
                 /* Special one-shot keys -> direct navigate. Top of WHY2025 badge keyboard  [] /\ X O & <>  */
                 if (sc == SC_SPECIAL_124) {
+                    hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_124, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
                     need_fetch = 1;
@@ -861,6 +878,7 @@ int main(void) {
                     continue;
                 }
                 if (sc == SC_SPECIAL_125) {
+                    hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_125, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
                     need_fetch = 1;
@@ -869,14 +887,16 @@ int main(void) {
                     continue;
                 }
                 if (sc == SC_SPECIAL_126) {
+                    hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_126, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
                     need_fetch = 1;
                     sel_link = -1;
                     inhibit_text_once = true;
                     continue;
-                }       
+                }
                 if (sc == SC_SPECIAL_127) {
+                    hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_127, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
                     need_fetch = 1;
@@ -885,6 +905,7 @@ int main(void) {
                     continue;
                 }
                 if (sc == SC_SPECIAL_128) {
+                    hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_128, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
                     need_fetch = 1;
@@ -893,15 +914,16 @@ int main(void) {
                     continue;
                 }
                 if (sc == SC_SPECIAL_129) {
+                    hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_129, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
                     need_fetch = 1;
                     sel_link = -1;
                     inhibit_text_once = true;
                     continue;
-                } 
+                }
 
-                /* Accelerator combos (E,H,R,Q) */
+                /* Accelerator combos (E,H,R,Q,B) */
                 if (accel_down) {
                     switch (sc) {
                         case SDL_SCANCODE_E:
@@ -912,6 +934,7 @@ int main(void) {
                             inhibit_text_once = true;
                             break;
                         case SDL_SCANCODE_H:
+                            hist_push(page ? page->base : url_buf);
                             strncpy(url_buf, HOME_URL, URL_MAX);
                             url_buf[URL_MAX-1] = 0;
                             need_fetch = 1;
@@ -922,6 +945,17 @@ int main(void) {
                             need_fetch = 1;
                             inhibit_text_once = true;
                             break;
+                        case SDL_SCANCODE_B: {
+                            char back_url[URL_MAX];
+                            if (hist_pop(back_url)) {
+                                strncpy(url_buf, back_url, URL_MAX);
+                                url_buf[URL_MAX-1] = 0;
+                                need_fetch = 1;
+                                sel_link = -1;
+                            }
+                            inhibit_text_once = true;
+                            break;
+                        }
                         case SDL_SCANCODE_Q:
                             running = 0;
                             inhibit_text_once = true;
@@ -938,10 +972,15 @@ int main(void) {
                     case SDL_SCANCODE_RETURN:
                     case SDL_SCANCODE_KP_ENTER:
                         if (page && sel_link >= 0 && sel_link < page->link_count) {
+                            /* push current before leaving */
+                            hist_push(page ? page->base : url_buf);
+
                             strncpy(url_buf, page->links[sel_link].href, URL_MAX);
                             url_buf[URL_MAX-1]=0;
                             need_fetch = 1;
                         } else {
+                            /* typed URL: also push current before navigating */
+                            hist_push(page ? page->base : url_buf);
                             need_fetch = 1;
                         }
                         break;

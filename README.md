@@ -29,32 +29,43 @@ It is designed for constrained environments where speed, memory efficiency, and 
 - **Keyboard-only interface**  
   Fully controlled using the badge keyboard.
 
+- **URL bar with icon**
+  - Cyan square at the top-left with a **yellow magnifying glass** icon.
+  - Long URLs are left-clipped with an ellipsis (`...example.com/page`).
+
 ---
 
-## Keyboard Shortcuts
-
-- **Typing**: edit URL/search field  
-- **Enter**: open typed URL or currently selected link  
-- **Backspace**: delete character in address bar  
-- **Tab / Shift+Tab**: select next/previous link  
-- **↑** scroll up  
-- **↓** scroll down  
-- **Esc**: quit  
-- **Special keys**: jump directly to predefined sites (see below)
-
+- **Keyboard controls**
+  - **Typing**: edits the URL in the bar (ASCII only).
+  - **Enter**: navigate to typed URL, or follow the currently selected `[n]` link.
+  - **Backspace**: delete last character in the URL bar.
+  - **Scrolling**:
+    - `↓`: scroll down
+    - `↑`: scroll up
+  - **Link selection**:
+    - `Shift+Tab`: show links in pages with numbers 
+    - `Tab`: show next link
+    - `Shift+Tab`: previous link
+    - `Enter`: go to selected link
+ 
+  - **WHY key (accelerator) combos** (hold the WHY/`0xE3` key and press…):
+    - `E` — **Edit**: prefill URL with `https://`
+    - `H` — **Home**: go to home page
+    - `R` — **Reload** current page
+    - `B` — **Back** in history
+    - `Q` — **Quit**
 ---
 
 ## Special Keys
 
 These dedicated keys provide instant navigation:
 
-- 🟥 **Square** → [Home](http://bit.ly/4n6t9aO)  
-- 🔺 **Triangle** → [NPR Text](https://text.npr.org)  
-- ❌ **Cross** → [Hacker News](https://news.ycombinator.com/)  
-- 🟢 **Circle** → [Textfiles Archive](http://www.textfiles.com/)  
-- ☁️ **Cloud** → [Wikipedia (mobile)](https://en.m.wikipedia.org/)  
-- 🔷 **Diamond** → [Bobcat Browser](https://ohmeadhbh.github.io/bobcat/)  
-- ◼️ **Extra Key 1** → [Greycoder Text News](https://greycoder.com/a-list-of-text-only-new-sites/)
+- 🟥 **Square** → [NPR Text](https://text.npr.org)    
+- 🔺 **Triangle** → [Hacker News](https://news.ycombinator.com/) 
+- ❌ **Cross** →  [Hacker News](https://news.ycombinator.com/) 
+- 🟢 **Circle** → [What is my IP address?](http://ifconfig.co)  
+- ☁️ **Cloud** → [Bobcat Browser](https://ohmeadhbh.github.io/bobcat/) 
+- 🔷 **Diamond** →   [Curl(https://curl.se)
 
 ---
 

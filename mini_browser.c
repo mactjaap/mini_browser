@@ -134,7 +134,7 @@ static int hist_pop(char *out /* URL_MAX */) {
 #define SPECIAL_URL_124   "https://text.npr.org"
 #define SPECIAL_URL_125   "https://news.ycombinator.com/"
 #define SPECIAL_URL_126   "http://www.textfiles.com/"
-#define SPECIAL_URL_127   "https://macip.net/"
+#define SPECIAL_URL_127   "https://ifconfig.co"
 #define SPECIAL_URL_128   "https://ohmeadhbh.github.io/bobcat/"
 #define SPECIAL_URL_129   "https://curl.se/"
 

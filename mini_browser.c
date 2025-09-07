@@ -463,9 +463,22 @@ static int fetch_url(const char *url, mem_t *m) {
 #ifdef CURLOPT_LOW_SPEED_TIME
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 20L);
 #endif
-#ifdef CURLOPT_USERAGENT
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BadgeVMS-mini-browser/2.1 (+HTTP/1.1, identity)");
-#endif
+
+/* Build explicit headers (works even if CURLOPT_USERAGENT is ignored) */
+struct curl_slist *hdrs = NULL;
+hdrs = curl_slist_append(hdrs,
+    "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:2.1) "
+    "Gecko/20100101 BadgeBrowser/1.0 "
+    "(compatible; MiniBrowser/1.0; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+hdrs = curl_slist_append(hdrs,
+    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+hdrs = curl_slist_append(hdrs, "Accept-Language: en-US,en;q=0.5");
+hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
+curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+
+
+
+
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);

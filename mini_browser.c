@@ -22,10 +22,10 @@
 
 /* Cap and throttle serial content dumps to avoid SDIO RX queue overflow */
 #ifndef SERIAL_DUMP_CAP_BYTES
-# define SERIAL_DUMP_CAP_BYTES 2048   /* print at most 2 KB to serial */
+# define SERIAL_DUMP_CAP_BYTES 2048
 #endif
 #ifndef SERIAL_DUMP_CHUNK
-# define SERIAL_DUMP_CHUNK 128        /* yield every 128 bytes printed */
+# define SERIAL_DUMP_CHUNK 128
 #endif
 
 /* --- Yield macro for BadgeVMS/ESP-IDF, no-op on desktop --- */
@@ -39,77 +39,43 @@
 
 /* Tuning knobs for serial dump */
 #ifndef SERIAL_DUMP_CAP_BYTES
-# define SERIAL_DUMP_CAP_BYTES 1024   /* print at most this many bytes */
+# define SERIAL_DUMP_CAP_BYTES 1024
 #endif
 #ifndef SERIAL_DUMP_CHUNK
-# define SERIAL_DUMP_CHUNK 64         /* write this many bytes per yield */
+# define SERIAL_DUMP_CHUNK 64
 #endif
 
-/* Collapse tabs/indentation and multiple blank lines before printing.
-   This affects SERIAL OUTPUT ONLY (on-screen rendering stays unchanged). */
 static void dump_content_serial_clean(const char *s)
 {
     if (!s) return;
-
-    /* First pass: sanitize into a small scratch buffer up to CAP */
     char out[SERIAL_DUMP_CAP_BYTES + 1];
     size_t o = 0;
-
-    int at_line_start = 1;
-    int seen_blank_line = 0;  /* 0 = last line had text, 1 = already emitted one blank line */
-    int space_run = 0;
+    int at_line_start = 1, seen_blank_line = 0, space_run = 0;
 
     for (const char *p = s; *p && o < SERIAL_DUMP_CAP_BYTES; ++p) {
         char c = *p;
-
         if (c == '\r') continue;
-        if (c == '\t') c = ' ';              /* tabs -> space */
-
+        if (c == '\t') c = ' ';
         if (c == '\n') {
             if (at_line_start) {
-                /* we're already at line start: allow only a single blank line */
-                if (!seen_blank_line) {
-                    out[o++] = '\n';
-                    seen_blank_line = 1;
-                }
+                if (!seen_blank_line) { out[o++] = '\n'; seen_blank_line = 1; }
             } else {
-                out[o++] = '\n';
-                at_line_start = 1;
-                seen_blank_line = 0;
+                out[o++] = '\n'; at_line_start = 1; seen_blank_line = 0;
             }
-            space_run = 0;
-            continue;
+            space_run = 0; continue;
         }
-
         if (c == ' ') {
-            if (at_line_start) {
-                /* drop leading spaces */
-                continue;
-            }
-            if (space_run) {
-                /* collapse consecutive spaces to one */
-                continue;
-            }
-            space_run = 1;
-            if (o < SERIAL_DUMP_CAP_BYTES) out[o++] = ' ';
-            continue;
+            if (at_line_start) continue;
+            if (space_run) continue;
+            space_run = 1; if (o < SERIAL_DUMP_CAP_BYTES) out[o++] = ' '; continue;
         }
-
-        /* normal visible character */
-        at_line_start = 0;
-        seen_blank_line = 0;
-        space_run = 0;
-
-        /* keep ASCII; for non-ASCII, replace with '?' */
+        at_line_start = 0; seen_blank_line = 0; space_run = 0;
         unsigned char uc = (unsigned char)c;
         if (uc < 32 || uc > 126) c = '?';
-
         if (o < SERIAL_DUMP_CAP_BYTES) out[o++] = c;
     }
-
     out[o] = 0;
 
-    /* Second pass: write in small chunks with yields so SDIO stays happy */
     printf("\n--- CONTENT START ---\n");
     for (size_t i = 0; i < o; i += SERIAL_DUMP_CHUNK) {
         size_t n = (o - i > SERIAL_DUMP_CHUNK) ? SERIAL_DUMP_CHUNK : (o - i);
@@ -117,9 +83,7 @@ static void dump_content_serial_clean(const char *s)
         fflush(stdout);
         YIELD_NET();
     }
-    if (s[o] != '\0') {
-        printf("\n[truncated… printed %u bytes]\n", (unsigned)o);
-    }
+    if (s[o] != '\0') printf("\n[truncated… printed %u bytes]\n", (unsigned)o);
     printf("\n--- CONTENT END ---\n");
 }
 
@@ -136,10 +100,14 @@ static void dump_content_serial_clean(const char *s)
 #define LINE_SPACING  2
 #define MAX_LINKS     128
 
+/* --- Logo layout --- */
+#define LOGO_W        24
+#define LOGO_LEFT_PAD (PAD_LR + LOGO_W + 6)
+
 /* --------- simple history (LIFO) --------- */
 #define HIST_MAX 16
 static char history[HIST_MAX][URL_MAX];
-static int  hist_top = 0; /* number of entries in stack */
+static int  hist_top = 0;
 
 static void hist_push(const char *u) {
     if (!u || !*u) return;
@@ -148,13 +116,11 @@ static void hist_push(const char *u) {
         history[hist_top][URL_MAX-1] = 0;
         hist_top++;
     } else {
-        /* full: drop oldest */
         memmove(history, history + 1, (HIST_MAX - 1) * URL_MAX);
         strncpy(history[HIST_MAX - 1], u, URL_MAX);
         history[HIST_MAX - 1][URL_MAX-1] = 0;
     }
 }
-
 static int hist_pop(char *out /* URL_MAX */) {
     if (hist_top == 0) return 0;
     hist_top--;
@@ -167,7 +133,7 @@ static int hist_pop(char *out /* URL_MAX */) {
 #define HOME_URL          "https://minibrowser.tjaap.com"
 #define SPECIAL_URL_124   "https://text.npr.org"
 #define SPECIAL_URL_125   "https://news.ycombinator.com/"
-#define SPECIAL_URL_126   "https://ifconfig.co"
+#define SPECIAL_URL_126   "http://www.textfiles.com/"
 #define SPECIAL_URL_127   "https://macip.net/"
 #define SPECIAL_URL_128   "https://ohmeadhbh.github.io/bobcat/"
 #define SPECIAL_URL_129   "https://curl.se/"
@@ -258,10 +224,10 @@ static size_t wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
 /* ---------- link + page model ---------- */
 typedef struct { char href[URL_MAX]; } link_t;
 typedef struct {
-    char *text;                 /* rendered text with [n] markers */
+    char *text;
     link_t links[MAX_LINKS];
     int link_count;
-    char base[URL_MAX];         /* base URL for resolution */
+    char base[URL_MAX];
 } page_t;
 
 /* ---------- UTF-8 decode + ASCII-only draw ---------- */
@@ -299,25 +265,79 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
         unsigned cp = utf8_next(s, L, &i);
         if (cp == 0) break;
         if (cp == '\n') { cx = x; cy += (CH_H + LINE_SPACING); continue; }
-        if (cp == 0xA0) cp = ' ';                 /* NBSP -> space */
-        if (cp < 32 || cp > 126) continue;        /* draw ASCII only */
+        if (cp == 0xA0) cp = ' ';
+        if (cp < 32 || cp > 126) continue;
         if (cx + CH_W > x + max_w) { cx = x; cy += (CH_H + LINE_SPACING); }
         draw_char(r, cx, cy, (char)cp);
         cx += CH_W;
     }
 }
 
-/* --- draw URL bar text in one line, clipping head with "..." if needed --- */
-static void draw_bar(SDL_Renderer *r, const char *text) {
-    int max_cols = (VIEW_W - 2*PAD_LR)/CH_W;
+/* --- tiny vector logo (magnifying glass) --- */
+static void draw_filled_hspan(SDL_Renderer *r, int x1, int x2, int y) {
+    if (x2 < x1) { int t = x1; x1 = x2; x2 = t; }
+    SDL_FRect bar = { (float)x1, (float)y, (float)(x2 - x1 + 1), 1.0f };
+    SDL_RenderFillRect(r, &bar);
+}
+/* Integer midpoint circle algorithm – no sqrtf, no libm */
+static void draw_filled_circle(SDL_Renderer *r, int cx, int cy, int R) {
+    if (R <= 0) return;
+    int x = 0, y = R;
+    int d = 1 - R;
+    while (y >= x) {
+        /* draw the four horizontal spans for this x/y pair */
+        draw_filled_hspan(r, cx - x, cx + x, cy + y);
+        draw_filled_hspan(r, cx - x, cx + x, cy - y);
+        draw_filled_hspan(r, cx - y, cx + y, cy + x);
+        draw_filled_hspan(r, cx - y, cx + y, cy - x);
+        if (d < 0) {
+            d += 2 * x + 3;
+        } else {
+            d += 2 * (x - y) + 5;
+            y--;
+        }
+        x++;
+    }
+}
+static void draw_logo(SDL_Renderer *r, int left, int top) {
+    const Uint8 bgR = 30,  bgG = 30,  bgB = 30,  bgA = 255;
+    const Uint8 fgR = 220, fgG = 220, fgB = 220, fgA = 255;
+
+    int cx = left + 12;
+    int cy = top  + 12;
+    int R  = 8;
+    int T  = 2;
+
+    /* outer ring */
+    SDL_SetRenderDrawColor(r, fgR, fgG, fgB, fgA);
+    draw_filled_circle(r, cx, cy, R);
+
+    /* inner hole */
+    SDL_SetRenderDrawColor(r, bgR, bgG, bgB, bgA);
+    draw_filled_circle(r, cx, cy, R - T);
+
+    /* handle: short 45° bar of 2px thickness */
+    SDL_SetRenderDrawColor(r, fgR, fgG, fgB, fgA);
+    for (int i = 0; i < 7; ++i) {
+        int x = cx + R - 2 + i;
+        int y = cy + R - 2 + i;
+        SDL_FRect px = { (float)x, (float)y, 2.0f, 2.0f };
+        SDL_RenderFillRect(r, &px);
+    }
+}
+
+/* --- draw URL bar text, clipping head with "..." if needed --- */
+static void draw_bar(SDL_Renderer *r, const char *text, int left_pad) {
+    int max_cols = (VIEW_W - left_pad - PAD_LR)/CH_W;
+    if (max_cols < 4) max_cols = 4;
     size_t n = strlen(text);
     char tmp[URL_MAX + 32];
     if ((int)n > max_cols) {
         const char *start = text + (n - (size_t)max_cols + 3);
         snprintf(tmp, sizeof tmp, "...%s", start);
-        draw_text(r, PAD_LR, 4, tmp, VIEW_W - PAD_LR*2);
+        draw_text(r, left_pad, 4, tmp, VIEW_W - left_pad - PAD_LR);
     } else {
-        draw_text(r, PAD_LR, 4, text, VIEW_W - PAD_LR*2);
+        draw_text(r, left_pad, 4, text, VIEW_W - left_pad - PAD_LR);
     }
 }
 
@@ -418,11 +438,11 @@ static const char *emit_entity(const char *h, char *out, size_t *o, size_t cap) 
 /* --------- href filter --------- */
 static int is_supported_href(const char *h) {
     if (!h || !*h) return 0;
-    if (h[0] == '#') return 0; /* in-page */
+    if (h[0] == '#') return 0;
     if (!strncasecmp(h, "javascript:", 11)) return 0;
     if (!strncasecmp(h, "mailto:", 7)) return 0;
     if (!strncasecmp(h, "data:", 5)) return 0;
-    return 1; /* allow http(s) and relatives */
+    return 1;
 }
 
 /* ---------- HTML -> page_t ---------- */
@@ -566,67 +586,46 @@ static char *wrap_text(const char *in, int max_cols) {
         if (c == '\r') continue;
 
         if (c == '\n') {
-            if (col == 0) {
-                if (blank_run) continue;
-                blank_run = 1;
-            } else {
-                blank_run = 0;
-            }
-            out[o++] = '\n';
-            col = 0;
-            continue;
+            if (col == 0) { if (blank_run) continue; blank_run = 1; }
+            else blank_run = 0;
+            out[o++] = '\n'; col = 0; continue;
         }
 
         if (c == ' ' && (col == 0 || out[o-1] == ' ')) continue;
 
-        if (max_cols && col >= max_cols && c == ' ') {
-            out[o++] = '\n'; col = 0; continue;
-        }
-        if (max_cols && col >= max_cols) {
-            out[o++] = '\n'; col = 0;
-        }
+        if (max_cols && col >= max_cols && c == ' ') { out[o++] = '\n'; col = 0; continue; }
+        if (max_cols && col >= max_cols) { out[o++] = '\n'; col = 0; }
 
-        out[o++] = c;
-        col++;
-        blank_run = 0;
+        out[o++] = c; col++; blank_run = 0;
     }
     out[o] = 0;
     return out;
 }
 
-/* ---------- curl fetch (tolerant to trimmed-down libcurl) ---------- */
+/* ---------- curl fetch ---------- */
 static int fetch_url(const char *url, mem_t *m) {
     if (!url || !m) return -1;
-
     CURL *curl = curl_easy_init();
     if (!curl) return -2;
 
-    m->buf = NULL;
-    m->len = 0;
-
+    m->buf = NULL; m->len = 0;
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
 #ifdef CURLOPT_BUFFERSIZE
-    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L);   /* smaller read chunks */
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L);
 #endif
 #ifdef CURLOPT_MAX_RECV_SPEED_LARGE
-    curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, 32768L); /* ~32 KB/s */
+    curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, 32768L);
 #endif
-
-    /* Follow a few redirects */
 #ifdef CURLOPT_FOLLOWLOCATION
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 #endif
 #ifdef CURLOPT_MAXREDIRS
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
 #endif
-
-    /* Prefer HTTP/1.1 if the SDK exposes the knob (avoids some HTTP/2 stalls) */
 #if defined(CURLOPT_HTTP_VERSION) && defined(CURL_HTTP_VERSION_1_1)
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 #endif
-
-    /* Ask for uncompressed body to dodge gzip/brotli on embedded builds */
 #ifdef CURLOPT_ACCEPT_ENCODING
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
 #else
@@ -636,41 +635,30 @@ static int fetch_url(const char *url, mem_t *m) {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
 #  endif
 #endif
-
-    /* Timeouts (be a bit generous for large CDNs) */
 #ifdef CURLOPT_CONNECTTIMEOUT
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
 #endif
 #ifdef CURLOPT_TIMEOUT
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 35L);
 #endif
-
-    /* Low-speed abort, only if available */
 #ifdef CURLOPT_LOW_SPEED_LIMIT
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 10L);
 #endif
 #ifdef CURLOPT_LOW_SPEED_TIME
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 20L);
 #endif
-
 #ifdef CURLOPT_USERAGENT
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
                      "BadgeVMS-mini-browser/2.1 (+HTTP/1.1, identity)");
 #endif
 
-    /* Our sink */
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
 
     CURLcode res = curl_easy_perform(curl);
-
 #if !defined(CURLOPT_ACCEPT_ENCODING) && defined(CURLOPT_HTTPHEADER)
-    {
-        struct curl_slist *tmp;
-        (void)tmp; /* placeholder to keep section balanced */
-    }
+    { struct curl_slist *tmp; (void)tmp; }
 #endif
-
     curl_easy_cleanup(curl);
     return (res == CURLE_OK) ? 0 : (int)res;
 }
@@ -685,8 +673,10 @@ static void draw_ui(SDL_Renderer *r, const char *bar_text) {
     SDL_SetRenderDrawColor(r, 30, 30, 30, 255);
     SDL_RenderFillRect(r, &top);
 
+    draw_logo(r, 2, 0);
+
     SDL_SetRenderDrawColor(r, 220, 220, 220, 255);
-    draw_bar(r, bar_text);
+    draw_bar(r, bar_text, LOGO_LEFT_PAD);
 
     SDL_FRect mid = (SDL_FRect){0, URLBAR_H + 1, VIEW_W, 2};
     SDL_SetRenderDrawColor(r, 60, 60, 60, 255);
@@ -725,7 +715,7 @@ int main(void) {
     wifi_connect();
     curl_global_init(0);
 
-    char url_buf[URL_MAX] = HOME_URL;  /* New home page */
+    char url_buf[URL_MAX] = HOME_URL;
     char barline[URL_MAX + 64];
     char *content_wrapped = NULL;
     page_t *page = NULL;
@@ -739,9 +729,8 @@ int main(void) {
     esp_log_level_set("transport_base",  ESP_LOG_ERROR);
 #endif
 
-    /* Accelerator + text-input suppression */
-    bool accel_down = false;           /* true while special key (0xE3) is held */
-    bool inhibit_text_once = false;    /* drop next TEXT_INPUT after handling a command */
+    bool accel_down = false;
+    bool inhibit_text_once = false;
 
     const int max_cols = (VIEW_W - 2*PAD_LR) / CH_W;
     const int lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
@@ -754,7 +743,6 @@ int main(void) {
 
     int running = 1;
     while (running) {
-
         if (need_fetch) {
             trim_inplace(url_buf);
             if (!url_buf[0]) { need_fetch = 0; }
@@ -794,7 +782,6 @@ int main(void) {
                             sel_link = -1;
                             printf("[mini_browser] parsed %d links from %s\n", page->link_count, url_buf);
 
-                            /* Dump wrapped content to serial */
                             if (wrapped) {
                                 printf("\n--- CONTENT START ---\n%s\n--- CONTENT END ---\n", wrapped);
                             }
@@ -806,7 +793,6 @@ int main(void) {
             need_fetch = 0;
         }
 
-        /* Compose bar text */
         if (page && sel_link >= 0 && sel_link < page->link_count) {
             snprintf(barline, sizeof(barline), "[%d/%d]  %s",
                      sel_link+1, page->link_count, page->links[sel_link].href);
@@ -814,7 +800,6 @@ int main(void) {
             snprintf(barline, sizeof(barline), "%s", url_buf);
         }
 
-        /* Draw UI + visible text slice */
         draw_ui(ren, barline);
         if (content_wrapped) {
             int y = PAD_TOP;
@@ -836,23 +821,19 @@ int main(void) {
         }
         SDL_RenderPresent(ren);
 
-        /* Events */
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_EVENT_QUIT) { running = 0; break; }
 
             if (ev.type == SDL_EVENT_TEXT_INPUT) {
-                if (inhibit_text_once) {            /* swallow the next text input after a command */
-                    inhibit_text_once = false;
-                    continue;
-                }
-                const char *t = ev.text.text;       /* UTF-8 subset, accept ASCII */
+                if (inhibit_text_once) { inhibit_text_once = false; continue; }
+                const char *t = ev.text.text;
                 if (is_printable_ascii(t)) {
                     size_t curlen = strlen(url_buf);
                     if (curlen < URL_MAX - 1) {
                         url_buf[curlen] = t[0];
                         url_buf[curlen + 1] = 0;
-                        sel_link = -1; /* typing cancels selection preview */
+                        sel_link = -1;
                     }
                 }
             }
@@ -860,74 +841,52 @@ int main(void) {
             if (ev.type == SDL_EVENT_KEY_DOWN) {
                 SDL_Scancode sc = ev.key.scancode;
 
-                /* Track accelerator press/release */
                 if (sc == SC_ACCELERATOR) {
                     accel_down = true;
-                    inhibit_text_once = true; /* avoid stray text if this key emits any */
+                    inhibit_text_once = true;
                     continue;
                 }
 
-                /* Special one-shot keys -> direct navigate. Top of WHY2025 badge keyboard  [] /\ X O & <>  */
                 if (sc == SC_SPECIAL_124) {
                     hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_124, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
-                    need_fetch = 1;
-                    sel_link = -1;
-                    inhibit_text_once = true;
-                    continue;
+                    need_fetch = 1; sel_link = -1; inhibit_text_once = true; continue;
                 }
                 if (sc == SC_SPECIAL_125) {
                     hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_125, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
-                    need_fetch = 1;
-                    sel_link = -1;
-                    inhibit_text_once = true;
-                    continue;
+                    need_fetch = 1; sel_link = -1; inhibit_text_once = true; continue;
                 }
                 if (sc == SC_SPECIAL_126) {
                     hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_126, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
-                    need_fetch = 1;
-                    sel_link = -1;
-                    inhibit_text_once = true;
-                    continue;
+                    need_fetch = 1; sel_link = -1; inhibit_text_once = true; continue;
                 }
                 if (sc == SC_SPECIAL_127) {
                     hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_127, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
-                    need_fetch = 1;
-                    sel_link = -1;
-                    inhibit_text_once = true;
-                    continue;
+                    need_fetch = 1; sel_link = -1; inhibit_text_once = true; continue;
                 }
                 if (sc == SC_SPECIAL_128) {
                     hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_128, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
-                    need_fetch = 1;
-                    sel_link = -1;
-                    inhibit_text_once = true;
-                    continue;
+                    need_fetch = 1; sel_link = -1; inhibit_text_once = true; continue;
                 }
                 if (sc == SC_SPECIAL_129) {
                     hist_push(page ? page->base : url_buf);
                     strncpy(url_buf, SPECIAL_URL_129, URL_MAX);
                     url_buf[URL_MAX-1] = 0;
-                    need_fetch = 1;
-                    sel_link = -1;
-                    inhibit_text_once = true;
-                    continue;
+                    need_fetch = 1; sel_link = -1; inhibit_text_once = true; continue;
                 }
 
-                /* Accelerator combos (E,H,R,Q,B) */
                 if (accel_down) {
                     switch (sc) {
                         case SDL_SCANCODE_E:
-                            /* “Edit URL”: clear and prefill with scheme */
                             strncpy(url_buf, "https://", URL_MAX);
                             url_buf[URL_MAX-1] = 0;
                             sel_link = -1;
@@ -960,26 +919,20 @@ int main(void) {
                             running = 0;
                             inhibit_text_once = true;
                             break;
-                        default:
-                            break;
+                        default: break;
                     }
-                    continue; /* don’t let these fall through */
+                    continue;
                 }
 
-                /* Normal keys (no accelerator) */
                 switch (sc) {
-                    /* URL actions */
                     case SDL_SCANCODE_RETURN:
                     case SDL_SCANCODE_KP_ENTER:
                         if (page && sel_link >= 0 && sel_link < page->link_count) {
-                            /* push current before leaving */
                             hist_push(page ? page->base : url_buf);
-
                             strncpy(url_buf, page->links[sel_link].href, URL_MAX);
                             url_buf[URL_MAX-1]=0;
                             need_fetch = 1;
                         } else {
-                            /* typed URL: also push current before navigating */
                             hist_push(page ? page->base : url_buf);
                             need_fetch = 1;
                         }
@@ -992,7 +945,6 @@ int main(void) {
                         break;
                     }
 
-                    /* Scrolling */
                     case SDL_SCANCODE_DOWN:
                     case SDL_SCANCODE_J: scroll_lines++; break;
                     case SDL_SCANCODE_UP:
@@ -1007,7 +959,6 @@ int main(void) {
                         if (scroll_lines >= 5) scroll_lines -= 5; else scroll_lines = 0;
                         break;
 
-                    /* Link navigation */
                     case SDL_SCANCODE_TAB: {
                         bool shift = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
                         if (page && page->link_count>0) {
@@ -1023,15 +974,15 @@ int main(void) {
                     case SDL_SCANCODE_ESCAPE: running = 0; break;
                     default: break;
                 }
-            } /* KEY_DOWN */
+            }
 
             if (ev.type == SDL_EVENT_KEY_UP) {
                 if (ev.key.scancode == SC_ACCELERATOR) {
                     accel_down = false;
-                    inhibit_text_once = false; /* reset guard on key-up */
+                    inhibit_text_once = false;
                 }
             }
-        } /* while events */
+        }
 
         SDL_Delay(10);
     }

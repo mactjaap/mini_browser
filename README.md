@@ -65,7 +65,7 @@ These dedicated keys provide instant navigation:
 - ❌ **Cross** →  [Hacker News](https://news.ycombinator.com/) 
 - 🟢 **Circle** → [What is my IP address?](http://ifconfig.co)  
 - ☁️ **Cloud** → [Bobcat Browser](https://ohmeadhbh.github.io/bobcat/) 
-- 🔷 **Diamond** →   [Curl(https://curl.se)
+- 🔷 **Diamond** →   [Curl](https://curl.se) 
 
 ---
 

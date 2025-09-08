@@ -86,7 +86,8 @@ These dedicated keys provide instant navigation:
 - **No CSS/JS/Images** — purely text output.  
 - **ASCII focus** — non-ASCII simplified to `?`.  
 - **No cookies or sessions** — no persistence across requests.  
-- **Content cap** — maximum page size 16 KB.  
+- **Content cap** — maximum page size 64 KB.
+- **Rookie project** - it is what it is  
 
 ---
 

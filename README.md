@@ -71,7 +71,7 @@ These dedicated keys provide instant navigation:
 
 ## Implementation Overview
 
-- **Fetch**: pages retrieved with libcurl (up to 16 KB by default).  
+- **Fetch**: pages retrieved with libcurl (up to 64 KB by default).  
 - **Parse**: minimal HTML walker:  
   - skips `<head>`, `<script>`, `<style>`  
   - collapses whitespace and decodes entities  

@@ -467,9 +467,9 @@ static int fetch_url(const char *url, mem_t *m) {
 /* Build explicit headers (works even if CURLOPT_USERAGENT is ignored) */
 struct curl_slist *hdrs = NULL;
 hdrs = curl_slist_append(hdrs,
-    "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:2.1) "
-    "Gecko/20100101 BadgeBrowser/1.0 "
-    "(compatible; MiniBrowser/1.0; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+    "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:1.1) "
+    "Gecko/20100101 "
+    "(compatible; MiniBrowser/1.1; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
 hdrs = curl_slist_append(hdrs,
     "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
 hdrs = curl_slist_append(hdrs, "Accept-Language: en-US,en;q=0.5");
@@ -900,18 +900,22 @@ int main(void) {
                         break;
 
                     /* Link navigation */
-                    case SDL_SCANCODE_TAB: {
-                        bool shift = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
-                        if (page && page->link_count>0) {
-                            if (shift) {
-                                sel_link = (sel_link<=0) ? (page->link_count-1) : (sel_link-1);
-                            } else {
-                                sel_link = (sel_link+1) % page->link_count;
-                            }
-                        }
-                        break;
-                    }
-
+case SDL_SCANCODE_TAB: {
+    bool shift = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
+    if (page && page->link_count > 0) {
+        if (sel_link < 0) {
+            /* First time we tab (Tab or Shift+Tab): start at the first link */
+            sel_link = 0;
+        } else if (shift) {
+            /* Move backward, wrapping to last if we're at the start */
+            sel_link = (sel_link == 0) ? (page->link_count - 1) : (sel_link - 1);
+        } else {
+            /* Move forward with wraparound */
+            sel_link = (sel_link + 1) % page->link_count;
+        }
+    }
+    break;
+}
                     case SDL_SCANCODE_ESCAPE: running = 0; break;
                     default: break;
                 }

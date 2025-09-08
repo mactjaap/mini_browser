@@ -42,7 +42,7 @@
 #define URL_TEXT_X  (PAD_LR + ICON_SIZE + ICON_GAP)  /* start X for URL text */
 
 /* ---------- Home + special-key targets ---------- */
-#define HOME_URL          "https://minibrowser.tjaap.com"
+#define HOME_URL          "https://minibrowser.macip.net"
 #define SPECIAL_URL_124   "https://text.npr.org"
 #define SPECIAL_URL_125   "https://news.ycombinator.com/"
 #define SPECIAL_URL_126   "http://www.textfiles.com/"

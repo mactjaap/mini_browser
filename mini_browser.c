@@ -867,7 +867,6 @@ static int bookmark_remove(const char *url) {
 
     return 1;
 }
-
 static int bookmark_toggle(const char *url, const char *title) {
     if (bookmark_find(url) >= 0) {
         bookmark_remove(url);
@@ -878,7 +877,89 @@ static int bookmark_toggle(const char *url, const char *title) {
     return 1;
 }
 
+/* ---------- persistent bookmarks ---------- */
+#define BOOKMARK_FILE "APPS:[mini_browser]bookmarks.txt"
+
+static void bookmark_save(void) {
+    /*
+     * BadgeVMS currently has a truncation issue with fopen(..., "w"),
+     * so follow the same pattern used by the WHY2025 name badge:
+     * remove the old file before creating the new one.
+     */
+    remove(BOOKMARK_FILE);
+
+    FILE *file = fopen(BOOKMARK_FILE, "w");
+    if (!file) {
+        printf("[mini_browser] failed to save bookmarks to %s\n",
+               BOOKMARK_FILE);
+        return;
+    }
+
+    for (int i = 0; i < g_bookmark_count; i++) {
+        fprintf(file, "%s\n", g_bookmarks[i].url);
+        fprintf(file, "%s\n", g_bookmarks[i].title);
+    }
+
+    fclose(file);
+
+    printf("[mini_browser] saved %d bookmarks to %s\n",
+           g_bookmark_count,
+           BOOKMARK_FILE);
+}
+
+static void bookmark_load(void) {
+    FILE *file = fopen(BOOKMARK_FILE, "r");
+
+    if (!file) {
+        printf("[mini_browser] no saved bookmarks at %s\n",
+               BOOKMARK_FILE);
+        return;
+    }
+
+    g_bookmark_count = 0;
+
+    char url[URL_MAX];
+    char title[128];
+
+    while (g_bookmark_count < BOOKMARK_MAX) {
+        if (!fgets(url, sizeof(url), file)) {
+            break;
+        }
+
+        if (!fgets(title, sizeof(title), file)) {
+            break;
+        }
+
+        size_t len = strlen(url);
+        while (len > 0 &&
+               (url[len - 1] == '\n' || url[len - 1] == '\r')) {
+            url[--len] = 0;
+        }
+
+        len = strlen(title);
+        while (len > 0 &&
+               (title[len - 1] == '\n' || title[len - 1] == '\r')) {
+            title[--len] = 0;
+        }
+
+        if (!url[0]) {
+            continue;
+        }
+
+        bookmark_add(url, title);
+    }
+
+    fclose(file);
+
+    printf("[mini_browser] loaded %d bookmarks from %s\n",
+           g_bookmark_count,
+           BOOKMARK_FILE);
+}
+
 static page_t *bookmarks_to_page(void) {
+
+
+
     page_t *pg = (page_t*)calloc(1, sizeof(page_t));
     if (!pg) return NULL;
 
@@ -1003,7 +1084,12 @@ int main(void) {
     wifi_connect();
     curl_global_init(0);
 
+    /* Load persistent bookmarks from BadgeVMS storage. */
+    bookmark_load();
+
     char url_buf[URL_MAX] = HOME_URL;
+
+
     char barline[URL_MAX + 64];
     char *content_wrapped = NULL;
     page_t *page = NULL;
@@ -1356,6 +1442,8 @@ int main(void) {
 
                             int added = bookmark_toggle(url_buf, title);
 
+                            bookmark_save();
+
                             printf("[mini_browser] %s bookmark: %s\n",
                                    added ? "added" : "removed",
                                    url_buf);
@@ -1363,7 +1451,6 @@ int main(void) {
                             inhibit_text_once = true;
                             break;
                         }
-
                         case SDL_SCANCODE_B: { /* BACK */
                             char prev[URL_MAX];
                             if (history_back(prev)) {

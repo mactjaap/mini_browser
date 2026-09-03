@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini Browser - Home</title>
+  <!--
+    NOTE: Mini Browser home page (HOME_URL). Written to render well
+    inside the Mini Browser itself, whose parser breaks lines only on
+    the br and p tags and draws ASCII only (no images, CSS, or JS).
+    Keep the body ASCII, use br and p for line breaks, and a for links.
+    The head (this style block) is ignored by the badge and styles the
+    desktop view only. Do NOT put angle-bracket tag names in comments:
+    this parser reads tags inside comments too.
+  -->
+  <style>
+    body{background:#0b0b0b;color:#dcdcdc;font-family:ui-monospace,Menlo,Consolas,monospace;
+         max-width:720px;margin:2rem auto;padding:0 1rem;line-height:1.55;font-size:16px;}
+    h1{color:#00b4b4;margin:0 0 .25rem;font-size:1.6rem;}
+    a{color:#7fd7ff;}
+    .red{color:#ff5555;}.orange{color:#ffb454;}.yellow{color:#ffd700;}
+    .green{color:#43d16a;}.blue{color:#7fd7ff;}.purple{color:#c07fff;}
+    .sec{color:#00b4b4;font-weight:bold;}
+    .dim{color:#8a8a8a;}
+    /* Blank-line dividers are for the badge only; desktop uses <p> margins. */
+    .sep{display:none;}
+  </style>
+</head>
+<body>
+
+<h1>Mini Browser</h1>
+<p>A text-only web browser for the WHY2025 badge.</p>
+
+<p><span class="sep"><br> <br></span><span class="sec">SPECIAL KEYS</span><br>
+<span class="red">RED</span> Square: <a href="https://text.npr.org">NPR Text</a><br>
+<span class="orange">ORANGE</span> Triangle: <a href="https://news.ycombinator.com/">Hacker News</a><br>
+<span class="yellow">YELLOW</span> Cross: <a href="http://www.textfiles.com/">textfiles.com</a><br>
+<span class="green">GREEN</span> Circle: <a href="https://ifconfig.co">What is my IP</a><br>
+<span class="blue">BLUE</span> Cloud: <a href="https://ohmeadhbh.github.io/bobcat/">Bobcat Browser</a><br>
+<span class="purple">PURPLE</span> Diamond: <a href="https://curl.se/">Curl</a></p>
+
+<p><span class="sep"><br> <br></span><span class="sec">WHY KEY</span> (hold WHY, then press)<br>
+E = edit URL &nbsp; H = home &nbsp; R = reload<br>
+B = back &nbsp; Q = quit</p>
+
+<p><span class="sep"><br> <br></span><span class="sec">NAVIGATE</span><br>
+Type a URL and press Enter.<br>
+Tab / Shift-Tab pick a link, Enter opens it.<br>
+Up/Down or J/K scroll. PageUp/PageDown by page.</p>
+
+<p><span class="sep"><br> <br></span><span class="sec">RECOMMENDED</span><br>
+<a href="https://en.m.wikipedia.org/">Wikipedia (mobile)</a><br>
+<a href="https://www.openbsd.org/">OpenBSD</a><br>
+<a href="https://sqlite.org/docs.html">SQLite Docs</a><br>
+<a href="https://man7.org/linux/man-pages/">Linux Man Pages</a><br>
+<a href="https://www.rfc-editor.org/rfc/">RFC Editor</a></p>
+
+<p><span class="sep"><br> <br></span><span class="sec">GOOD TO KNOW</span><br>
+Text only: no CSS, JavaScript, or images.<br>
+Max 64 KB per page. Bare hostnames become https.<br>
+Full guide: <a href="https://minibrowser.macip.net/readme.html">readme.html</a></p>
+
+<p><span class="sep"><br> <br></span><span class="sec">ABOUT</span><br>
+<a href="https://github.com/mactjaap/mini_browser">Source on GitHub</a><br>
+<span class="dim">Made for the WHY2025 badge community.</span></p>
+
+</body>
+</html>

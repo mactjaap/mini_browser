@@ -621,9 +621,9 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
     struct curl_slist *hdrs = NULL;
 
     hdrs = curl_slist_append(hdrs,
-        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:1.4) "
+        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:1.6) "
         "Gecko/20100101 "
-        "(compatible; MiniBrowser/1.4; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+        "(compatible; MiniBrowser/1.6; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
 
     hdrs = curl_slist_append(hdrs,
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -1100,6 +1100,14 @@ int main(void) {
     bool url_editing = false;
     size_t url_cursor = 0;
 
+    /* URL to return to when leaving the bookmarks page with WHY+B. */
+    char bookmark_return_url[URL_MAX] = "";
+    bool viewing_bookmarks = false;
+
+    /* Temporary message shown in the top bar. */
+    char status_message[64] = "";
+    Uint64 status_message_until = 0;
+
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
     esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
@@ -1265,13 +1273,20 @@ int main(void) {
         }
 
         /* Compose bar text */
-        /* Compose bar text */
-        if (url_editing) {
+        if (status_message[0] &&
+            SDL_GetTicks() < status_message_until) {
+
+            snprintf(barline, sizeof(barline),
+                     "%s",
+                     status_message);
+
+        } else if (url_editing) {
             size_t curlen = strlen(url_buf);
 
             if (url_cursor > curlen) {
                 url_cursor = curlen;
             }
+
 
             snprintf(barline, sizeof(barline),
                      "%.*s|%s",
@@ -1403,6 +1418,21 @@ int main(void) {
                             break;
 
                         case SDL_SCANCODE_M: { /* SHOW BOOKMARKS */
+                            /*
+                             * Remember the page we were viewing. If WHY+M is
+                             * pressed again while already in bookmarks, keep
+                             * the original return URL.
+                             */
+                            if (!viewing_bookmarks &&
+                                is_http_scheme(url_buf)) {
+
+                                strncpy(bookmark_return_url,
+                                        url_buf,
+                                        URL_MAX);
+
+                                bookmark_return_url[URL_MAX - 1] = 0;
+                            }
+
                             page_t *pg = bookmarks_to_page();
 
                             if (pg) {
@@ -1425,6 +1455,7 @@ int main(void) {
                                 scroll_lines = 0;
                                 sel_link = -1;
                                 url_editing = false;
+                                viewing_bookmarks = true;
 
                                 printf("[mini_browser] opened bookmarks: %d entries\n",
                                        g_bookmark_count);
@@ -1434,6 +1465,7 @@ int main(void) {
                             break;
                         }
 
+                       
                         case SDL_SCANCODE_F: { /* BOOKMARK current page */
                             const char *title =
                                 (page && page->title[0])
@@ -1444,6 +1476,16 @@ int main(void) {
 
                             bookmark_save();
 
+                            snprintf(status_message,
+                                     sizeof(status_message),
+                                     "%s",
+                                     added
+                                         ? "BOOKMARK ADDED"
+                                         : "BOOKMARK REMOVED");
+
+                            status_message_until =
+                                SDL_GetTicks() + 1500;
+
                             printf("[mini_browser] %s bookmark: %s\n",
                                    added ? "added" : "removed",
                                    url_buf);
@@ -1451,17 +1493,37 @@ int main(void) {
                             inhibit_text_once = true;
                             break;
                         }
+ 
                         case SDL_SCANCODE_B: { /* BACK */
-                            char prev[URL_MAX];
-                            if (history_back(prev)) {
-                                strncpy(url_buf, prev, URL_MAX);
-                                url_buf[URL_MAX-1] = 0;
+                            if (viewing_bookmarks &&
+                                bookmark_return_url[0]) {
+
+                                strncpy(url_buf,
+                                        bookmark_return_url,
+                                        URL_MAX);
+
+                                url_buf[URL_MAX - 1] = 0;
+                                bookmark_return_url[0] = 0;
+
+                                viewing_bookmarks = false;
                                 need_fetch = 1;
                                 sel_link = -1;
+
+                            } else {
+                                char prev[URL_MAX];
+
+                                if (history_back(prev)) {
+                                    strncpy(url_buf, prev, URL_MAX);
+                                    url_buf[URL_MAX-1] = 0;
+                                    need_fetch = 1;
+                                    sel_link = -1;
+                                }
                             }
+
                             inhibit_text_once = true;
                             break;
                         }
+
                         case SDL_SCANCODE_Q:
                             running = 0;
                             inhibit_text_once = true;
@@ -1475,6 +1537,7 @@ int main(void) {
                 /* Normal keys (no accelerator) */
                 switch (sc) {
                     /* URL actions */
+
                     case SDL_SCANCODE_RETURN:
                     case SDL_SCANCODE_KP_ENTER:
                         if (url_editing) {
@@ -1489,13 +1552,21 @@ int main(void) {
                                     URL_MAX);
 
                             url_buf[URL_MAX-1] = 0;
+
+                            /*
+                             * If this link was opened from the bookmarks
+                             * page, we are now returning to normal browsing.
+                             */
+                            viewing_bookmarks = false;
+                            bookmark_return_url[0] = 0;
+
                             need_fetch = 1;
 
                         } else {
                             need_fetch = 1;
                         }
                         break;
-                    case SDL_SCANCODE_BACKSPACE:
+                        case SDL_SCANCODE_BACKSPACE:
                         if (url_editing) {
                             size_t curlen = strlen(url_buf);
 

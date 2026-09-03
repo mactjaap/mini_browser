@@ -799,6 +799,158 @@ static int is_printable_ascii(const char *text) {
     return (c >= 32 && c <= 126);
 }
 
+/* ---------- bookmarks ---------- */
+#define BOOKMARK_MAX 32
+
+typedef struct {
+    char url[URL_MAX];
+    char title[128];
+} bookmark_t;
+
+static bookmark_t g_bookmarks[BOOKMARK_MAX];
+static int g_bookmark_count = 0;
+
+static int bookmark_find(const char *url) {
+    if (!url || !*url) return -1;
+
+    for (int i = 0; i < g_bookmark_count; i++) {
+        if (strncmp(g_bookmarks[i].url, url, URL_MAX) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static int bookmark_add(const char *url, const char *title) {
+    if (!url || !*url) return 0;
+
+    /* Already bookmarked. */
+    if (bookmark_find(url) >= 0) return 0;
+
+    if (g_bookmark_count >= BOOKMARK_MAX) return 0;
+
+    bookmark_t *bm = &g_bookmarks[g_bookmark_count];
+
+    strncpy(bm->url, url, URL_MAX);
+    bm->url[URL_MAX - 1] = 0;
+
+    if (title && *title) {
+        strncpy(bm->title, title, sizeof(bm->title));
+        bm->title[sizeof(bm->title) - 1] = 0;
+    } else {
+        strncpy(bm->title, url, sizeof(bm->title));
+        bm->title[sizeof(bm->title) - 1] = 0;
+    }
+
+    g_bookmark_count++;
+
+    printf("[mini_browser] bookmark added: %s\n", bm->url);
+
+    return 1;
+}
+
+static int bookmark_remove(const char *url) {
+    int idx = bookmark_find(url);
+    if (idx < 0) return 0;
+
+    if (idx < g_bookmark_count - 1) {
+        memmove(&g_bookmarks[idx],
+                &g_bookmarks[idx + 1],
+                sizeof(g_bookmarks[0]) *
+                    (size_t)(g_bookmark_count - idx - 1));
+    }
+
+    g_bookmark_count--;
+
+    printf("[mini_browser] bookmark removed: %s\n", url);
+
+    return 1;
+}
+
+static int bookmark_toggle(const char *url, const char *title) {
+    if (bookmark_find(url) >= 0) {
+        bookmark_remove(url);
+        return 0;
+    }
+
+    bookmark_add(url, title);
+    return 1;
+}
+
+static page_t *bookmarks_to_page(void) {
+    page_t *pg = (page_t*)calloc(1, sizeof(page_t));
+    if (!pg) return NULL;
+
+    strncpy(pg->base, "bookmarks:", URL_MAX);
+    pg->base[URL_MAX - 1] = 0;
+
+    strncpy(pg->title, "Bookmarks", sizeof(pg->title));
+    pg->title[sizeof(pg->title) - 1] = 0;
+
+    size_t cap = 256 + (size_t)g_bookmark_count * 512;
+    char *text = (char*)malloc(cap);
+
+    if (!text) {
+        free(pg);
+        return NULL;
+    }
+
+    size_t used = 0;
+
+    int n = snprintf(text, cap,
+                     "= BOOKMARKS =\n\n");
+
+    if (n > 0) used = (size_t)n;
+
+    if (g_bookmark_count == 0) {
+        snprintf(text + used, cap - used,
+                 "No bookmarks yet.\n\n"
+                 "Press WHY+F on a web page to add one.");
+
+        pg->text = text;
+        return pg;
+    }
+
+    for (int i = 0;
+         i < g_bookmark_count && i < MAX_LINKS;
+         i++) {
+
+        bookmark_t *bm = &g_bookmarks[i];
+
+        pg->links[pg->link_count] = (link_t){0};
+
+        strncpy(pg->links[pg->link_count].href,
+                bm->url,
+                URL_MAX);
+
+        pg->links[pg->link_count].href[URL_MAX - 1] = 0;
+
+        pg->link_count++;
+
+        n = snprintf(text + used,
+                     cap - used,
+                     "[%d] %s\n    %s\n\n",
+                     i + 1,
+                     bm->title,
+                     bm->url);
+
+        if (n < 0) break;
+
+        if ((size_t)n >= cap - used) {
+            used = cap - 1;
+            break;
+        }
+
+        used += (size_t)n;
+    }
+
+    text[cap - 1] = 0;
+    pg->text = text;
+
+    return pg;
+}
+
 /* ---------- history (for WHY + B) ---------- */
 #define HISTORY_MAX 32
 static char g_hist[HISTORY_MAX][URL_MAX];
@@ -1133,9 +1285,9 @@ int main(void) {
                 if (sc == SC_SPECIAL_128) { strncpy(url_buf, SPECIAL_URL_128, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
                 if (sc == SC_SPECIAL_129) { strncpy(url_buf, SPECIAL_URL_129, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
 
-                        
-                /* Accelerator combos (E,C,H,R,Q,B) */
-                if (accel_down) {
+                 
+                /* Accelerator combos (E,C,H,R,F,M,B,Q) */       
+                 if (accel_down) {
                     switch (sc) {
                         case SDL_SCANCODE_E:
                             strncpy(url_buf, "https://", URL_MAX);
@@ -1159,10 +1311,59 @@ int main(void) {
                             sel_link = -1;
                             inhibit_text_once = true;
                             break;
-                        case SDL_SCANCODE_R:
+                                                    case SDL_SCANCODE_R:
                             need_fetch = 1;
                             inhibit_text_once = true;
                             break;
+
+                        case SDL_SCANCODE_M: { /* SHOW BOOKMARKS */
+                            page_t *pg = bookmarks_to_page();
+
+                            if (pg) {
+                                char *wrapped = wrap_text(pg->text, max_cols);
+
+                                free(content_wrapped);
+                                content_wrapped = wrapped;
+
+                                if (page) {
+                                    free(page->text);
+                                    free(page);
+                                }
+
+                                page = pg;
+
+                                strncpy(url_buf, "bookmarks:", URL_MAX);
+                                url_buf[URL_MAX - 1] = 0;
+
+                                last_http_status = 0;
+                                scroll_lines = 0;
+                                sel_link = -1;
+                                url_editing = false;
+
+                                printf("[mini_browser] opened bookmarks: %d entries\n",
+                                       g_bookmark_count);
+                            }
+
+                            inhibit_text_once = true;
+                            break;
+                        }
+
+                        case SDL_SCANCODE_F: { /* BOOKMARK current page */
+                            const char *title =
+                                (page && page->title[0])
+                                    ? page->title
+                                    : url_buf;
+
+                            int added = bookmark_toggle(url_buf, title);
+
+                            printf("[mini_browser] %s bookmark: %s\n",
+                                   added ? "added" : "removed",
+                                   url_buf);
+
+                            inhibit_text_once = true;
+                            break;
+                        }
+
                         case SDL_SCANCODE_B: { /* BACK */
                             char prev[URL_MAX];
                             if (history_back(prev)) {

@@ -926,13 +926,15 @@ int main(void) {
                         content_wrapped = NULL;
 
                         char error_text[512];
+                        const char *curl_error = curl_easy_strerror((CURLcode)rc);
+
                         snprintf(error_text, sizeof(error_text),
-                                 "NETWORK ERROR\n\n"
-                                 "Unable to load:\n%s\n\n"
-                                 "curl error: %d\n\n"
-                                 "Press WHY+R to retry.",
+                                 "CONNECTION FAILED\n\n"
+                                 "Could not load:\n%s\n\n"
+                                 "Reason:\n%s\n\n"
+                                 "Press WHY+R to retry, WHY+B to go back, WHY+H for homepage",
                                  url_buf,
-                                 rc);
+                                 curl_error ? curl_error : "Unknown network error");
 
                         content_wrapped = wrap_text(error_text, max_cols);
                         scroll_lines = 0;

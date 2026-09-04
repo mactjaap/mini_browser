@@ -334,3 +334,8 @@ Version 1.6 introduces the first complete bookmark implementation:
 - Lots of experimenting, debugging, copy-and-paste, and example code...
 
 ...but it seems to work. :-)
+
+## mini-browser for Linux
+If you don't have a badge .... try the mini-browser for Linux. How to included.
+
+

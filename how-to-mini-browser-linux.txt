@@ -1,0 +1,204 @@
+# Mini Browser for Linux — Compile & Install HOWTO
+
+Mini Browser is a tiny text-only web browser written in C.
+
+The Linux version is based on the same browser engine as the Mini Browser
+originally developed for the WHY2025 BadgeVMS / ESP32-P4 badge.
+
+It deliberately keeps things simple:
+
+- Text-only browsing
+- No JavaScript
+- No CSS engine
+- No images
+- libcurl for HTTP/HTTPS
+- Simple built-in HTML parser
+- Numbered links
+- Keyboard navigation
+- Back history
+- Persistent bookmarks
+- 64 KiB maximum page size
+- Maximum 128 links per page
+
+It runs in a normal Linux terminal and does not require X11, Wayland,
+a desktop environment, SDL, or ncurses.
+
+
+## 1. Download the source
+
+You need:
+
+    mini_browser_linux.c
+
+
+## 2. AlmaLinux / Rocky Linux / RHEL
+
+Install the compiler and libcurl development files:
+
+    dnf install gcc libcurl-devel
+
+Compile Mini Browser:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux.c -o mini-browser -lcurl
+
+Run it:
+
+    ./mini-browser
+
+Or open a website immediately:
+
+    ./mini-browser https://news.ycombinator.com/
+
+
+## 3. Raspberry Pi OS / Debian / Ubuntu
+
+Install the compiler and libcurl development files:
+
+    apt update
+    apt install gcc libcurl4-openssl-dev
+
+Compile:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux.c -o mini-browser -lcurl
+
+Run:
+
+    ./mini-browser
+
+Or:
+
+    ./mini-browser https://news.ycombinator.com/
+
+
+## 4. Install system-wide
+
+After compiling successfully, you can install the binary in /usr/local/bin:
+
+    cp mini-browser /usr/local/bin/mini-browser
+    chmod 755 /usr/local/bin/mini-browser
+
+Now it can be started from anywhere:
+
+    mini-browser
+
+For example:
+
+    mini-browser https://text.npr.org/
+
+or:
+
+    mini-browser https://news.ycombinator.com/
+
+
+## 5. Commands
+
+While Mini Browser is running:
+
+    NUMBER       Open a link
+    b            Back
+    g URL        Go to a URL
+    g            Enter a URL interactively
+    h            Homepage
+    r            Reload
+    l            Show all link URLs
+    f            Add/remove current page as bookmark
+    m            Show bookmarks
+    o NUMBER     Open bookmark
+    ?            Help
+    q            Quit
+
+Example:
+
+    mini-browser> 12
+
+opens link number 12 on the current page.
+
+
+## 6. Bookmarks
+
+Press:
+
+    f
+
+to bookmark the current page.
+
+Press:
+
+    m
+
+to display your bookmarks.
+
+Open bookmark number 3 with:
+
+    o 3
+
+Bookmarks are stored in:
+
+    ~/.mini_browser_bookmarks.txt
+
+They remain available after Mini Browser is restarted.
+
+
+## 7. Check the executable
+
+You can inspect the compiled program with:
+
+    file mini-browser
+
+On a typical AlmaLinux x86-64 machine this will show an x86-64 ELF executable.
+
+On a 64-bit Raspberry Pi it will show an ARM/AArch64 executable.
+
+The same C source therefore works on multiple CPU architectures; simply
+compile it on the target Linux machine.
+
+
+## 8. Updating Mini Browser
+
+Replace mini_browser_linux.c with the newer source and compile it again:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux.c -o mini-browser -lcurl
+
+If you installed it system-wide:
+
+    cp mini-browser /usr/local/bin/mini-browser
+
+
+## 9. Uninstall
+
+If installed in /usr/local/bin:
+
+    rm /usr/local/bin/mini-browser
+
+Optionally remove your bookmarks:
+
+    rm ~/.mini_browser_bookmarks.txt
+
+
+## Recommended websites
+
+Mini Browser works best with lightweight, text-oriented websites.
+
+Try:
+
+    https://news.ycombinator.com/
+    https://text.npr.org/
+    https://curl.se/
+    http://www.textfiles.com/
+    http://info.cern.ch/
+
+
+## Philosophy
+
+Mini Browser is intentionally not a modern full-featured web browser.
+
+There is no JavaScript engine, CSS layout engine, image renderer, DOM,
+GPU acceleration, or multi-process architecture.
+
+It downloads a page with libcurl, parses useful HTML, extracts links and
+turns the result into readable terminal text.
+
+That makes it small, fast, understandable and suitable for systems ranging
+from an ESP32-P4 badge to a Raspberry Pi and a normal Linux server.
+
+...but it seems to work. :-)

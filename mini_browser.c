@@ -1036,6 +1036,8 @@ static page_t *bookmarks_to_page(void) {
     return pg;
 }
 
+/* ---------- page cache for instant Back (disabled - causes memory issues) ---------- */
+
 /* ---------- history (for WHY + B) ---------- */
 #define HISTORY_MAX 32
 static char g_hist[HISTORY_MAX][URL_MAX];

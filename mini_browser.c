@@ -34,6 +34,10 @@
 #define LINE_SPACING  2
 #define MAX_LINKS     128
 
+/* --- Scroll repeat constants for hold-to-scroll --- */
+#define SCROLL_REPEAT_DELAY_MS 300
+#define SCROLL_REPEAT_INTERVAL_MS 55
+
 /* --- Icon placement inside URL bar --- */
 #define ICON_LEFT   2
 #define ICON_TOP    2
@@ -1108,6 +1112,11 @@ int main(void) {
     char status_message[64] = "";
     Uint64 status_message_until = 0;
 
+    /* Hold-to-scroll state for UP/DOWN arrow keys */
+    bool scroll_up_held = false;
+    bool scroll_down_held = false;
+    Uint64 scroll_repeat_at = 0;
+
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
     esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
@@ -1631,8 +1640,26 @@ int main(void) {
                     /* Scrolling */
                     
                     case SDL_SCANCODE_DOWN:
+                        if (!url_editing) {
+                            if (!scroll_down_held) {
+                                scroll_down_held = true;
+                                scroll_up_held = false;
+                                scroll_lines++;
+                                scroll_repeat_at = SDL_GetTicks() + SCROLL_REPEAT_DELAY_MS;
+                            }
+                        }
+                        break;
                     case SDL_SCANCODE_J: scroll_lines++; break;
                     case SDL_SCANCODE_UP:
+                        if (!url_editing) {
+                            if (!scroll_up_held) {
+                                scroll_up_held = true;
+                                scroll_down_held = false;
+                                if (scroll_lines > 0) scroll_lines--;
+                                scroll_repeat_at = SDL_GetTicks() + SCROLL_REPEAT_DELAY_MS;
+                            }
+                        }
+                        break;
                     case SDL_SCANCODE_K: if (scroll_lines>0) scroll_lines--; break;
                     case SDL_SCANCODE_HOME:
                         if (url_editing) {
@@ -1676,9 +1703,25 @@ case SDL_SCANCODE_TAB: {
                 if (ev.key.scancode == SC_ACCELERATOR) {
                     accel_down = false;
                     inhibit_text_once = false;
+                } else if (ev.key.scancode == SDL_SCANCODE_UP) {
+                    scroll_up_held = false;
+                } else if (ev.key.scancode == SDL_SCANCODE_DOWN) {
+                    scroll_down_held = false;
                 }
             }
         } /* while events */
+
+        /* Timed scroll repeat for held arrow keys */
+        if (!url_editing) {
+            Uint64 now = SDL_GetTicks();
+            if (scroll_down_held && now >= scroll_repeat_at) {
+                scroll_lines++;
+                scroll_repeat_at = now + SCROLL_REPEAT_INTERVAL_MS;
+            } else if (scroll_up_held && now >= scroll_repeat_at) {
+                if (scroll_lines > 0) scroll_lines--;
+                scroll_repeat_at = now + SCROLL_REPEAT_INTERVAL_MS;
+            }
+        }
 
         SDL_Delay(10);
     }

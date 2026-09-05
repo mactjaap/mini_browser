@@ -1117,6 +1117,11 @@ int main(void) {
     bool scroll_down_held = false;
     Uint64 scroll_repeat_at = 0;
 
+    /* Numbered link navigation state */
+    char link_number_buf[8] = "";
+    int link_number_len = 0;
+    bool link_number_mode = false;
+
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
     esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
@@ -1141,6 +1146,9 @@ int main(void) {
                 if (need_fetch) {
             url_editing = false;
             url_cursor = 0;
+            link_number_mode = false;
+            link_number_len = 0;
+            link_number_buf[0] = '\0';
             trim_inplace(url_buf);
                 if (!url_buf[0]) { need_fetch = 0; }
             else {
@@ -1281,13 +1289,18 @@ int main(void) {
             need_fetch = 0;
         }
 
-        /* Compose bar text */
+/* Compose bar text */
         if (status_message[0] &&
             SDL_GetTicks() < status_message_until) {
 
             snprintf(barline, sizeof(barline),
-                     "%s",
-                     status_message);
+                      "%s",
+                      status_message);
+
+        } else if (link_number_mode && link_number_len > 0) {
+            snprintf(barline, sizeof(barline),
+                      "%s",
+                      link_number_buf);
 
         } else if (url_editing) {
             size_t curlen = strlen(url_buf);
@@ -1358,7 +1371,19 @@ int main(void) {
 
                 const char *t = ev.text.text;
 
-                if (url_editing && is_printable_ascii(t)) {
+                /* Capture digits for link number entry */
+                if (page && page->link_count > 0 && t[0] >= '0' && t[0] <= '9') {
+                    if (!link_number_mode) {
+                        link_number_mode = true;
+                        link_number_len = 0;
+                        link_number_buf[0] = '\0';
+                    }
+                    if (link_number_len < (int)sizeof(link_number_buf) - 1) {
+                        link_number_buf[link_number_len++] = t[0];
+                        link_number_buf[link_number_len] = '\0';
+                    }
+                }
+                else if (url_editing && is_printable_ascii(t)) {
                     size_t curlen = strlen(url_buf);
 
                     if (url_cursor > curlen) {
@@ -1405,12 +1430,18 @@ int main(void) {
                             url_cursor = strlen(url_buf);
                             sel_link = -1;
                             url_editing = true;
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
                             inhibit_text_once = true;
                             break;
                         case SDL_SCANCODE_C:
                             url_cursor = strlen(url_buf);
                             sel_link = -1;
                             url_editing = true;
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
                             inhibit_text_once = true;
                             break;
 
@@ -1551,7 +1582,26 @@ int main(void) {
                     case SDL_SCANCODE_KP_ENTER:
                         if (url_editing) {
                             url_editing = false;
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
                             need_fetch = 1;
+
+                        } else if (link_number_mode && page && page->link_count > 0) {
+                            /* Open link by number */
+                            int link_num = atoi(link_number_buf);
+                            if (link_num >= 1 && link_num <= page->link_count && link_num <= 128) {
+                                strncpy(url_buf,
+                                        page->links[link_num - 1].href,
+                                        URL_MAX);
+                                url_buf[URL_MAX-1] = 0;
+                                viewing_bookmarks = false;
+                                bookmark_return_url[0] = 0;
+                                need_fetch = 1;
+                            }
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
 
                         } else if (page && sel_link >= 0 &&
                                    sel_link < page->link_count) {
@@ -1631,11 +1681,13 @@ int main(void) {
                         }
                         break;
 
-                    case SDL_SCANCODE_END:
+case SDL_SCANCODE_END:
                         if (url_editing) {
                             url_cursor = strlen(url_buf);
                         }
                         break;
+
+                    /* Numbered link navigation: digits handled via TEXT_INPUT */
 
                     /* Scrolling */
                     
@@ -1694,8 +1746,34 @@ case SDL_SCANCODE_TAB: {
     }
     break;
 }
-                    case SDL_SCANCODE_ESCAPE: running = 0; break;
-                    default: break;
+                    case SDL_SCANCODE_ESCAPE:
+                        if (link_number_mode) {
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                        } else {
+                            running = 0;
+                        }
+                        break;
+                    /* Digit keys: handled via TEXT_INPUT, just break here */
+                    case SDL_SCANCODE_1:
+                    case SDL_SCANCODE_2:
+                    case SDL_SCANCODE_3:
+                    case SDL_SCANCODE_4:
+                    case SDL_SCANCODE_5:
+                    case SDL_SCANCODE_6:
+                    case SDL_SCANCODE_7:
+                    case SDL_SCANCODE_8:
+                    case SDL_SCANCODE_9:
+                    case SDL_SCANCODE_0:
+                        break;
+                    default:
+                        if (link_number_mode) {
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                        }
+                        break;
                 }
             } /* KEY_DOWN */
 

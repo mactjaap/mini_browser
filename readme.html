@@ -2,13 +2,13 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 1.6</title>
+  <title>Mini Browser 2.0-alpha5</title>
   <!-- Blank-line dividers below are for the badge only; desktop uses hr rules. -->
   <style>.sep{display:none;}</style>
 </head>
 <body>
 
-<h1>Mini Browser 1.6</h1>
+<h1>Mini Browser 2.0-alpha5</h1>
 
 <p>A compact, text-oriented web browser for the WHY2025 badge.</p>
 
@@ -68,7 +68,9 @@ no images, and no attempt to behave like a modern desktop browser.</p>
 
 <span class="sep"><br> <br></span><h2>Bookmarks</h2>
 
-<p>Version 1.6 adds persistent bookmarks.</p>
+<p>Version 2.0-alpha5 fixes Back/Forward navigation.
+Version 2.0-alpha4 adds Forward navigation.
+Version 1.6 adds persistent bookmarks.</p>
 
 <ul>
   <li><b>WHY+F</b> - add the current page to bookmarks</li>
@@ -129,6 +131,7 @@ application storage image and therefore removes saved bookmarks.</p>
   <li><b>F</b> - add/remove current page as a bookmark</li>
   <li><b>M</b> - open bookmarks</li>
   <li><b>B</b> - go back</li>
+  <li><b>G</b> - go forward</li>
   <li><b>Q</b> - quit Mini Browser</li>
 </ul>
 
@@ -217,6 +220,7 @@ current webpage.</p>
   <li><b>Content cap</b> - maximum downloaded page size is 64 KB</li>
   <li><b>Link cap</b> - maximum 128 extracted links per page</li>
   <li><b>Bookmark cap</b> - maximum 32 bookmarks</li>
+  <li><b>Forward history</b> - maximum 32 forward entries</li>
   <li><b>Relative URLs</b> - complex ../ traversal is not fully normalised</li>
   <li><b>Firmware flashing</b> - a complete BadgeVMS firmware flash removes saved bookmarks</li>
 </ul>
@@ -240,6 +244,35 @@ current webpage.</p>
   <li><a href="https://www.kernel.org/">Kernel.org</a></li>
   <li><a href="https://www.lua.org/">Lua</a></li>
   <li><a href="https://musl.libc.org/">musl libc</a></li>
+</ul>
+
+<hr>
+
+<span class="sep"><br> <br></span><h2>Version 2.0-alpha5</h2>
+
+<p>Version 2.0-alpha5 fixes Back/Forward navigation:</p>
+
+<ul>
+  <li>Proper single-history-model implementation</li>
+  <li>WHY+B go back in navigation history</li>
+  <li>WHY+G go forward in navigation history</li>
+  <li>History holds up to 32 entries</li>
+  <li>Forward branch automatically discarded when navigating to new URL</li>
+  <li>Full Back/Forward navigation like a normal browser</li>
+</ul>
+
+<hr>
+
+<span class="sep"><br> <br></span><h2>Version 2.0-alpha4</h2>
+
+<p>Version 2.0-alpha4 added Forward navigation:</p>
+
+<ul>
+  <li>WHY+G go forward through navigation history</li>
+  <li>Forward stack holds up to 32 entries</li>
+  <li>Forward history cleared when navigating to a new URL</li>
+  <li>Back (WHY+B) saves current URL to forward stack</li>
+  <li>Full Back/Forward navigation like a normal browser</li>
 </ul>
 
 <hr>

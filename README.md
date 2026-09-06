@@ -6,7 +6,7 @@ Mini Browser is a lightweight browser written in C using SDL and libcurl. It ret
 
 It is intentionally small and simple: no JavaScript, no CSS engine, no images, and no attempt to behave like a modern desktop browser.
 
-Current version: **1.6**
+Current version: **2.0-alpha5** (development version)
 
 ---
 
@@ -160,6 +160,7 @@ Hold the WHY key (`0xE3`) and press:
 - **WHY+F** — add/remove current page as a bookmark
 - **WHY+M** — open bookmarks
 - **WHY+B** — go back
+- **WHY+G** — go forward
 - **WHY+Q** — quit Mini Browser
 
 When the bookmarks page is open, **WHY+B** returns to the webpage you were viewing before opening bookmarks.
@@ -258,6 +259,7 @@ Mini Browser is deliberately not a full web browser.
 - **64 KB page download limit**
 - **Maximum 128 extracted links per page**
 - **Maximum 32 bookmarks**
+- **Forward history limited to 32 entries**
 - Complex modern websites will often produce poor or unusable output
 - Relative paths containing complex `../` traversal are not fully normalised
 - Reflashing the complete BadgeVMS firmware removes saved bookmarks
@@ -306,6 +308,31 @@ idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
 Note that flashing the complete firmware also flashes the generated BadgeVMS storage image. Runtime-created files such as saved Mini Browser bookmarks are therefore replaced.
+
+---
+
+## Version 2.0-alpha5 (development)
+
+Version 2.0-alpha5 fixes Back/Forward navigation:
+
+- Proper single-history-model implementation
+- **WHY+B** — go back in navigation history
+- **WHY+G** — go forward in navigation history
+- History holds up to 32 entries
+- Forward branch automatically discarded when navigating to new URL
+- Full Back/Forward navigation like a normal browser
+
+---
+
+## Version 2.0-alpha4 (development)
+
+Version 2.0-alpha4 added Forward navigation:
+
+- **WHY+G** — go forward through navigation history
+- Forward stack holds up to 32 entries
+- Forward history cleared when navigating to a new URL
+- Back (WHY+B) saves current URL to forward stack
+- Full Back/Forward navigation like a normal browser
 
 ---
 

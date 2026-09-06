@@ -1036,30 +1036,64 @@ static page_t *bookmarks_to_page(void) {
     return pg;
 }
 
-/* ---------- page cache for instant Back (disabled - causes memory issues) ---------- */
-
-/* ---------- history (for WHY + B) ---------- */
+/* ---------- history with Back/Forward navigation ---------- */
 #define HISTORY_MAX 32
 static char g_hist[HISTORY_MAX][URL_MAX];
 static int  g_hist_len = 0;
+static int  g_hist_pos = -1;  /* -1 = nothing, 0..len-1 = current entry index */
+
+/*
+ * INVARIANT: g_hist_pos is the zero-based index of the currently displayed
+ * history entry. g_hist_len is the total number of entries.
+ *
+ * Example: HOME -> A -> B -> C
+ * g_hist[0] = HOME, g_hist[1] = A, g_hist[2] = B, g_hist[3] = C
+ * g_hist_len = 4, g_hist_pos = 3 (pointing at C)
+ */
 
 static void history_push(const char *u) {
     if (!u || !*u) return;
-    if (g_hist_len > 0 && strncmp(g_hist[g_hist_len - 1], u, URL_MAX) == 0) return; /* no dup consec */
+    
+    /* Case A: duplicate of current entry - do nothing */
+    if (g_hist_pos >= 0 && strncmp(g_hist[g_hist_pos], u, URL_MAX) == 0) {
+        return;
+    }
+    
+    /* Case B: user was in forward state, truncate forward branch */
+    if (g_hist_pos < g_hist_len - 1) {
+        g_hist_len = g_hist_pos + 1;
+    }
+    
+    /* Case C/D: append new entry */
     if (g_hist_len < HISTORY_MAX) {
+        /* Normal append */
         strncpy(g_hist[g_hist_len], u, URL_MAX);
         g_hist[g_hist_len][URL_MAX-1] = 0;
+        g_hist_pos = g_hist_len;
         g_hist_len++;
     } else {
+        /* Full: shift down, append at end */
         memmove(g_hist, g_hist + 1, sizeof(g_hist[0]) * (HISTORY_MAX - 1));
         strncpy(g_hist[HISTORY_MAX - 1], u, URL_MAX);
         g_hist[HISTORY_MAX - 1][URL_MAX - 1] = 0;
+        if (g_hist_pos > 0) g_hist_pos--;
+        g_hist_pos = HISTORY_MAX - 1;
+        g_hist_len = HISTORY_MAX;
     }
 }
+
 static int history_back(char *out) {
-    if (g_hist_len <= 1) return 0;        /* nowhere to go */
-    g_hist_len--;                          /* drop current */
-    strncpy(out, g_hist[g_hist_len - 1], URL_MAX);
+    if (g_hist_pos <= 0) return 0;  /* Can't go back from first entry */
+    g_hist_pos--;
+    strncpy(out, g_hist[g_hist_pos], URL_MAX);
+    out[URL_MAX - 1] = 0;
+    return 1;
+}
+
+static int history_forward(char *out) {
+    if (g_hist_pos < 0 || g_hist_pos + 1 >= g_hist_len) return 0;
+    g_hist_pos++;
+    strncpy(out, g_hist[g_hist_pos], URL_MAX);
     out[URL_MAX - 1] = 0;
     return 1;
 }
@@ -1124,6 +1158,9 @@ int main(void) {
     int link_number_len = 0;
     bool link_number_mode = false;
 
+    /* History navigation flag - true when restoring from Back/Forward */
+    bool history_navigation = false;
+
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
     esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
@@ -1163,8 +1200,11 @@ int main(void) {
                     strncpy(url_buf, tmp, URL_MAX); url_buf[URL_MAX-1]=0;
                 }
                 if (is_http_scheme(url_buf)) {
-                    /* record in history just before fetching */
-                    history_push(url_buf);
+                    /* record in history just before fetching (unless reloading) */
+                    if (!history_navigation) {
+                        history_push(url_buf);
+                    }
+                    history_navigation = false;
 
                     snprintf(barline, sizeof(barline), "%s", url_buf);
                     draw_ui(ren, barline);
@@ -1415,12 +1455,12 @@ int main(void) {
                 }
 
                 /* Special one-shot keys -> direct navigate */
-                if (sc == SC_SPECIAL_124) { strncpy(url_buf, SPECIAL_URL_124, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_125) { strncpy(url_buf, SPECIAL_URL_125, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_126) { strncpy(url_buf, SPECIAL_URL_126, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_127) { strncpy(url_buf, SPECIAL_URL_127, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_128) { strncpy(url_buf, SPECIAL_URL_128, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_129) { strncpy(url_buf, SPECIAL_URL_129, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_124) {  strncpy(url_buf, SPECIAL_URL_124, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_125) {  strncpy(url_buf, SPECIAL_URL_125, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_126) {  strncpy(url_buf, SPECIAL_URL_126, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_127) {  strncpy(url_buf, SPECIAL_URL_127, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_128) {  strncpy(url_buf, SPECIAL_URL_128, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_129) {  strncpy(url_buf, SPECIAL_URL_129, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
 
                  
                 /* Accelerator combos (E,C,H,R,F,M,B,Q) */       
@@ -1448,13 +1488,15 @@ int main(void) {
                             break;
 
                         case SDL_SCANCODE_H:
+                            
                             strncpy(url_buf, HOME_URL, URL_MAX);
                             url_buf[URL_MAX-1] = 0;
                             need_fetch = 1;
                             sel_link = -1;
                             inhibit_text_once = true;
                             break;
-                                                    case SDL_SCANCODE_R:
+                        case SDL_SCANCODE_R:
+                            history_navigation = true;
                             need_fetch = 1;
                             inhibit_text_once = true;
                             break;
@@ -1548,6 +1590,7 @@ int main(void) {
                                 bookmark_return_url[0] = 0;
 
                                 viewing_bookmarks = false;
+                                history_navigation = true;
                                 need_fetch = 1;
                                 sel_link = -1;
 
@@ -1557,11 +1600,25 @@ int main(void) {
                                 if (history_back(prev)) {
                                     strncpy(url_buf, prev, URL_MAX);
                                     url_buf[URL_MAX-1] = 0;
+                                    history_navigation = true;
                                     need_fetch = 1;
                                     sel_link = -1;
                                 }
                             }
 
+                            inhibit_text_once = true;
+                            break;
+                        }
+
+                        case SDL_SCANCODE_G: { /* FORWARD */
+                            char next_url[URL_MAX];
+                            if (history_forward(next_url)) {
+                                strncpy(url_buf, next_url, URL_MAX);
+                                url_buf[URL_MAX-1] = 0;
+                                history_navigation = true;
+                                need_fetch = 1;
+                                sel_link = -1;
+                            }
                             inhibit_text_once = true;
                             break;
                         }
@@ -1588,11 +1645,11 @@ int main(void) {
                             link_number_len = 0;
                             link_number_buf[0] = '\0';
                             need_fetch = 1;
-
                         } else if (link_number_mode && page && page->link_count > 0) {
                             /* Open link by number */
                             int link_num = atoi(link_number_buf);
                             if (link_num >= 1 && link_num <= page->link_count && link_num <= 128) {
+                                
                                 strncpy(url_buf,
                                         page->links[link_num - 1].href,
                                         URL_MAX);
@@ -1608,6 +1665,7 @@ int main(void) {
                         } else if (page && sel_link >= 0 &&
                                    sel_link < page->link_count) {
 
+                            
                             strncpy(url_buf,
                                     page->links[sel_link].href,
                                     URL_MAX);
@@ -1624,6 +1682,7 @@ int main(void) {
                             need_fetch = 1;
 
                         } else {
+                            
                             need_fetch = 1;
                         }
                         break;

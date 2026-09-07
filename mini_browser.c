@@ -6,6 +6,7 @@
 #include "curl/curl.h"
 #include <SDL3/SDL.h>
 #include <ctype.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,10 @@
 #define URLBAR_H      24
 #define LINE_SPACING  2
 #define MAX_LINKS     128
+#define MAX_ACTIONS   160
+#define MAX_FORMS       4
+#define MAX_FORM_FIELDS 8
+#define FORM_VALUE_MAX 128
 
 /* --- Scroll repeat constants for hold-to-scroll --- */
 #define SCROLL_REPEAT_DELAY_MS 300
@@ -143,11 +148,44 @@ typedef struct {
 } link_t;
 
 typedef struct {
-    char *text;                 /* rendered text with [n] markers */
+    char name[64];
+    char value[FORM_VALUE_MAX];
+    char label[64];
+    char type[16];
+    bool disabled;
+} form_field_t;
+
+typedef struct {
+    char action[URL_MAX];
+    char method[8];
+    form_field_t fields[MAX_FORM_FIELDS];
+    int field_count;
+} form_t;
+
+typedef enum {
+    ACTION_LINK,
+    ACTION_FORM_FIELD,
+    ACTION_FORM_SUBMIT
+} action_type_t;
+
+typedef struct {
+    action_type_t type;
+    int link_index;
+    int form_index;
+    int field_index;
+} page_action_t;
+
+typedef struct {
+    char *text;
+    char *text_template;
     link_t links[MAX_LINKS];
     int link_count;
+    page_action_t actions[MAX_ACTIONS];
+    int action_count;
     char base[URL_MAX];         /* base URL for resolution */
     char title[128];            /* page <title> */
+    form_t forms[MAX_FORMS];
+    int form_count;
 } page_t;
 
 /* ---------- URL helpers ---------- */
@@ -233,297 +271,592 @@ static void normalize_typed_url(char *buf) {
     }
 }
 
-/* ---------- entity decode (minimal) ---------- */
+/* ---------- entity decode ---------- */
 static const char *emit_entity(const char *h, char *out, size_t *o, size_t cap) {
-    if      (!strncmp(h,"&amp;",5))  { if(*o<cap) out[(*o)++]='&';  return h+5; }
-    else if (!strncmp(h,"&lt;",4))   { if(*o<cap) out[(*o)++]='<';  return h+4; }
-    else if (!strncmp(h,"&gt;",4))   { if(*o<cap) out[(*o)++]='>';  return h+4; }
-    else if (!strncmp(h,"&quot;",6)) { if(*o<cap) out[(*o)++]='"'; return h+6; }
-    else if (!strncmp(h,"&#39;",5))  { if(*o<cap) out[(*o)++]='\''; return h+5; }
-    else if (!strncmp(h,"&nbsp;",6)) { if(*o<cap) out[(*o)++]=' ';  return h+6; }
+    if (!strncmp(h, "&amp;", 5)) { if (*o < cap) out[(*o)++] = '&'; return h + 5; }
+    if (!strncmp(h, "&lt;", 4)) { if (*o < cap) out[(*o)++] = '<'; return h + 4; }
+    if (!strncmp(h, "&gt;", 4)) { if (*o < cap) out[(*o)++] = '>'; return h + 4; }
+    if (!strncmp(h, "&quot;", 6)) { if (*o < cap) out[(*o)++] = '"'; return h + 6; }
+    if (!strncmp(h, "&#39;", 5)) { if (*o < cap) out[(*o)++] = '\''; return h + 5; }
+    if (!strncmp(h, "&apos;", 6)) { if (*o < cap) out[(*o)++] = '\''; return h + 6; }
+    if (!strncmp(h, "&nbsp;", 6)) { if (*o < cap) out[(*o)++] = ' '; return h + 6; }
     return NULL;
+}
+
+static const char *emit_numeric_entity(const char *h, char *out, size_t *o, size_t cap) {
+    int base = 10;
+    const char *p = h + 2;
+    if (*p == 'x' || *p == 'X') { base = 16; p++; }
+    unsigned long value = 0;
+    const char *digits = p;
+    while (*p && *p != ';') {
+        int digit;
+        if (*p >= '0' && *p <= '9') digit = *p - '0';
+        else if (base == 16 && *p >= 'a' && *p <= 'f') digit = 10 + *p - 'a';
+        else if (base == 16 && *p >= 'A' && *p <= 'F') digit = 10 + *p - 'A';
+        else return NULL;
+        if (digit >= base || value > (ULONG_MAX - (unsigned long)digit) / (unsigned long)base) return NULL;
+        value = value * (unsigned long)base + (unsigned long)digit;
+        p++;
+    }
+    if (p == digits || *p != ';') return NULL;
+    if (*o < cap) out[(*o)++] = (value >= 32 && value <= 126) ? (char)value : '?';
+    return p + 1;
 }
 
 /* --------- href filter --------- */
 static int is_supported_href(const char *h) {
-    if (!h || !*h) return 0;
-    if (h[0] == '#') return 0; /* in-page */
+    if (!h || !*h || h[0] == '#') return 0;
     if (!strncasecmp(h, "javascript:", 11)) return 0;
     if (!strncasecmp(h, "mailto:", 7)) return 0;
     if (!strncasecmp(h, "data:", 5)) return 0;
-    return 1; /* allow http(s) and relatives */
+    return 1;
 }
-
-/* ---------- HTML -> page_t for v1.3---------- */
 
 static const char *find_case_insensitive(const char *haystack, const char *needle) {
     if (!haystack || !needle || !*needle) return haystack;
-
     size_t needle_len = strlen(needle);
-
     for (const char *p = haystack; *p; p++) {
-        if (strncasecmp(p, needle, needle_len) == 0) {
-            return p;
-        }
+        if (!strncasecmp(p, needle, needle_len)) return p;
     }
-
     return NULL;
 }
 
-static void extract_html_title(const char *html, char *out, size_t cap) {
-    if (!out || cap == 0) return;
-
-    out[0] = 0;
-
-    if (!html) return;
-
-    const char *start = find_case_insensitive(html, "<title");
-    if (!start) return;
-
-    start = strchr(start, '>');
-    if (!start) return;
-
-    start++;
-
-    const char *end = find_case_insensitive(start, "</title>");
-    if (!end) return;
-
-    size_t n = (size_t)(end - start);
-    if (n >= cap) n = cap - 1;
-
-    memcpy(out, start, n);
-    out[n] = 0;
-
-    trim_inplace(out);
-
-    /* Collapse whitespace inside the title. */
-    char *src = out;
-    char *dst = out;
-    bool in_space = false;
-
-    while (*src) {
-        if (isspace((unsigned char)*src)) {
-            if (!in_space) {
-                *dst++ = ' ';
-                in_space = true;
-            }
-        } else {
-            *dst++ = *src;
-            in_space = false;
+static const char *find_tag_end(const char *start, const char *end) {
+    char quote = 0;
+    for (const char *p = start; p < end; p++) {
+        if (quote) {
+            if (*p == quote) quote = 0;
+        } else if (*p == '"' || *p == '\'') {
+            quote = *p;
+        } else if (*p == '>') {
+            return p;
         }
-
-        src++;
     }
-
-    *dst = 0;
+    return NULL;
 }
 
+static int tag_attribute(const char *start, const char *end, const char *wanted,
+                         char *out, size_t out_cap) {
+    const char *p = start;
+    size_t wanted_len = strlen(wanted);
 
-/* ---------- HTML -> page_t ---------- */
-static page_t *html_to_page(const char *html, const char *base_url) {
-    if (!html) return NULL;
-    size_t L = strlen(html);
-    char *buf = (char*)malloc(L + 1 + MAX_LINKS*6);
-    if (!buf) return NULL;
+    while (p < end) {
+        while (p < end && (isspace((unsigned char)*p) || *p == '/')) p++;
+        const char *name = p;
+        while (p < end && (isalnum((unsigned char)*p) || *p == '-' || *p == '_')) p++;
+        size_t name_len = (size_t)(p - name);
+        if (!name_len) { p++; continue; }
+        while (p < end && isspace((unsigned char)*p)) p++;
 
-    page_t *pg = (page_t*)calloc(1, sizeof(page_t));
-    if (!pg) { free(buf); return NULL; }
-    strncpy(pg->base, base_url ? base_url : "", URL_MAX);
-    pg->base[URL_MAX-1] = 0;
-
-    extract_html_title(html, pg->title, sizeof(pg->title));
-    bool in_head=false, in_script=false, in_style=false;
-    size_t o=0;
-
-    for (size_t i=0; i<L; ) {
-        char c = html[i];
-
-        if (!in_script && !in_style && !in_head && c=='&') {
-            const char *adv = emit_entity(&html[i], buf, &o, L + MAX_LINKS*6);
-            if (adv) { i = (size_t)(adv - html); continue; }
+        const char *value = NULL;
+        size_t value_len = 0;
+        if (p < end && *p == '=') {
+            p++;
+            while (p < end && isspace((unsigned char)*p)) p++;
+            if (p < end && (*p == '"' || *p == '\'')) {
+                char quote = *p++;
+                value = p;
+                while (p < end && *p != quote) p++;
+                value_len = (size_t)(p - value);
+                if (p < end) p++;
+            } else {
+                value = p;
+                while (p < end && !isspace((unsigned char)*p) && *p != '>') p++;
+                value_len = (size_t)(p - value);
+            }
         }
 
-        if (c == '<') {
-            i++;
-            bool closing = false;
-            if (i<L && html[i]=='/') { closing=true; i++; }
-
-            char tname[16]; int tn=0;
-            while (i<L && tn<(int)sizeof(tname)-1 && isalpha((unsigned char)html[i])) {
-                tname[tn++] = (char)tolower((unsigned char)html[i]); i++;
+        if (name_len == wanted_len && !strncasecmp(name, wanted, wanted_len)) {
+            if (out && out_cap && value) {
+                if (value_len >= out_cap) value_len = out_cap - 1;
+                memcpy(out, value, value_len);
+                out[value_len] = 0;
             }
-            tname[tn]=0;
+            return 1;
+        }
+    }
+    return 0;
+}
 
-            while (i<L && isspace((unsigned char)html[i])) i++;
+static void lower_ascii(char *s) {
+    for (; s && *s; s++) *s = (char)tolower((unsigned char)*s);
+}
 
-            if (!closing) {
-                if (!strcmp(tname,"head"))   in_head=true;
-                else if (!strcmp(tname,"script")) in_script=true;
-                else if (!strcmp(tname,"style"))  in_style=true;
+static int append_bytes(char *out, size_t cap, size_t *used, const char *text, size_t len) {
+    if (*used + len >= cap) return 0;
+    memcpy(out + *used, text, len);
+    *used += len;
+    out[*used] = 0;
+    return 1;
+}
 
-                if (!strcmp(tname,"a")) {
-                    char href_val[URL_MAX]; href_val[0]=0;
+static int append_text(char *out, size_t cap, size_t *used, const char *text) {
+    return append_bytes(out, cap, used, text, strlen(text));
+}
 
-                    while (i<L && html[i] != '>') {
-                        char aname[16]; int an=0;
-                        while (i<L && isspace((unsigned char)html[i])) i++;
-                        while (i<L && an<(int)sizeof(aname)-1 &&
-                               (isalnum((unsigned char)html[i]) || html[i]=='-' || html[i]=='_')) {
-                            aname[an++] = (char)tolower((unsigned char)html[i]); i++;
-                        }
-                        aname[an]=0;
-                        while (i<L && isspace((unsigned char)html[i])) i++;
+static void append_line_break(char *out, size_t cap, size_t *used) {
+    if (*used && out[*used - 1] != '\n') append_text(out, cap, used, "\n");
+}
 
-                        if (i<L && html[i]=='=') {
-                            i++;
-                            while (i<L && isspace((unsigned char)html[i])) i++;
-                            char quote=0;
-                            if (i<L && (html[i]=='"' || html[i]=='\'')) quote = html[i++];
+static int append_action_marker(char *out, size_t cap, size_t *used, int action_index) {
+    char marker[8];
+    int n = snprintf(marker, sizeof(marker), "\001%03d\002", action_index);
+    return n > 0 && (size_t)n < sizeof(marker) && append_bytes(out, cap, used, marker, (size_t)n);
+}
 
-                            char aval[URL_MAX]; int av=0;
-                            while (i<L) {
-                                if (quote) {
-                                    if (html[i]==quote) { i++; break; }
-                                } else {
-                                    if (isspace((unsigned char)html[i]) || html[i]=='>') break;
-                                }
-                                if (av < (int)sizeof(aval)-1) aval[av++] = html[i];
-                                i++;
-                            }
-                            aval[av]=0;
+static int add_action(page_t *page, action_type_t type, int link_index,
+                      int form_index, int field_index) {
+    if (page->action_count >= MAX_ACTIONS) return -1;
+    int index = page->action_count++;
+    page->actions[index].type = type;
+    page->actions[index].link_index = link_index;
+    page->actions[index].form_index = form_index;
+    page->actions[index].field_index = field_index;
+    return index;
+}
 
-                            if (!strcmp(aname,"href") && !href_val[0]) {
-                                strncpy(href_val, aval, URL_MAX);
-                                href_val[URL_MAX-1]=0;
-                            }
-                        } else {
-                            while (i<L && !isspace((unsigned char)html[i]) && html[i] != '>') i++;
-                        }
+static int refresh_page_text(page_t *page) {
+    if (!page || !page->text_template) return 0;
+    size_t cap = strlen(page->text_template) +
+                 (size_t)page->action_count * (FORM_VALUE_MAX + 96) + 1;
+    char *rendered = (char*)malloc(cap);
+    if (!rendered) return 0;
+
+    size_t used = 0;
+    const char *p = page->text_template;
+    while (*p) {
+        if ((unsigned char)p[0] == 1 && isdigit((unsigned char)p[1]) &&
+            isdigit((unsigned char)p[2]) && isdigit((unsigned char)p[3]) &&
+            (unsigned char)p[4] == 2) {
+            int action_index = (p[1] - '0') * 100 + (p[2] - '0') * 10 + (p[3] - '0');
+            if (action_index >= 0 && action_index < page->action_count) {
+                const page_action_t *action = &page->actions[action_index];
+                char line[FORM_VALUE_MAX + 96];
+                line[0] = 0;
+                if (action->type == ACTION_FORM_FIELD &&
+                    action->form_index >= 0 && action->form_index < page->form_count) {
+                    const form_t *form = &page->forms[action->form_index];
+                    if (action->field_index >= 0 && action->field_index < form->field_count) {
+                        const form_field_t *field = &form->fields[action->field_index];
+                        snprintf(line, sizeof(line), "[%d] %s: %s\n",
+                                 action_index + 1, field->name, field->value);
                     }
-
-                    if (is_supported_href(href_val) && pg->link_count < MAX_LINKS) {
-                        char abs[URL_MAX]; resolve_url(pg->base, href_val, abs, sizeof abs);
-                        if (is_supported_href(abs)) {
-                            int idx = pg->link_count++;
-                            strncpy(pg->links[idx].href, abs, URL_MAX);
-                            pg->links[idx].href[URL_MAX-1]=0;
-                            int wrote = snprintf(buf + o, L + MAX_LINKS*6 - o, "[%d]", idx+1);
-                            if (wrote > 0) o += (size_t)wrote;
-                        }
+                } else if (action->type == ACTION_FORM_SUBMIT &&
+                           action->form_index >= 0 && action->form_index < page->form_count) {
+                    const form_t *form = &page->forms[action->form_index];
+                    if (action->field_index >= 0 && action->field_index < form->field_count) {
+                        const form_field_t *field = &form->fields[action->field_index];
+                        snprintf(line, sizeof(line), "[%d] [%s]\n",
+                                 action_index + 1, field->label[0] ? field->label : "Submit");
                     }
+                }
+                if (!append_text(rendered, cap, &used, line)) { free(rendered); return 0; }
+            }
+            p += 5;
+            continue;
+        }
+        if (!append_bytes(rendered, cap, &used, p, 1)) { free(rendered); return 0; }
+        p++;
+    }
 
-                    while (i<L && html[i] != '>') i++;
-                                    } else if (!strcmp(tname,"br")) {
-                    if (o && buf[o-1] != '\n') {
-                        buf[o++] = '\n';
-                    }
-                    while (i<L && html[i] != '>') i++;
+    free(page->text);
+    page->text = rendered;
+    return 1;
+}
 
-                } else if (!strcmp(tname,"p") ||
-                           !strcmp(tname,"div") ||
-                           !strcmp(tname,"section") ||
-                           !strcmp(tname,"article") ||
-                           !strcmp(tname,"header") ||
-                           !strcmp(tname,"footer")) {
+static void extract_html_title(const char *html, char *out, size_t cap) {
+    if (!out || !cap) return;
+    out[0] = 0;
+    if (!html) return;
+    const char *start = find_case_insensitive(html, "<title");
+    if (!start || !(start = strchr(start, '>'))) return;
+    start++;
+    const char *end = find_case_insensitive(start, "</title>");
+    if (!end) return;
+    size_t n = (size_t)(end - start);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, start, n);
+    out[n] = 0;
+    trim_inplace(out);
+}
 
-                    if (o && buf[o-1] != '\n') {
-                        buf[o++] = '\n';
-                    }
+static void extract_button_label(const char *start, const char *end, char *out, size_t cap) {
+    size_t used = 0;
+    bool spacing = false;
+    if (!cap) return;
+    for (const char *p = start; p < end && used + 1 < cap; p++) {
+        if (*p == '<') {
+            const char *tag_end = find_tag_end(p + 1, end);
+            if (!tag_end) break;
+            p = tag_end;
+        } else if (isspace((unsigned char)*p)) {
+            spacing = used > 0;
+        } else {
+            if (spacing && used + 1 < cap) out[used++] = ' ';
+            spacing = false;
+            out[used++] = *p;
+        }
+    }
+    out[used] = 0;
+    trim_inplace(out);
+}
 
-                    while (i<L && html[i] != '>') i++;
+static page_t *html_to_page(const char *html, const char *base_url) {
+    if (!html) return NULL;
+    size_t length = strlen(html);
+    size_t template_cap = length + (size_t)MAX_ACTIONS * 8 + 1;
+    char *template_text = (char*)calloc(1, template_cap);
+    page_t *page = (page_t*)calloc(1, sizeof(page_t));
+    if (!template_text || !page) { free(template_text); free(page); return NULL; }
 
-                } else if (!strcmp(tname,"h1") ||
-                           !strcmp(tname,"h2") ||
-                           !strcmp(tname,"h3") ||
-                           !strcmp(tname,"h4") ||
-                           !strcmp(tname,"h5") ||
-                           !strcmp(tname,"h6")) {
+    strncpy(page->base, base_url ? base_url : "", URL_MAX);
+    page->base[URL_MAX - 1] = 0;
+    extract_html_title(html, page->title, sizeof(page->title));
 
-                    if (o && buf[o-1] != '\n') {
-                        buf[o++] = '\n';
-                    }
+    const char *html_end = html + length;
+    size_t used = 0;
+    bool in_head = false, in_script = false, in_style = false, in_pre = false;
+    int current_form = -1;
+    int ordered_depth = 0, ordered_item = 0;
 
-                    if (o < L + MAX_LINKS*6 - 3) {
-                        buf[o++] = '=';
-                        buf[o++] = ' ';
-                    }
-
-                    while (i<L && html[i] != '>') i++;
-
-                } else if (!strcmp(tname,"li")) {
-
-                    if (o && buf[o-1] != '\n') {
-                        buf[o++] = '\n';
-                    }
-
-                    if (o < L + MAX_LINKS*6 - 3) {
-                        buf[o++] = '*';
-                        buf[o++] = ' ';
-                    }
-
-                    while (i<L && html[i] != '>') i++;
-
-                } else if (!strcmp(tname,"pre")) {
-
-                    if (o && buf[o-1] != '\n') {
-                        buf[o++] = '\n';
-                    }
-
-                    while (i<L && html[i] != '>') i++;
-
+    for (const char *cursor = html; cursor < html_end && *cursor; ) {
+        if (*cursor != '<') {
+            if (!in_head && !in_script && !in_style) {
+                if (*cursor == '&') {
+                    const char *next = NULL;
+                    if (cursor + 1 < html_end && cursor[1] == '#')
+                        next = emit_numeric_entity(cursor, template_text, &used, template_cap - 1);
+                    if (!next) next = emit_entity(cursor, template_text, &used, template_cap - 1);
+                    if (next) { cursor = next; continue; }
+                }
+                if (in_pre) {
+                    if (*cursor != '\r') append_bytes(template_text, template_cap, &used, cursor, 1);
+                } else if (isspace((unsigned char)*cursor)) {
+                    if (used && template_text[used - 1] != ' ' && template_text[used - 1] != '\n')
+                        append_text(template_text, template_cap, &used, " ");
                 } else {
-                    while (i<L && html[i] != '>') i++;
+                    append_bytes(template_text, template_cap, &used, cursor, 1);
                 }
-            } else {
-                if (!strcmp(tname,"head")) {
-                    in_head = false;
-
-                } else if (!strcmp(tname,"script")) {
-                    in_script = false;
-
-                } else if (!strcmp(tname,"style")) {
-                    in_style = false;
-
-                } else if (!strcmp(tname,"p") ||
-                           !strcmp(tname,"div") ||
-                           !strcmp(tname,"section") ||
-                           !strcmp(tname,"article") ||
-                           !strcmp(tname,"header") ||
-                           !strcmp(tname,"footer") ||
-                           !strcmp(tname,"li") ||
-                           !strcmp(tname,"h1") ||
-                           !strcmp(tname,"h2") ||
-                           !strcmp(tname,"h3") ||
-                           !strcmp(tname,"h4") ||
-                           !strcmp(tname,"h5") ||
-                           !strcmp(tname,"h6") ||
-                           !strcmp(tname,"pre")) {
-
-                    if (o && buf[o-1] != '\n') {
-                        buf[o++] = '\n';
-                    }
-                }
-
-                while (i<L && html[i] != '>') i++;
             }
-
-            if (i<L && html[i]=='>') i++;
+            cursor++;
             continue;
         }
 
-        if (in_script || in_style || in_head) { i++; continue; }
+        if (cursor + 4 <= html_end && !strncmp(cursor, "<!--", 4)) {
+            const char *comment_end = strstr(cursor + 4, "-->");
+            cursor = comment_end ? comment_end + 3 : html_end;
+            continue;
+        }
+        if (cursor + 1 < html_end && (cursor[1] == '!' || cursor[1] == '?')) {
+            const char *tag_end = find_tag_end(cursor + 2, html_end);
+            cursor = tag_end ? tag_end + 1 : html_end;
+            continue;
+        }
 
-        if (c=='\r') { i++; continue; }
-        if (c=='\n') { if (o && buf[o-1] != '\n') buf[o++]='\n'; i++; continue; }
-        if (c==' ' && o && buf[o-1]==' ') { i++; continue; }
+        const char *p = cursor + 1;
+        bool closing = false;
+        if (p < html_end && *p == '/') { closing = true; p++; }
+        while (p < html_end && isspace((unsigned char)*p)) p++;
+        char tag[16]; size_t tag_len = 0;
+        while (p < html_end && tag_len + 1 < sizeof(tag) && isalpha((unsigned char)*p))
+            tag[tag_len++] = (char)tolower((unsigned char)*p++);
+        tag[tag_len] = 0;
+        const char *attributes = p;
+        const char *tag_end = find_tag_end(attributes, html_end);
+        if (!tag_end) break;
+        const char *after_tag = tag_end + 1;
 
-        if (o < L + MAX_LINKS*6 - 1) buf[o++] = c;
-        i++;
+        if (closing) {
+            if (!strcmp(tag, "head")) in_head = false;
+            else if (!strcmp(tag, "script")) in_script = false;
+            else if (!strcmp(tag, "style")) in_style = false;
+            else if (!strcmp(tag, "form")) { current_form = -1; append_line_break(template_text, template_cap, &used); }
+            else if (!strcmp(tag, "pre")) { in_pre = false; append_line_break(template_text, template_cap, &used); }
+            else if (!strcmp(tag, "ol")) { if (ordered_depth > 0) ordered_depth--; }
+            else if (!strcmp(tag, "code")) append_text(template_text, template_cap, &used, "`");
+            else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) append_text(template_text, template_cap, &used, "**");
+            else if (!strcmp(tag, "em") || !strcmp(tag, "i")) append_text(template_text, template_cap, &used, "_");
+            else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                     !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                     !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                     !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
+                     !strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                     !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6") ||
+                     !strcmp(tag, "tr") || !strcmp(tag, "table"))
+                append_line_break(template_text, template_cap, &used);
+            cursor = after_tag;
+            continue;
+        }
+
+        if (!strcmp(tag, "head")) in_head = true;
+        else if (!strcmp(tag, "script")) in_script = true;
+        else if (!strcmp(tag, "style")) in_style = true;
+        else if (!strcmp(tag, "pre")) { append_line_break(template_text, template_cap, &used); in_pre = true; }
+        else if (!strcmp(tag, "br")) append_line_break(template_text, template_cap, &used);
+        else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                 !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                 !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                 !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "tr"))
+            append_line_break(template_text, template_cap, &used);
+        else if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                 !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
+            append_line_break(template_text, template_cap, &used);
+            append_text(template_text, template_cap, &used, "= ");
+        } else if (!strcmp(tag, "ul")) {
+            ordered_depth = 0;
+        } else if (!strcmp(tag, "ol")) {
+            ordered_depth++;
+            ordered_item = 0;
+        } else if (!strcmp(tag, "li")) {
+            append_line_break(template_text, template_cap, &used);
+            if (ordered_depth) {
+                char number[16];
+                snprintf(number, sizeof(number), "%d. ", ++ordered_item);
+                append_text(template_text, template_cap, &used, number);
+            } else append_text(template_text, template_cap, &used, "* ");
+        } else if (!strcmp(tag, "code")) append_text(template_text, template_cap, &used, "`");
+        else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) append_text(template_text, template_cap, &used, "**");
+        else if (!strcmp(tag, "em") || !strcmp(tag, "i")) append_text(template_text, template_cap, &used, "_");
+        else if (!strcmp(tag, "hr")) {
+            append_line_break(template_text, template_cap, &used);
+            append_text(template_text, template_cap, &used, "--------------------------------\n");
+        } else if (!strcmp(tag, "td") || !strcmp(tag, "th")) {
+            if (used && template_text[used - 1] != '\n' && template_text[used - 1] != ' ')
+                append_text(template_text, template_cap, &used, " | ");
+        } else if (!strcmp(tag, "form")) {
+            append_line_break(template_text, template_cap, &used);
+            if (page->form_count < MAX_FORMS) {
+                current_form = page->form_count++;
+                form_t *form = &page->forms[current_form];
+                memset(form, 0, sizeof(*form));
+                strncpy(form->method, "get", sizeof(form->method));
+                tag_attribute(attributes, tag_end, "action", form->action, sizeof(form->action));
+                if (tag_attribute(attributes, tag_end, "method", form->method, sizeof(form->method)))
+                    lower_ascii(form->method);
+            } else current_form = -1;
+        } else if (!strcmp(tag, "input") && current_form >= 0) {
+            form_t *form = &page->forms[current_form];
+            if (form->field_count < MAX_FORM_FIELDS) {
+                form_field_t field;
+                memset(&field, 0, sizeof(field));
+                strncpy(field.type, "text", sizeof(field.type));
+                tag_attribute(attributes, tag_end, "name", field.name, sizeof(field.name));
+                tag_attribute(attributes, tag_end, "value", field.value, sizeof(field.value));
+                if (tag_attribute(attributes, tag_end, "type", field.type, sizeof(field.type))) lower_ascii(field.type);
+                field.disabled = tag_attribute(attributes, tag_end, "disabled", NULL, 0);
+
+                bool editable = !strcmp(field.type, "text") || !strcmp(field.type, "search") || !strcmp(field.type, "url");
+                bool hidden = !strcmp(field.type, "hidden");
+                bool submit = !strcmp(field.type, "submit");
+                if ((editable && field.name[0]) || (hidden && field.name[0]) || submit) {
+                    int field_index = form->field_count++;
+                    form->fields[field_index] = field;
+                    if (submit) {
+                        strncpy(form->fields[field_index].label,
+                                field.value[0] ? field.value : "Submit",
+                                sizeof(form->fields[field_index].label));
+                        if (!field.disabled) {
+                            int action = add_action(page, ACTION_FORM_SUBMIT, -1, current_form, field_index);
+                            if (action >= 0) append_action_marker(template_text, template_cap, &used, action);
+                        }
+                    } else if (editable && !field.disabled) {
+                        int action = add_action(page, ACTION_FORM_FIELD, -1, current_form, field_index);
+                        if (action >= 0) append_action_marker(template_text, template_cap, &used, action);
+                    }
+                }
+            }
+        } else if (!strcmp(tag, "button") && current_form >= 0) {
+            form_t *form = &page->forms[current_form];
+            char type[16] = "submit";
+            tag_attribute(attributes, tag_end, "type", type, sizeof(type));
+            lower_ascii(type);
+            const char *close = find_case_insensitive(after_tag, "</button>");
+            if (!strcmp(type, "submit") && form->field_count < MAX_FORM_FIELDS) {
+                int field_index = form->field_count++;
+                form_field_t *field = &form->fields[field_index];
+                memset(field, 0, sizeof(*field));
+                strncpy(field->type, "submit", sizeof(field->type));
+                tag_attribute(attributes, tag_end, "name", field->name, sizeof(field->name));
+                tag_attribute(attributes, tag_end, "value", field->value, sizeof(field->value));
+                field->disabled = tag_attribute(attributes, tag_end, "disabled", NULL, 0);
+                if (close) extract_button_label(after_tag, close, field->label, sizeof(field->label));
+                if (!field->label[0]) strncpy(field->label, field->value[0] ? field->value : "Submit", sizeof(field->label));
+                if (!field->disabled) {
+                    int action = add_action(page, ACTION_FORM_SUBMIT, -1, current_form, field_index);
+                    if (action >= 0) append_action_marker(template_text, template_cap, &used, action);
+                }
+            }
+            if (close) {
+                const char *close_end = strchr(close, '>');
+                cursor = close_end ? close_end + 1 : html_end;
+                continue;
+            }
+        } else if (!strcmp(tag, "a")) {
+            char href[URL_MAX] = "";
+            if (tag_attribute(attributes, tag_end, "href", href, sizeof(href)) &&
+                is_supported_href(href) && page->link_count < MAX_LINKS) {
+                char absolute[URL_MAX];
+                resolve_url(page->base, href, absolute, sizeof(absolute));
+                if (is_supported_href(absolute)) {
+                    int link_index = page->link_count++;
+                    strncpy(page->links[link_index].href, absolute, URL_MAX);
+                    page->links[link_index].href[URL_MAX - 1] = 0;
+                    int action = add_action(page, ACTION_LINK, link_index, -1, -1);
+                    if (action >= 0) {
+                        char number[16];
+                        snprintf(number, sizeof(number), "[%d]", action + 1);
+                        append_text(template_text, template_cap, &used, number);
+                    }
+                }
+            }
+        }
+
+        cursor = after_tag;
     }
 
-    buf[o]=0;
-    pg->text = buf;
-    return pg;
+    template_text[used] = 0;
+    page->text_template = template_text;
+    if (!refresh_page_text(page)) {
+        free(page->text_template);
+        free(page);
+        return NULL;
+    }
+    return page;
+}
+
+static int form_urlencode(const char *src, char *out, size_t out_cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t used = 0;
+    if (!out_cap) return 0;
+    for (size_t i = 0; src && src[i]; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            if (used + 1 >= out_cap) return 0;
+            out[used++] = (char)c;
+        } else if (c == ' ') {
+            if (used + 1 >= out_cap) return 0;
+            out[used++] = '+';
+        } else {
+            if (used + 3 >= out_cap) return 0;
+            out[used++] = '%';
+            out[used++] = hex[c >> 4];
+            out[used++] = hex[c & 15];
+        }
+    }
+    out[used] = 0;
+    return 1;
+}
+
+static int append_url_part(char *out, size_t out_cap, const char *part) {
+    size_t used = strlen(out), len = strlen(part);
+    if (used + len >= out_cap) return 0;
+    memcpy(out + used, part, len + 1);
+    return 1;
+}
+
+static int build_get_form_url(const page_t *page, int form_index,
+                              int submit_field_index, char *out, size_t out_cap) {
+    if (!page || form_index < 0 || form_index >= page->form_count || !out_cap) return 0;
+    const form_t *form = &page->forms[form_index];
+    const char *method = form->method[0] ? form->method : "get";
+    if (strcasecmp(method, "get")) return -1;
+
+    if (form->action[0]) resolve_url(page->base, form->action, out, out_cap);
+    else { strncpy(out, page->base, out_cap); out[out_cap - 1] = 0; }
+    char *hash = strchr(out, '#');
+    if (hash) *hash = 0;
+
+    bool has_query = strchr(out, '?') != NULL;
+    bool first_parameter = true;
+    for (int i = 0; i < form->field_count; i++) {
+        const form_field_t *field = &form->fields[i];
+        if (field->disabled || !field->name[0]) continue;
+        bool submit = !strcmp(field->type, "submit");
+        bool successful = !strcmp(field->type, "text") || !strcmp(field->type, "search") ||
+                          !strcmp(field->type, "url") || !strcmp(field->type, "hidden") ||
+                          (submit && i == submit_field_index);
+        if (!successful) continue;
+
+        char encoded_name[sizeof(field->name) * 3 + 1];
+        char encoded_value[sizeof(field->value) * 3 + 1];
+        if (!form_urlencode(field->name, encoded_name, sizeof(encoded_name)) ||
+            !form_urlencode(field->value, encoded_value, sizeof(encoded_value))) return 0;
+
+        size_t current_len = strlen(out);
+        char separator[2] = {0, 0};
+        if (first_parameter) {
+            if (!current_len || (out[current_len - 1] != '?' && out[current_len - 1] != '&'))
+                separator[0] = has_query ? '&' : '?';
+        } else if (current_len && out[current_len - 1] != '?' && out[current_len - 1] != '&') {
+            separator[0] = '&';
+        }
+        if (!append_url_part(out, out_cap, separator) ||
+            !append_url_part(out, out_cap, encoded_name) ||
+            !append_url_part(out, out_cap, "=") ||
+            !append_url_part(out, out_cap, encoded_value)) return 0;
+        first_parameter = false;
+        has_query = true;
+    }
+    return 1;
+}
+
+typedef enum {
+    ACTIVATE_NONE,
+    ACTIVATE_NAVIGATE,
+    ACTIVATE_EDIT_FIELD,
+    ACTIVATE_POST_UNSUPPORTED,
+    ACTIVATE_URL_TOO_LONG
+} activate_result_t;
+
+static activate_result_t activate_page_action(
+    page_t *page, int action_index, char *navigation_url, size_t navigation_cap,
+    int *edit_form, int *edit_field, char *edit_buf, size_t edit_cap,
+    size_t *edit_cursor) {
+    if (!page || action_index < 0 || action_index >= page->action_count)
+        return ACTIVATE_NONE;
+
+    const page_action_t *action = &page->actions[action_index];
+    if (action->type == ACTION_LINK) {
+        if (action->link_index < 0 || action->link_index >= page->link_count)
+            return ACTIVATE_NONE;
+        strncpy(navigation_url, page->links[action->link_index].href, navigation_cap);
+        navigation_url[navigation_cap - 1] = 0;
+        return ACTIVATE_NAVIGATE;
+    }
+
+    if (action->form_index < 0 || action->form_index >= page->form_count)
+        return ACTIVATE_NONE;
+    form_t *form = &page->forms[action->form_index];
+    if (action->field_index < 0 || action->field_index >= form->field_count)
+        return ACTIVATE_NONE;
+
+    if (action->type == ACTION_FORM_FIELD) {
+        form_field_t *field = &form->fields[action->field_index];
+        strncpy(edit_buf, field->value, edit_cap);
+        edit_buf[edit_cap - 1] = 0;
+        *edit_cursor = strlen(edit_buf);
+        *edit_form = action->form_index;
+        *edit_field = action->field_index;
+        return ACTIVATE_EDIT_FIELD;
+    }
+
+    if (action->type == ACTION_FORM_SUBMIT) {
+        int result = build_get_form_url(page, action->form_index,
+                                        action->field_index,
+                                        navigation_url, navigation_cap);
+        if (result < 0) return ACTIVATE_POST_UNSUPPORTED;
+        if (!result) return ACTIVATE_URL_TOO_LONG;
+        return ACTIVATE_NAVIGATE;
+    }
+    return ACTIVATE_NONE;
+}
+
+static void free_page(page_t *page) {
+    if (!page) return;
+    free(page->text);
+    free(page->text_template);
+    free(page);
 }
 
 /* ---------- wrap text to columns ---------- */
@@ -625,9 +958,9 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
     struct curl_slist *hdrs = NULL;
 
     hdrs = curl_slist_append(hdrs,
-        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:1.6) "
+        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:2.1) "
         "Gecko/20100101 "
-        "(compatible; MiniBrowser/1.6; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+        "(compatible; MiniBrowser/2.1; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
 
     hdrs = curl_slist_append(hdrs,
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -1010,8 +1343,8 @@ static page_t *bookmarks_to_page(void) {
                 URL_MAX);
 
         pg->links[pg->link_count].href[URL_MAX - 1] = 0;
-
-        pg->link_count++;
+        int link_index = pg->link_count++;
+        add_action(pg, ACTION_LINK, link_index, -1, -1);
 
         n = snprintf(text + used,
                      cap - used,
@@ -1135,10 +1468,15 @@ int main(void) {
     page_t *page = NULL;
     int  scroll_lines = 0;
     int  need_fetch = 1;
-    int  sel_link = -1;
+    int  sel_action = -1;
     long last_http_status = 0;
     bool url_editing = false;
     size_t url_cursor = 0;
+    bool form_editing = false;
+    int form_edit_form = -1;
+    int form_edit_field = -1;
+    char form_edit_buf[FORM_VALUE_MAX] = "";
+    size_t form_edit_cursor = 0;
 
     /* URL to return to when leaving the bookmarks page with WHY+B. */
     char bookmark_return_url[URL_MAX] = "";
@@ -1185,6 +1523,9 @@ int main(void) {
                 if (need_fetch) {
             url_editing = false;
             url_cursor = 0;
+            form_editing = false;
+            form_edit_form = -1;
+            form_edit_field = -1;
             link_number_mode = false;
             link_number_len = 0;
             link_number_buf[0] = '\0';
@@ -1222,8 +1563,7 @@ int main(void) {
                                rc, url_buf);
 
                         if (page) {
-                            free(page->text);
-                            free(page);
+                            free_page(page);
                             page = NULL;
                         }
 
@@ -1243,15 +1583,14 @@ int main(void) {
 
                         content_wrapped = wrap_text(error_text, max_cols);
                         scroll_lines = 0;
-                        sel_link = -1;
+                        sel_action = -1;
 
                     } else if (http_status >= 400) {
                         printf("[mini_browser] HTTP %ld URL='%s'\n",
                                http_status, url_buf);
 
                         if (page) {
-                            free(page->text);
-                            free(page);
+                            free_page(page);
                             page = NULL;
                         }
 
@@ -1270,15 +1609,14 @@ int main(void) {
 
                         content_wrapped = wrap_text(error_text, max_cols);
                         scroll_lines = 0;
-                        sel_link = -1;
+                        sel_action = -1;
 
                     } else {
                         page_t *pg = html_to_page(m.buf ? m.buf : "", url_buf);
 
                         if (!pg) {
                             if (page) {
-                                free(page->text);
-                                free(page);
+                                free_page(page);
                                 page = NULL;
                             }
 
@@ -1293,7 +1631,7 @@ int main(void) {
 
                             content_wrapped = wrap_text(error_text, max_cols);
                             scroll_lines = 0;
-                            sel_link = -1;
+                            sel_action = -1;
 
                         } else {
                             char *wrapped = wrap_text(pg->text, max_cols);
@@ -1301,14 +1639,11 @@ int main(void) {
                             free(content_wrapped);
                             content_wrapped = wrapped;
 
-                            if (page) {
-                                free(page->text);
-                                free(page);
-                            }
+                            free_page(page);
 
                             page = pg;
                             scroll_lines = 0;
-                            sel_link = -1;
+                            sel_action = -1;
 
                             printf("[mini_browser] HTTP %ld, %u bytes, %d links from %s\n",
                                    http_status,
@@ -1339,6 +1674,15 @@ int main(void) {
                       "%s",
                       status_message);
 
+        } else if (form_editing && page &&
+                   form_edit_form >= 0 && form_edit_form < page->form_count &&
+                   form_edit_field >= 0 &&
+                   form_edit_field < page->forms[form_edit_form].field_count) {
+            const char *name = page->forms[form_edit_form].fields[form_edit_field].name;
+            snprintf(barline, sizeof(barline), "%s: %.*s|%s",
+                     name, (int)form_edit_cursor, form_edit_buf,
+                     form_edit_buf + form_edit_cursor);
+
         } else if (link_number_mode && link_number_len > 0) {
             snprintf(barline, sizeof(barline),
                       "%s",
@@ -1358,11 +1702,17 @@ int main(void) {
                      url_buf,
                      url_buf + url_cursor);
 
-        } else if (page && sel_link >= 0 && sel_link < page->link_count) {            
-            snprintf(barline, sizeof(barline), "[%d/%d]  %s",
-                     sel_link + 1,
-                     page->link_count,
-                     page->links[sel_link].href);
+        } else if (page && sel_action >= 0 && sel_action < page->action_count) {
+            const page_action_t *action = &page->actions[sel_action];
+            if (action->type == ACTION_LINK && action->link_index >= 0 &&
+                action->link_index < page->link_count) {
+                snprintf(barline, sizeof(barline), "[%d/%d]  %s",
+                         sel_action + 1, page->action_count,
+                         page->links[action->link_index].href);
+            } else {
+                snprintf(barline, sizeof(barline), "[%d/%d]",
+                         sel_action + 1, page->action_count);
+            }
 
         } else if (page && page->title[0] && last_http_status > 0) {
             snprintf(barline, sizeof(barline), "%ld  %s",
@@ -1413,19 +1763,16 @@ int main(void) {
 
                 const char *t = ev.text.text;
 
-                /* Capture digits for link number entry */
-                if (page && page->link_count > 0 && t[0] >= '0' && t[0] <= '9') {
-                    if (!link_number_mode) {
-                        link_number_mode = true;
-                        link_number_len = 0;
-                        link_number_buf[0] = '\0';
+                if (form_editing && is_printable_ascii(t)) {
+                    size_t edit_len = strlen(form_edit_buf);
+                    if (form_edit_cursor > edit_len) form_edit_cursor = edit_len;
+                    if (edit_len < sizeof(form_edit_buf) - 1) {
+                        memmove(&form_edit_buf[form_edit_cursor + 1],
+                                &form_edit_buf[form_edit_cursor],
+                                edit_len - form_edit_cursor + 1);
+                        form_edit_buf[form_edit_cursor++] = t[0];
                     }
-                    if (link_number_len < (int)sizeof(link_number_buf) - 1) {
-                        link_number_buf[link_number_len++] = t[0];
-                        link_number_buf[link_number_len] = '\0';
-                    }
-                }
-                else if (url_editing && is_printable_ascii(t)) {
+                } else if (url_editing && is_printable_ascii(t)) {
                     size_t curlen = strlen(url_buf);
 
                     if (url_cursor > curlen) {
@@ -1439,7 +1786,18 @@ int main(void) {
 
                         url_buf[url_cursor] = t[0];
                         url_cursor++;
-                        sel_link = -1;
+                        sel_action = -1;
+                    }
+                } else if (page && page->action_count > 0 &&
+                           t[0] >= '0' && t[0] <= '9') {
+                    if (!link_number_mode) {
+                        link_number_mode = true;
+                        link_number_len = 0;
+                        link_number_buf[0] = '\0';
+                    }
+                    if (link_number_len < (int)sizeof(link_number_buf) - 1) {
+                        link_number_buf[link_number_len++] = t[0];
+                        link_number_buf[link_number_len] = '\0';
                     }
                 }
             }
@@ -1455,22 +1813,25 @@ int main(void) {
                 }
 
                 /* Special one-shot keys -> direct navigate */
-                if (sc == SC_SPECIAL_124) {  strncpy(url_buf, SPECIAL_URL_124, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_125) {  strncpy(url_buf, SPECIAL_URL_125, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_126) {  strncpy(url_buf, SPECIAL_URL_126, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_127) {  strncpy(url_buf, SPECIAL_URL_127, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_128) {  strncpy(url_buf, SPECIAL_URL_128, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
-                if (sc == SC_SPECIAL_129) {  strncpy(url_buf, SPECIAL_URL_129, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_link=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_124) {  strncpy(url_buf, SPECIAL_URL_124, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_125) {  strncpy(url_buf, SPECIAL_URL_125, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_126) {  strncpy(url_buf, SPECIAL_URL_126, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_127) {  strncpy(url_buf, SPECIAL_URL_127, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_128) {  strncpy(url_buf, SPECIAL_URL_128, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_129) {  strncpy(url_buf, SPECIAL_URL_129, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
 
                  
                 /* Accelerator combos (E,C,H,R,F,M,B,Q) */       
                  if (accel_down) {
                     switch (sc) {
                         case SDL_SCANCODE_E:
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
                             strncpy(url_buf, "https://", URL_MAX);
                             url_buf[URL_MAX-1] = 0;
                             url_cursor = strlen(url_buf);
-                            sel_link = -1;
+                            sel_action = -1;
                             url_editing = true;
                             link_number_mode = false;
                             link_number_len = 0;
@@ -1478,8 +1839,11 @@ int main(void) {
                             inhibit_text_once = true;
                             break;
                         case SDL_SCANCODE_C:
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
                             url_cursor = strlen(url_buf);
-                            sel_link = -1;
+                            sel_action = -1;
                             url_editing = true;
                             link_number_mode = false;
                             link_number_len = 0;
@@ -1492,7 +1856,7 @@ int main(void) {
                             strncpy(url_buf, HOME_URL, URL_MAX);
                             url_buf[URL_MAX-1] = 0;
                             need_fetch = 1;
-                            sel_link = -1;
+                            sel_action = -1;
                             inhibit_text_once = true;
                             break;
                         case SDL_SCANCODE_R:
@@ -1526,8 +1890,7 @@ int main(void) {
                                 content_wrapped = wrapped;
 
                                 if (page) {
-                                    free(page->text);
-                                    free(page);
+                                    free_page(page);
                                 }
 
                                 page = pg;
@@ -1537,7 +1900,7 @@ int main(void) {
 
                                 last_http_status = 0;
                                 scroll_lines = 0;
-                                sel_link = -1;
+                                sel_action = -1;
                                 url_editing = false;
                                 viewing_bookmarks = true;
 
@@ -1592,7 +1955,7 @@ int main(void) {
                                 viewing_bookmarks = false;
                                 history_navigation = true;
                                 need_fetch = 1;
-                                sel_link = -1;
+                                sel_action = -1;
 
                             } else {
                                 char prev[URL_MAX];
@@ -1602,7 +1965,7 @@ int main(void) {
                                     url_buf[URL_MAX-1] = 0;
                                     history_navigation = true;
                                     need_fetch = 1;
-                                    sel_link = -1;
+                                    sel_action = -1;
                                 }
                             }
 
@@ -1617,7 +1980,7 @@ int main(void) {
                                 url_buf[URL_MAX-1] = 0;
                                 history_navigation = true;
                                 need_fetch = 1;
-                                sel_link = -1;
+                                sel_action = -1;
                             }
                             inhibit_text_once = true;
                             break;
@@ -1639,55 +2002,78 @@ int main(void) {
 
                     case SDL_SCANCODE_RETURN:
                     case SDL_SCANCODE_KP_ENTER:
-                        if (url_editing) {
+                        if (form_editing) {
+                            if (page && form_edit_form >= 0 &&
+                                form_edit_form < page->form_count &&
+                                form_edit_field >= 0 &&
+                                form_edit_field < page->forms[form_edit_form].field_count) {
+                                form_field_t *field =
+                                    &page->forms[form_edit_form].fields[form_edit_field];
+                                strncpy(field->value, form_edit_buf, sizeof(field->value));
+                                field->value[sizeof(field->value) - 1] = 0;
+                                if (refresh_page_text(page)) {
+                                    char *wrapped = wrap_text(page->text, max_cols);
+                                    if (wrapped) {
+                                        free(content_wrapped);
+                                        content_wrapped = wrapped;
+                                    }
+                                }
+                            }
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
+                        } else if (url_editing) {
                             url_editing = false;
                             link_number_mode = false;
                             link_number_len = 0;
                             link_number_buf[0] = '\0';
                             need_fetch = 1;
-                        } else if (link_number_mode && page && page->link_count > 0) {
-                            /* Open link by number */
-                            int link_num = atoi(link_number_buf);
-                            if (link_num >= 1 && link_num <= page->link_count && link_num <= 128) {
-                                
-                                strncpy(url_buf,
-                                        page->links[link_num - 1].href,
-                                        URL_MAX);
-                                url_buf[URL_MAX-1] = 0;
-                                viewing_bookmarks = false;
-                                bookmark_return_url[0] = 0;
-                                need_fetch = 1;
+                        } else if (page && (link_number_mode || sel_action >= 0)) {
+                            int action_index = sel_action;
+                            if (link_number_mode) {
+                                int action_number = atoi(link_number_buf);
+                                action_index = action_number - 1;
                             }
                             link_number_mode = false;
                             link_number_len = 0;
                             link_number_buf[0] = '\0';
-
-                        } else if (page && sel_link >= 0 &&
-                                   sel_link < page->link_count) {
-
-                            
-                            strncpy(url_buf,
-                                    page->links[sel_link].href,
-                                    URL_MAX);
-
-                            url_buf[URL_MAX-1] = 0;
-
-                            /*
-                             * If this link was opened from the bookmarks
-                             * page, we are now returning to normal browsing.
-                             */
-                            viewing_bookmarks = false;
-                            bookmark_return_url[0] = 0;
-
-                            need_fetch = 1;
-
+                            activate_result_t result = activate_page_action(
+                                page, action_index, url_buf, sizeof(url_buf),
+                                &form_edit_form, &form_edit_field,
+                                form_edit_buf, sizeof(form_edit_buf),
+                                &form_edit_cursor);
+                            if (result == ACTIVATE_EDIT_FIELD) {
+                                form_editing = true;
+                                url_editing = false;
+                            } else if (result == ACTIVATE_NAVIGATE) {
+                                viewing_bookmarks = false;
+                                bookmark_return_url[0] = 0;
+                                history_navigation = false;
+                                need_fetch = 1;
+                            } else if (result == ACTIVATE_POST_UNSUPPORTED) {
+                                snprintf(status_message, sizeof(status_message),
+                                         "POST FORMS NOT SUPPORTED");
+                                status_message_until = SDL_GetTicks() + 2000;
+                            } else if (result == ACTIVATE_URL_TOO_LONG) {
+                                snprintf(status_message, sizeof(status_message),
+                                         "FORM URL TOO LONG");
+                                status_message_until = SDL_GetTicks() + 2000;
+                            }
                         } else {
-                            
                             need_fetch = 1;
                         }
                         break;
-                        case SDL_SCANCODE_BACKSPACE:
-                        if (url_editing) {
+                    case SDL_SCANCODE_BACKSPACE:
+                        if (form_editing) {
+                            size_t edit_len = strlen(form_edit_buf);
+                            if (form_edit_cursor > edit_len) form_edit_cursor = edit_len;
+                            if (form_edit_cursor > 0) {
+                                memmove(&form_edit_buf[form_edit_cursor - 1],
+                                        &form_edit_buf[form_edit_cursor],
+                                        edit_len - form_edit_cursor + 1);
+                                form_edit_cursor--;
+                            }
+                        } else if (url_editing) {
                             size_t curlen = strlen(url_buf);
 
                             if (url_cursor > curlen) {
@@ -1702,12 +2088,20 @@ int main(void) {
                                 url_cursor--;
                             }
 
-                            sel_link = -1;
+                            sel_action = -1;
                         }
                         break;
 
                     case SDL_SCANCODE_DELETE:
-                        if (url_editing) {
+                        if (form_editing) {
+                            size_t edit_len = strlen(form_edit_buf);
+                            if (form_edit_cursor > edit_len) form_edit_cursor = edit_len;
+                            if (form_edit_cursor < edit_len) {
+                                memmove(&form_edit_buf[form_edit_cursor],
+                                        &form_edit_buf[form_edit_cursor + 1],
+                                        edit_len - form_edit_cursor);
+                            }
+                        } else if (url_editing) {
                             size_t curlen = strlen(url_buf);
 
                             if (url_cursor > curlen) {
@@ -1720,12 +2114,14 @@ int main(void) {
                                         curlen - url_cursor);
                             }
 
-                            sel_link = -1;
+                            sel_action = -1;
                         }
                         break;
 
                     case SDL_SCANCODE_LEFT:
-                        if (url_editing) {
+                        if (form_editing) {
+                            if (form_edit_cursor > 0) form_edit_cursor--;
+                        } else if (url_editing) {
                             if (url_cursor > 0) {
                                 url_cursor--;
                             }
@@ -1733,7 +2129,10 @@ int main(void) {
                         break;
 
                     case SDL_SCANCODE_RIGHT:
-                        if (url_editing) {
+                        if (form_editing) {
+                            if (form_edit_cursor < strlen(form_edit_buf))
+                                form_edit_cursor++;
+                        } else if (url_editing) {
                             size_t curlen = strlen(url_buf);
 
                             if (url_cursor < curlen) {
@@ -1742,8 +2141,10 @@ int main(void) {
                         }
                         break;
 
-case SDL_SCANCODE_END:
-                        if (url_editing) {
+                    case SDL_SCANCODE_END:
+                        if (form_editing) {
+                            form_edit_cursor = strlen(form_edit_buf);
+                        } else if (url_editing) {
                             url_cursor = strlen(url_buf);
                         }
                         break;
@@ -1753,7 +2154,7 @@ case SDL_SCANCODE_END:
                     /* Scrolling */
                     
                     case SDL_SCANCODE_DOWN:
-                        if (!url_editing) {
+                        if (!url_editing && !form_editing) {
                             if (!scroll_down_held) {
                                 scroll_down_held = true;
                                 scroll_up_held = false;
@@ -1762,9 +2163,11 @@ case SDL_SCANCODE_END:
                             }
                         }
                         break;
-                    case SDL_SCANCODE_J: scroll_lines++; break;
+                    case SDL_SCANCODE_J:
+                        if (!url_editing && !form_editing) scroll_lines++;
+                        break;
                     case SDL_SCANCODE_UP:
-                        if (!url_editing) {
+                        if (!url_editing && !form_editing) {
                             if (!scroll_up_held) {
                                 scroll_up_held = true;
                                 scroll_down_held = false;
@@ -1773,42 +2176,55 @@ case SDL_SCANCODE_END:
                             }
                         }
                         break;
-                    case SDL_SCANCODE_K: if (scroll_lines>0) scroll_lines--; break;
+                    case SDL_SCANCODE_K:
+                        if (!url_editing && !form_editing && scroll_lines > 0)
+                            scroll_lines--;
+                        break;
                     case SDL_SCANCODE_HOME:
-                        if (url_editing) {
+                        if (form_editing) {
+                            form_edit_cursor = 0;
+                        } else if (url_editing) {
                             url_cursor = 0;
                         } else {
                             scroll_lines = 0;
                         }
                         break;
                     case SDL_SCANCODE_PAGEDOWN: {
-                        int lpp = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
-                        scroll_lines += lpp > 2 ? lpp - 2 : 1;
+                        if (!url_editing && !form_editing) {
+                            int lpp = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
+                            scroll_lines += lpp > 2 ? lpp - 2 : 1;
+                        }
                         break;
                     }
                     case SDL_SCANCODE_PAGEUP:
-                        if (scroll_lines >= 5) scroll_lines -= 5; else scroll_lines = 0;
+                        if (!url_editing && !form_editing) {
+                            if (scroll_lines >= 5) scroll_lines -= 5; else scroll_lines = 0;
+                        }
                         break;
 
                     /* Link navigation */
 case SDL_SCANCODE_TAB: {
     bool shift = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
-    if (page && page->link_count > 0) {
-        if (sel_link < 0) {
+    if (!form_editing && !url_editing && page && page->action_count > 0) {
+        if (sel_action < 0) {
             /* First time we tab (Tab or Shift+Tab): start at the first link */
-            sel_link = 0;
+            sel_action = 0;
         } else if (shift) {
             /* Move backward, wrapping to last if we're at the start */
-            sel_link = (sel_link == 0) ? (page->link_count - 1) : (sel_link - 1);
+            sel_action = (sel_action == 0) ? (page->action_count - 1) : (sel_action - 1);
         } else {
             /* Move forward with wraparound */
-            sel_link = (sel_link + 1) % page->link_count;
+            sel_action = (sel_action + 1) % page->action_count;
         }
     }
     break;
 }
                     case SDL_SCANCODE_ESCAPE:
-                        if (link_number_mode) {
+                        if (form_editing) {
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
+                        } else if (link_number_mode) {
                             link_number_mode = false;
                             link_number_len = 0;
                             link_number_buf[0] = '\0';
@@ -1851,7 +2267,7 @@ case SDL_SCANCODE_TAB: {
         } /* while events */
 
         /* Timed scroll repeat for held arrow keys */
-        if (!url_editing) {
+        if (!url_editing && !form_editing) {
             Uint64 now = SDL_GetTicks();
             if (scroll_down_held && now >= scroll_repeat_at) {
                 scroll_lines++;
@@ -1866,7 +2282,7 @@ case SDL_SCANCODE_TAB: {
     }
 
     SDL_StopTextInput(win);
-    if (page) { free(page->text); free(page); }
+    free_page(page);
     free(content_wrapped);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

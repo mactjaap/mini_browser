@@ -5,7 +5,13 @@ Mini Browser is a tiny text-only web browser written in C.
 The Linux version is based on the same browser engine as the Mini Browser
 originally developed for the WHY2025 BadgeVMS / ESP32-P4 badge.
 
-It deliberately keeps things simple:
+Two stable Linux versions are available:
+
+- Mini Browser 1.6 — lightweight text browsing, links, history and bookmarks
+- Mini Browser 2.1 — adds simple HTML GET forms, improved HTML rendering,
+  unified numbered actions and Back/Forward history
+
+Both versions deliberately keep things simple:
 
 - Text-only browsing
 - No JavaScript
@@ -13,25 +19,87 @@ It deliberately keeps things simple:
 - No images
 - libcurl for HTTP/HTTPS
 - Simple built-in HTML parser
-- Numbered links
-- Keyboard navigation
-- Back history
+- Numbered navigation
 - Persistent bookmarks
 - 64 KiB maximum page size
 - Maximum 128 links per page
 
-It runs in a normal Linux terminal and does not require X11, Wayland,
-a desktop environment, SDL, or ncurses.
+Mini Browser runs in a normal Linux terminal and does not require X11,
+Wayland, a desktop environment, SDL, or ncurses.
 
 
-## 1. Download the source
+## 1. Choose a version
 
-You need:
+### Mini Browser 1.6
+
+Version 1.6 is the classic Linux version.
+
+Features include:
+
+- Text-only HTML browsing
+- Numbered links
+- Back history
+- URL entry
+- Reload
+- Persistent bookmarks
+- Maximum 128 links per page
+- Maximum 64 KiB downloaded per page
+
+Use 1.6 if you want the smallest and simplest version.
+
+
+### Mini Browser 2.1
+
+Version 2.1 extends the browser while keeping the same lightweight design.
+
+In addition to the 1.6 functionality it supports:
+
+- Simple HTML GET forms
+- Text input fields
+- Search input fields
+- URL input fields
+- Hidden form fields
+- Submit inputs
+- Submit buttons
+- application/x-www-form-urlencoded query generation
+- Numbered links and form controls in one action list
+- Back and Forward history
+- Improved HTML rendering
+- Headings
+- Lists
+- Preformatted text
+- Basic tables
+- Strong/emphasized text markers
+- Code markers
+- Horizontal rules
+- HTML entity decoding
+
+Version 2.1 does NOT support POST forms, JavaScript-driven forms or complex
+form controls such as checkboxes, radio buttons, select boxes or file uploads.
+
+
+## 2. Download the source
+
+For version 1.6 you need the corresponding 1.6 source:
+
+    mini_browser_linux.c
+
+For version 2.1 you need the 2.1 source.
+
+You can keep the release filename:
+
+    mini_browser_linux_v2.1.c
+
+or rename it:
+
+    cp mini_browser_linux_v2.1.c mini_browser_linux.c
+
+The examples below use:
 
     mini_browser_linux.c
 
 
-## 2. AlmaLinux / Rocky Linux / RHEL
+## 3. AlmaLinux / Rocky Linux / RHEL
 
 Install the compiler and libcurl development files:
 
@@ -49,8 +117,12 @@ Or open a website immediately:
 
     ./mini-browser https://news.ycombinator.com/
 
+For Mini Browser 2.1, Wiby is a useful site for testing GET forms:
 
-## 3. Raspberry Pi OS / Debian / Ubuntu
+    ./mini-browser https://wiby.me/
+
+
+## 4. Raspberry Pi OS / Debian / Ubuntu
 
 Install the compiler and libcurl development files:
 
@@ -69,15 +141,19 @@ Or:
 
     ./mini-browser https://news.ycombinator.com/
 
+Mini Browser is plain C and libcurl, so the same source can be compiled
+directly on x86-64, ARM64/AArch64 and other Linux architectures supported
+by the compiler and libcurl.
 
-## 4. Install system-wide
 
-After compiling successfully, you can install the binary in /usr/local/bin:
+## 5. Install system-wide
+
+After compiling successfully, install the binary in /usr/local/bin:
 
     cp mini-browser /usr/local/bin/mini-browser
     chmod 755 /usr/local/bin/mini-browser
 
-Now it can be started from anywhere:
+It can now be started from anywhere:
 
     mini-browser
 
@@ -89,10 +165,14 @@ or:
 
     mini-browser https://news.ycombinator.com/
 
+With 2.1 you can also try a simple search form:
 
-## 5. Commands
+    mini-browser https://wiby.me/
 
-While Mini Browser is running:
+
+## 6. Mini Browser 1.6 commands
+
+While Mini Browser 1.6 is running:
 
     NUMBER       Open a link
     b            Back
@@ -114,7 +194,141 @@ Example:
 opens link number 12 on the current page.
 
 
-## 6. Bookmarks
+## 7. Mini Browser 2.1 commands
+
+Mini Browser 2.1 uses numbered actions instead of numbering only links.
+
+An action can be:
+
+- A link
+- An editable form field
+- A form submit button
+
+Commands:
+
+    NUMBER       Activate a numbered link or form control
+    b            Back
+    fwd          Forward
+    g URL        Go to a URL
+    g            Enter a URL interactively
+    h            Homepage
+    r            Reload
+    l            Show all numbered actions
+    f            Add/remove current page as bookmark
+    m            Show bookmarks
+    o NUMBER     Open bookmark
+    ?            Help
+    q            Quit
+
+For example, a search page might contain:
+
+    [1] q:
+    [2] [Search]
+    [3] About
+
+Entering:
+
+    mini-browser> 1
+
+selects the form field and asks for its new value.
+
+After entering a search term, use:
+
+    mini-browser> 2
+
+to activate the Search button.
+
+Mini Browser creates the GET URL and loads the result page.
+
+Normal links use exactly the same numbering system.
+
+
+## 8. HTML forms in 2.1
+
+Mini Browser 2.1 supports deliberately simple GET forms.
+
+Supported input types:
+
+    text
+    search
+    url
+    hidden
+    submit
+
+It also supports:
+
+    <button type="submit">
+
+Editable fields are displayed as numbered actions.
+
+For example:
+
+    [1] q:
+    [2] [Search]
+
+Selecting action 1 lets you enter the value.
+
+Selecting action 2 submits the form.
+
+Form parameters are encoded using normal URL form encoding.
+
+For example, entering:
+
+    hello world
+
+can result in a query containing:
+
+    q=hello+world
+
+Hidden fields are included automatically when the form is submitted.
+
+Up to 4 forms and 8 fields per form are handled by the lightweight parser.
+
+POST forms are intentionally not supported. Mini Browser reports:
+
+    POST FORMS NOT SUPPORTED
+
+if a POST form is activated.
+
+
+## 9. Back and Forward
+
+Mini Browser 1.6 provides Back navigation.
+
+Mini Browser 2.1 uses a browser-style history cursor and supports both:
+
+    b
+
+for Back and:
+
+    fwd
+
+for Forward.
+
+For example:
+
+    Page A -> Page B -> Page C
+
+Pressing:
+
+    b
+    b
+
+returns to Page A.
+
+Then:
+
+    fwd
+
+moves forward to Page B.
+
+If you go Back and then open a new page, the old Forward branch is
+discarded, like in a normal web browser.
+
+Reloading a page does not create another history entry.
+
+
+## 10. Bookmarks
 
 Press:
 
@@ -138,37 +352,151 @@ Bookmarks are stored in:
 
 They remain available after Mini Browser is restarted.
 
+The Linux bookmark file is independent of the BadgeVMS bookmark file.
 
-## 7. Check the executable
 
-You can inspect the compiled program with:
+## 11. HTML rendering in 2.1
+
+Mini Browser 2.1 understands more HTML structure than 1.6 while remaining
+a text-only browser.
+
+It recognizes useful elements including:
+
+    p
+    div
+    section
+    article
+    main
+    header
+    footer
+    nav
+    aside
+    blockquote
+    address
+    br
+    h1 ... h6
+    ul
+    ol
+    li
+    pre
+    code
+    strong
+    b
+    em
+    i
+    hr
+    table
+    tr
+    td
+    th
+    a
+    form
+    input
+    button
+
+Script, style and head content are suppressed from the visible page.
+
+Common HTML entities are decoded, together with numeric decimal and
+hexadecimal entities.
+
+Mini Browser remains intentionally ASCII-focused. It is not a complete
+Unicode browser.
+
+
+## 12. Network behaviour
+
+Both versions use libcurl for HTTP and HTTPS.
+
+Mini Browser follows HTTP redirects and limits redirect chains to prevent
+unbounded redirects.
+
+The maximum downloaded page size is:
+
+    64 KiB
+
+This is intentional and originates from the constrained BadgeVMS design.
+
+Mini Browser 2.1 distinguishes between network failures and HTTP errors,
+making failures such as connection problems and HTTP 404/500 responses
+easier to understand.
+
+
+## 13. Check the executable
+
+Inspect the compiled program with:
 
     file mini-browser
 
-On a typical AlmaLinux x86-64 machine this will show an x86-64 ELF executable.
+On a typical AlmaLinux x86-64 machine this will show an x86-64 ELF
+executable.
 
-On a 64-bit Raspberry Pi it will show an ARM/AArch64 executable.
+On a 64-bit Raspberry Pi it will normally show an ARM/AArch64 ELF
+executable.
 
-The same C source therefore works on multiple CPU architectures; simply
-compile it on the target Linux machine.
+The same C source therefore works on multiple CPU architectures. Compile
+it on the target Linux machine and GCC creates the appropriate native
+executable.
 
 
-## 8. Updating Mini Browser
+## 14. Updating Mini Browser
 
-Replace mini_browser_linux.c with the newer source and compile it again:
+Replace:
+
+    mini_browser_linux.c
+
+with the newer source and compile again:
 
     gcc -O2 -Wall -Wextra mini_browser_linux.c -o mini-browser -lcurl
 
-If you installed it system-wide:
+If installed system-wide:
 
     cp mini-browser /usr/local/bin/mini-browser
 
+You can check that the program starts correctly with:
 
-## 9. Uninstall
+    mini-browser https://minibrowser.macip.net
 
-If installed in /usr/local/bin:
+
+## 15. Keeping 1.6 and 2.1 together
+
+You can also install both releases.
+
+Compile 1.6 as:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_1.6.c -o mini-browser-1.6 -lcurl
+
+Compile 2.1 as:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_2.1.c -o mini-browser-2.1 -lcurl
+
+Install both:
+
+    cp mini-browser-1.6 /usr/local/bin/
+    cp mini-browser-2.1 /usr/local/bin/
+
+Then run either:
+
+    mini-browser-1.6
+
+or:
+
+    mini-browser-2.1
+
+
+## 16. Uninstall
+
+If installed as:
+
+    /usr/local/bin/mini-browser
+
+remove it with:
 
     rm /usr/local/bin/mini-browser
+
+If both releases were installed separately:
+
+    rm /usr/local/bin/mini-browser-1.6
+    rm /usr/local/bin/mini-browser-2.1
 
 Optionally remove your bookmarks:
 
@@ -179,13 +507,41 @@ Optionally remove your bookmarks:
 
 Mini Browser works best with lightweight, text-oriented websites.
 
-Try:
+Good examples include:
 
+    https://minibrowser.macip.net
     https://news.ycombinator.com/
     https://text.npr.org/
     https://curl.se/
     http://www.textfiles.com/
     http://info.cern.ch/
+
+For testing the simple GET form support in Mini Browser 2.1:
+
+    https://wiby.me/
+
+
+## Version comparison
+
+                        1.6             2.1
+    ------------------------------------------------
+    Text browsing       Yes             Yes
+    Numbered links      Yes             Yes
+    Bookmarks           Yes             Yes
+    Back                Yes             Yes
+    Forward             No              Yes
+    GET forms           No              Yes
+    Text/search fields  No              Yes
+    Submit buttons      No              Yes
+    Hidden fields       No              Yes
+    Unified actions     No              Yes
+    Improved HTML       Basic           Yes
+    JavaScript          No              No
+    CSS                 No              No
+    Images              No              No
+    POST forms          No              No
+    Maximum page        64 KiB          64 KiB
+    Maximum links       128             128
 
 
 ## Philosophy
@@ -193,12 +549,18 @@ Try:
 Mini Browser is intentionally not a modern full-featured web browser.
 
 There is no JavaScript engine, CSS layout engine, image renderer, DOM,
-GPU acceleration, or multi-process architecture.
+GPU acceleration or multi-process architecture.
 
-It downloads a page with libcurl, parses useful HTML, extracts links and
-turns the result into readable terminal text.
+It downloads a page with libcurl, parses the useful HTML itself, extracts
+links and turns the result into readable terminal text.
 
-That makes it small, fast, understandable and suitable for systems ranging
-from an ESP32-P4 badge to a Raspberry Pi and a normal Linux server.
+Mini Browser 2.1 goes one step further: simple HTML GET forms are converted
+into terminal interactions without introducing a JavaScript engine, DOM or
+large HTML framework.
+
+The same basic browser design can therefore run on systems ranging from an
+ESP32-P4 badge to a Raspberry Pi and a normal Linux server.
+
+Small, fast and understandable.
 
 ...but it seems to work. :-)

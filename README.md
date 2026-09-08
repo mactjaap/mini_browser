@@ -1,368 +1,290 @@
-# Mini Browser
+# Mini Browser 2.1
 
-A compact, text-oriented web browser for the **WHY2025 badge**.
+A compact, interactive, text-oriented web browser for the WHY2025 badge.
 
-Mini Browser is a lightweight browser written in C using SDL and libcurl. It retrieves HTML pages, converts them into readable text, extracts links, and provides a keyboard-driven browsing interface designed specifically for the WHY2025 badge.
+Mini Browser is written in C using SDL3 and libcurl. It retrieves HTML pages, converts them into readable text, extracts links and simple HTML forms, and provides a keyboard-driven browsing interface designed for the 720×720 WHY2025 badge display.
 
-It is intentionally small and simple: no JavaScript, no CSS engine, no images, and no attempt to behave like a modern desktop browser.
+Version **2.1** is a stable release. It supports normal link navigation, persistent bookmarks, Back/Forward history, URL editing, hold-to-scroll, improved HTML rendering, and simple interactive GET forms.
 
-Current version: **2.0-alpha5** (development version)
+Mini Browser deliberately does **not** try to be a modern graphical browser. There is no JavaScript engine, CSS layout engine, image renderer, or full DOM. The goal is a small, fast browser for text-oriented and lightweight websites.
 
----
+## Highlights
 
-## Features
+- Text-oriented HTML browsing over HTTP and HTTPS
+- Up to 64 KiB downloaded per page
+- Up to 128 extracted links
+- Up to 160 numbered interactive actions
+- Numbered navigation for links and form controls
+- Tab / Shift+Tab action selection
+- Back and Forward browsing history
+- Persistent bookmarks
+- Editable URL bar
+- Automatic `https://` for typed URLs without a scheme
+- HTTP status and connection error pages
+- Hold Up/Down for fast scrolling
+- Basic GET form support
+- Improved rendering of common HTML structure
+- Small built-in 5×7 bitmap font
+- No JavaScript, CSS layout or image rendering required
 
-### Text-based web browsing
+## HTML forms
 
-Mini Browser downloads HTML pages and converts them into readable text suitable for the badge's 720×720 display.
+Mini Browser 2.1 supports simple interactive HTML GET forms.
 
-Basic HTML structure is recognised, including:
+Supported form controls:
 
-- paragraphs
-- headings
-- lists
-- links
+- `<input type="text">`
+- `<input type="search">`
+- `<input type="url">`
+- `<input type="hidden">`
+- `<input type="submit">`
+- `<button>`
+- `<button type="submit">`
+
+Links and visible form controls share the same numbered action system. A page can therefore look like:
+
+    Search the web
+
+    [1] q:
+    [2] [Search]
+
+    [3] About
+
+Type `1` and press Enter to edit the field. Type the search text and press Enter again to store the value without leaving the page. Then type `2` and press Enter to submit the form.
+
+Form editing is separate from URL editing, so entering text into a form does not change the current page URL.
+
+GET submissions use URL encoding compatible with `application/x-www-form-urlencoded`:
+
+- spaces become `+`
+- unsafe characters are percent encoded
+- field names and values are encoded
+- hidden fields are included
+- the activated named submit button is included
+- disabled and unnamed fields are omitted where appropriate
+- existing query strings in the form action are preserved
+
+Up to 4 forms with up to 8 stored fields per form are supported.
+
+POST forms are recognised but intentionally not submitted. The browser displays:
+
+    POST FORMS NOT SUPPORTED
+
+Complex controls such as `textarea`, `select`, checkboxes, radio buttons, file uploads and JavaScript-driven forms are not currently supported.
+
+## HTML rendering
+
+Mini Browser converts useful HTML structure into a compact text representation.
+
+Supported or specially handled elements include:
+
+- headings (`h1` through `h6`)
+- paragraphs and common block elements
 - line breaks
+- unordered and ordered lists
 - preformatted text
-- page titles
+- inline code
+- bold/strong text
+- emphasis/italic text
+- horizontal rules
+- simple table rows and cells
+- hyperlinks
+- simple forms
+- common named HTML entities
+- decimal and hexadecimal numeric entities
 
-Scripts, stylesheets, and other non-content elements are ignored.
+Comments, doctypes, scripts, styles and document head content are ignored for normal page rendering. The page `<title>` is extracted and displayed in the top bar.
 
-### Link navigation
+Mini Browser is intentionally a tolerant text extractor rather than a standards-complete HTML parser.
 
-All `<a href>` targets are extracted from the page.
+## Navigation
 
-Links can be selected using the keyboard:
+Every usable link or visible form control receives an action number.
 
-- **Tab** — select the next link
-- **Shift+Tab** — select the previous link
-- **Enter** — open the selected link
+For a link:
 
-The selected link and its destination URL are shown in the top bar.
+    [7] Example page
 
-### URL editor
+type:
 
-Mini Browser includes an editable address bar with a real cursor.
+    7
 
-You can:
+and press Enter.
 
-- type a URL
-- move the cursor left and right
-- insert characters at the cursor
-- use Backspace/Delete
-- edit the current URL
-- start a fresh URL with `https://`
+You can also use Tab and Shift+Tab to move through actions and press Enter to activate the selected action.
 
-Bare hostnames are automatically expanded:
+### Keyboard controls
 
-`example.org` → `https://example.org`
+| Key | Action |
+| --- | --- |
+| `0`–`9` + Enter | Activate a numbered link or form action |
+| `Tab` | Select next action |
+| `Shift+Tab` | Select previous action |
+| `Enter` | Activate selected action / accept edit |
+| `Up` / `Down` | Scroll one line; hold for continuous scrolling |
+| `J` / `K` | Scroll down / up one line |
+| `Page Down` | Scroll approximately one page |
+| `Page Up` | Scroll upward |
+| `Home` | Top of page, or start of current editor |
+| `Left` / `Right` | Move cursor while editing |
+| `Backspace` / `Delete` | Edit URL or form value |
+| `End` | Move to end of URL or form value |
+| `Escape` | Cancel form/action-number editing; otherwise exit |
 
-### Redirect handling
+The WHY2025 key acts as the browser accelerator:
 
-Standard HTTP redirects are followed automatically by libcurl.
-
-### Relative URL resolution
-
-Mini Browser resolves common relative URLs against the current page, including:
-
-- `/path`
-- `./path`
-- `//example.org/path`
-- query strings
-- fragments
-
-Full `../` path normalisation is still limited.
-
-### HTML entity decoding
-
-Common HTML entities are converted to readable characters, including:
-
-- `&amp;`
-- `&lt;`
-- `&gt;`
-- `&quot;`
-- `&#39;`
-- `&nbsp;`
-
-### Page titles
-
-The HTML `<title>` is extracted and displayed in the top bar together with the HTTP status.
-
-### HTTP and connection errors
-
-Network failures and HTTP errors are displayed as readable error pages instead of silently failing.
-
-Connection errors include the libcurl error description and offer the normal browser shortcuts for retry, back, and home.
-
----
+| Shortcut | Action |
+| --- | --- |
+| `WHY+E` | Enter a new URL |
+| `WHY+C` | Edit the current URL |
+| `WHY+H` | Home |
+| `WHY+R` | Reload |
+| `WHY+B` | Back |
+| `WHY+G` | Forward |
+| `WHY+F` | Add/remove current bookmark |
+| `WHY+M` | Open bookmarks |
+| `WHY+Q` | Quit |
 
 ## Bookmarks
 
-Version 1.6 adds **persistent bookmarks**.
+Mini Browser stores up to 32 bookmarks.
 
-Press:
+Press `WHY+F` to add or remove the current page. Press `WHY+M` to open the bookmark page.
 
-- **WHY+F** — add the current page to bookmarks
-- **WHY+F** again — remove the current page from bookmarks
-- **WHY+M** — open the bookmarks page
+Bookmarks are stored persistently in BadgeVMS storage at:
 
-The browser briefly displays:
+    APPS:[mini_browser]bookmarks.txt
 
-`BOOKMARK ADDED`
+The bookmark page itself is generated locally and requires no network connection.
 
-or:
+## History
 
-`BOOKMARK REMOVED`
+Mini Browser maintains a browser-style history of up to 32 HTTP/HTTPS entries.
 
-after WHY+F is pressed.
+`WHY+B` moves backward and `WHY+G` moves forward. Navigating to a new page after going Back truncates the old forward branch, like a conventional browser.
 
-The bookmarks page uses the normal Mini Browser navigation system, so bookmarks can be selected with **Tab / Shift+Tab** and opened with **Enter**.
+Reloading a page does not create a duplicate history entry. GET form submissions are ordinary navigations and participate in the same Back/Forward history.
 
-Up to **32 bookmarks** can currently be stored.
+## Networking
 
-Both the page title and URL are saved.
+Mini Browser uses libcurl and requests HTTP/1.1 where available.
 
-Bookmarks are stored on the BadgeVMS filesystem in:
+The browser sends a Mini Browser 2.1 user agent and requests uncompressed transfer data with:
 
-`APPS:[mini_browser]bookmarks.txt`
+    Accept-Encoding: identity
 
-Bookmarks survive:
+Redirect following is enabled where supported, with a maximum of five redirects.
 
-- quitting and restarting Mini Browser
-- rebooting the badge
-- completely powering the badge off and on
+Network failures and HTTP errors are shown as readable browser pages rather than silently failing.
 
-A **complete BadgeVMS firmware reflash** replaces the application storage image and therefore removes saved bookmarks.
+## Limits
 
----
+Mini Browser is intentionally bounded for an embedded system.
 
-## Keyboard Controls
+| Resource | Limit |
+| --- | ---: |
+| Downloaded page data | 64 KiB |
+| URL length | 256 bytes |
+| Links | 128 |
+| Interactive actions | 160 |
+| Forms per page | 4 |
+| Fields per form | 8 |
+| Editable form value | 127 characters |
+| Bookmarks | 32 |
+| History entries | 32 |
 
-### Normal keys
+These limits are design choices, not bugs. They keep memory use predictable on the badge.
 
-- **Typing** — enter/edit a URL
-- **Enter** — navigate to the typed URL or open the selected link
-- **Backspace** — delete before the URL cursor
-- **Delete** — delete at the URL cursor
-- **Left / Right** — move the URL cursor
-- **Up / Down** — scroll through the page
-- **Tab** — select next link
-- **Shift+Tab** — select previous link
+## What Mini Browser does not support
 
-### WHY key shortcuts
+Mini Browser is not intended to replace Firefox, Chrome or Safari.
 
-Hold the WHY key (`0xE3`) and press:
+It does not currently provide:
 
-- **WHY+E** — edit a new URL, prefilled with `https://`
-- **WHY+C** — edit the current URL
-- **WHY+H** — go to the Mini Browser home page
-- **WHY+R** — reload the current page
-- **WHY+F** — add/remove current page as a bookmark
-- **WHY+M** — open bookmarks
-- **WHY+B** — go back
-- **WHY+G** — go forward
-- **WHY+Q** — quit Mini Browser
+- JavaScript execution
+- CSS layout or styling
+- images
+- video or audio
+- cookies/session-oriented web applications
+- POST form submission
+- file uploads
+- authentication workflows requiring modern browser APIs
+- complex HTML form controls
+- a complete HTML5 parser
+- a full Unicode font
 
-When the bookmarks page is open, **WHY+B** returns to the webpage you were viewing before opening bookmarks.
+Sites designed around server-rendered HTML and ordinary links work best.
 
----
+## Good sites to try
 
-## Special Keys
+Text-oriented sites are ideal for Mini Browser. Examples include:
 
-The WHY2025 badge's dedicated coloured keys provide instant navigation:
+- Wiby — `https://wiby.me/`
+- Hacker News — `https://news.ycombinator.com/`
+- NPR Text — `https://text.npr.org/`
+- TEXTFILES.COM — `http://www.textfiles.com/`
+- curl — `https://curl.se/`
+- ifconfig.co — `https://ifconfig.co/`
 
-- 🟥 **Square (Red)** → [NPR Text](https://text.npr.org/)
-- 🔺 **Triangle (Orange)** → [Hacker News](https://news.ycombinator.com/)
-- ❌ **Cross (Yellow)** → [textfiles.com](http://www.textfiles.com/)
-- 🟢 **Circle (Green)** → [What is my IP address?](https://ifconfig.co/)
-- ☁️ **Cloud (Blue)** → [Bobcat Browser](https://ohmeadhbh.github.io/bobcat/)
-- 🔷 **Diamond (Purple)** → [curl](https://curl.se/)
+Wiby is particularly useful for testing the simple GET form support in version 2.1.
 
----
+## Architecture
 
-## User Interface
+The browser is deliberately small.
 
-The interface is intentionally minimal.
+The main pipeline is:
 
-At the top of the screen is the URL/status bar with:
-
-- a cyan square
-- yellow magnifying-glass icon
-- current URL
-- HTTP status
-- page title
-- selected link information
-- temporary status messages
-
-Long URLs are clipped to fit the available display width.
-
-The rest of the screen is used for the text representation of the current webpage.
-
----
-
-## Implementation Overview
-
-Mini Browser is deliberately small and does not contain a full browser engine.
-
-### Networking
-
-Pages are retrieved using **libcurl**.
-
-The default maximum downloaded page size is:
-
-`64 KB`
-
-HTTP compression is disabled and identity encoding is requested to keep processing predictable on the badge.
-
-### HTML parsing
-
-A small custom HTML parser:
-
-- removes scripts and styles
-- skips non-visible `<head>` content
-- recognises common block elements
-- collapses whitespace
-- decodes common HTML entities
-- extracts page titles
-- extracts and indexes links
-
-### URL handling
-
-The browser performs lightweight URL resolution for absolute and relative links.
-
-It is not intended to implement the complete WHATWG URL specification.
-
-### Rendering
-
-Text is wrapped to the display width and rendered through SDL using a custom fixed **5×7 ASCII bitmap font**.
-
-### Bookmarks
-
-Bookmarks are kept in RAM while Mini Browser is running and written to the BadgeVMS filesystem whenever the bookmark list changes.
-
-They are loaded again when Mini Browser starts.
-
-The bookmark page itself is generated internally as a normal Mini Browser page, allowing it to reuse the existing link selection and rendering code.
-
----
-
-## Known Limitations
-
-Mini Browser is deliberately not a full web browser.
-
-- **No JavaScript**
-- **No CSS rendering**
-- **No images**
-- **No forms**
-- **No cookies or login sessions**
-- **ASCII-focused rendering**
-- **64 KB page download limit**
-- **Maximum 128 extracted links per page**
-- **Maximum 32 bookmarks**
-- **Forward history limited to 32 entries**
-- Complex modern websites will often produce poor or unusable output
-- Relative paths containing complex `../` traversal are not fully normalised
-- Reflashing the complete BadgeVMS firmware removes saved bookmarks
-
-Simple HTML and text-oriented websites work best.
-
----
-
-## Recommended Sites
-
-Mini Browser works particularly well with lightweight and text-oriented websites.
-
-- [NPR Text](https://text.npr.org/)
-- [Hacker News](https://news.ycombinator.com/)
-- [textfiles.com](http://www.textfiles.com/)
-- [curl](https://curl.se/)
-- [Wikipedia Mobile](https://en.m.wikipedia.org/)
-- [OpenBSD](https://www.openbsd.org/)
-- [SQLite Documentation](https://sqlite.org/docs.html)
-- [Linux Man Pages](https://man7.org/linux/man-pages/)
-- [RFC Editor](https://www.rfc-editor.org/rfc/)
-- [Kernel.org](https://www.kernel.org/)
-- [Lua](https://www.lua.org/)
-- [musl libc](https://musl.libc.org/)
-
----
+    URL
+      |
+      v
+    libcurl HTTP fetch
+      |
+      v
+    bounded HTML-to-text parser
+      |
+      +--> links
+      +--> forms
+      +--> page title
+      |
+      v
+    numbered action model
+      |
+      v
+    wrapped text
+      |
+      v
+    SDL3 720x720 renderer
+
+Links and form controls are represented as actions. This keeps keyboard navigation consistent: the user activates a number, and the corresponding action either navigates, edits a field, or submits a form.
+
+Form editing uses its own buffer and cursor state and is intentionally separate from URL editing.
 
 ## Building
 
-Mini Browser is built as a BadgeVMS application inside the WHY2025 firmware tree.
+Mini Browser is part of the WHY2025 BadgeVMS firmware tree.
 
-For example:
+With the existing WHY2025 ESP-IDF environment configured:
 
-```bash
-cp mini_browser.c /root/firmware/sdk_apps/mini_browser/mini_browser.c
-cp manifest.json /root/firmware/sdk_apps/mini_browser/manifest.json
+    cd /root/firmware
+    . ~/esp-idf/export.sh
+    idf.py build
 
-cd /root/firmware
-idf.py build
-```
+Flash the ESP32-P4 through the badge's P4 flashing port using the normal BadgeVMS firmware procedure.
 
-To flash the complete firmware to the ESP32-P4 badge:
+Important: use the existing project configuration for the WHY2025 badge. Do not casually regenerate the ESP32-P4 target configuration on early P4 hardware.
 
-```bash
-idf.py -p /dev/ttyUSB0 flash monitor
-```
+## Project
 
-Note that flashing the complete firmware also flashes the generated BadgeVMS storage image. Runtime-created files such as saved Mini Browser bookmarks are therefore replaced.
+Source repository:
 
----
+https://github.com/mactjaap/mini_browser/
 
-## Version 2.0-alpha5 (development)
+Home page:
 
-Version 2.0-alpha5 fixes Back/Forward navigation:
+https://minibrowser.macip.net/
 
-- Proper single-history-model implementation
-- **WHY+B** — go back in navigation history
-- **WHY+G** — go forward in navigation history
-- History holds up to 32 entries
-- Forward branch automatically discarded when navigating to new URL
-- Full Back/Forward navigation like a normal browser
+## Version
 
----
+**Mini Browser 2.1**
 
-## Version 2.0-alpha4 (development)
-
-Version 2.0-alpha4 added Forward navigation:
-
-- **WHY+G** — go forward through navigation history
-- Forward stack holds up to 32 entries
-- Forward history cleared when navigating to a new URL
-- Back (WHY+B) saves current URL to forward stack
-- Full Back/Forward navigation like a normal browser
-
----
-
-## Version 1.6
-
-Version 1.6 introduces the first complete bookmark implementation:
-
-- persistent bookmarks
-- WHY+F add/remove bookmark
-- WHY+M bookmark browser
-- page title + URL stored for each bookmark
-- maximum 32 bookmarks
-- bookmark persistence across application restarts
-- bookmark persistence across badge power cycles
-- visible `BOOKMARK ADDED` / `BOOKMARK REMOVED` feedback
-- proper WHY+B behaviour from the bookmarks page
-- bookmarks use the normal Tab / Shift+Tab / Enter navigation
-
----
-
-## Credits
-
-- Built on **BadgeVMS**, **SDL**, and **libcurl**
-- Custom **5×7 ASCII bitmap font**
-- Developed for the WHY2025 badge community
-- Lots of experimenting, debugging, copy-and-paste, and example code...
-
-...but it seems to work. :-)
-
-## mini-browser for Linux
-If you don't have a badge .... try the mini-browser for Linux. How-to included.
-
-
+A stable, practical text browser for the WHY2025 badge, now with simple interactive GET forms.

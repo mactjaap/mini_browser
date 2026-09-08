@@ -1,68 +1,89 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mini Browser - Home</title>
-  <!--
-    NOTE: Mini Browser home page (HOME_URL). Written to render well
-    inside the Mini Browser itself, whose parser breaks lines only on
-    the br and p tags and draws ASCII only (no images, CSS, or JS).
-    Keep the body ASCII, use br and p for line breaks, and a for links.
-    The head (this style block) is ignored by the badge and styles the
-    desktop view only. Do NOT put angle-bracket tag names in comments:
-    this parser reads tags inside comments too.
-  -->
-  <style>
-    body{background:#0b0b0b;color:#dcdcdc;font-family:ui-monospace,Menlo,Consolas,monospace;
-         max-width:720px;margin:2rem auto;padding:0 1rem;line-height:1.55;font-size:16px;}
-    h1{color:#00b4b4;margin:0 0 .25rem;font-size:1.6rem;}
-    a{color:#7fd7ff;}
-    .red{color:#ff5555;}.orange{color:#ffb454;}.yellow{color:#ffd700;}
-    .green{color:#43d16a;}.blue{color:#7fd7ff;}.purple{color:#c07fff;}
-    .sec{color:#00b4b4;font-weight:bold;}
-    .dim{color:#8a8a8a;}
-    /* Blank-line dividers are for the badge only; desktop uses <p> margins. */
-    .sep{display:none;}
-  </style>
+  <title>Mini Browser 2.1</title>
+  <meta name="description" content="Home page for Mini Browser 2.1 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser</h1>
-<p>A text-only web browser for the WHY2025 badge.</p>
+<h1>Mini Browser 2.1</h1>
 
-<p><span class="sep"><br> <br></span><span class="sec">SPECIAL KEYS</span><br>
-<span class="red">RED</span> Square: <a href="https://text.npr.org">NPR Text</a><br>
-<span class="orange">ORANGE</span> Triangle: <a href="https://news.ycombinator.com/">Hacker News</a><br>
-<span class="yellow">YELLOW</span> Cross: <a href="http://www.textfiles.com/">textfiles.com</a><br>
-<span class="green">GREEN</span> Circle: <a href="https://ifconfig.co">What is my IP</a><br>
-<span class="blue">BLUE</span> Cloud: <a href="https://ohmeadhbh.github.io/bobcat/">Bobcat Browser</a><br>
-<span class="purple">PURPLE</span> Diamond: <a href="https://curl.se/">Curl</a></p>
+<p>
+Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
+Version 2.1 supports links, bookmarks, Back/Forward history and simple GET forms.
+</p>
 
-<p><span class="sep"><br> <br></span><span class="sec">WHY KEY</span> (hold WHY, then press)<br>
-E = edit URL &nbsp; H = home &nbsp; R = reload<br>
-B = back &nbsp; G = forward &nbsp; Q = quit</p>
+<h2>Search the small web</h2>
 
-<p><span class="sep"><br> <br></span><span class="sec">NAVIGATE</span><br>
-Type a URL and press Enter.<br>
-Tab / Shift-Tab pick a link, Enter opens it.<br>
-Up/Down or J/K scroll. PageUp/PageDown by page.</p>
+<form action="https://wiby.me/" method="get">
+  <input type="search" name="q" value="">
+  <button type="submit">Search Wiby</button>
+</form>
 
-<p><span class="sep"><br> <br></span><span class="sec">RECOMMENDED</span><br>
-<a href="https://en.m.wikipedia.org/">Wikipedia (mobile)</a><br>
-<a href="https://www.openbsd.org/">OpenBSD</a><br>
-<a href="https://sqlite.org/docs.html">SQLite Docs</a><br>
-<a href="https://man7.org/linux/man-pages/">Linux Man Pages</a><br>
-<a href="https://www.rfc-editor.org/rfc/">RFC Editor</a></p>
+<p>
+Wiby is a search engine focused on simple, lightweight websites and is a good match
+for Mini Browser.
+</p>
 
-<p><span class="sep"><br> <br></span><span class="sec">GOOD TO KNOW</span><br>
-Text only: no CSS, JavaScript, or images.<br>
-Max 64 KB per page. Bare hostnames become https.<br>
-Full guide: <a href="https://minibrowser.macip.net/readme.html">readme.html</a></p>
+<h2>Recommended</h2>
 
-<p><span class="sep"><br> <br></span><span class="sec">ABOUT</span><br>
-<a href="https://github.com/mactjaap/mini_browser">Source on GitHub</a><br>
-<span class="dim">Made for the WHY2025 badge community.</span></p>
+<ul>
+  <li><a href="https://wiby.me/">Wiby</a> - search the classic web</li>
+  <li><a href="https://old-search.marginalia.nu/">Marginalia Search</a> - old lightweight interface</li>
+  <li><a href="https://frogfind.de/">FrogFind</a> - search and simplify pages</li>
+  <li><a href="https://news.ycombinator.com/">Hacker News</a> - technology news and discussion</li>
+  <li><a href="https://text.npr.org/">NPR Text</a> - text-oriented news</li>
+  <li><a href="http://www.textfiles.com/">TEXTFILES.COM</a> - historic text files</li>
+  <li><a href="https://curl.se/">curl</a> - curl project website</li>
+  <li><a href="https://ifconfig.co/">ifconfig.co</a> - network information</li>
+  <li><a href="https://ohmeadhbh.github.io/bobcat/">Bobcat</a> - lightweight web content</li>
+</ul>
+
+<h2>How to browse</h2>
+
+<p>
+Links and form controls have numbers. Type a number and press Enter to activate it.
+You can also use Tab and Shift+Tab to select actions.
+</p>
+
+<p>
+Use the Up and Down arrows to scroll. Hold an arrow key for continuous scrolling.
+J and K also scroll one line at a time.
+</p>
+
+<h2>Browser keys</h2>
+
+<ul>
+  <li>WHY+E - enter a new URL</li>
+  <li>WHY+C - edit the current URL</li>
+  <li>WHY+H - home</li>
+  <li>WHY+R - reload</li>
+  <li>WHY+B - back</li>
+  <li>WHY+G - forward</li>
+  <li>WHY+F - add or remove bookmark</li>
+  <li>WHY+M - bookmarks</li>
+  <li>WHY+Q - quit</li>
+</ul>
+
+<h2>About</h2>
+
+<p>
+Mini Browser intentionally has no JavaScript engine, CSS layout engine or image
+renderer. It is designed for ordinary HTML, text content, links and simple GET forms.
+</p>
+
+<p>
+<a href="/readme.html">Mini Browser 2.1 - full documentation</a>
+</p>
+
+<p>
+<a href="https://github.com/mactjaap/mini_browser/">Source code on GitHub</a>
+</p>
+
+<hr>
+
+<p>Mini Browser 2.1 - WHY2025 BadgeVMS</p>
 
 </body>
 </html>

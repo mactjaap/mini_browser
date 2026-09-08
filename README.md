@@ -123,13 +123,9 @@ You can also use Tab and Shift+Tab to move through actions and press Enter to ac
 | `Enter` | Activate selected action / accept edit |
 | `Up` / `Down` | Scroll one line; hold for continuous scrolling |
 | `J` / `K` | Scroll down / up one line |
-| `Page Down` | Scroll approximately one page |
-| `Page Up` | Scroll upward |
-| `Home` | Top of page, or start of current editor |
-| `Left` / `Right` | Move cursor while editing |
-| `Backspace` / `Delete` | Edit URL or form value |
-| `End` | Move to end of URL or form value |
-| `Escape` | Cancel form/action-number editing; otherwise exit |
+| `Left` / `Right` | Move the cursor while editing |
+| `Backspace` | Delete the character before the cursor |
+| `Escape` | Cancel the current form/action-number operation; otherwise exit |
 
 The WHY2025 key acts as the browser accelerator:
 

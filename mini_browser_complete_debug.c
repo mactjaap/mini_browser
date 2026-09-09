@@ -896,8 +896,10 @@ static void free_page(page_t *page) {
     free(page);
 }
 
-/* ---------- wrap text to columns ---------- */
+/* ---------- UTF-8 forward declaration ---------- */
+static unsigned utf8_next(const char *s, size_t len, size_t *i);
 
+/* ---------- wrap text to columns ---------- */
 
 static char *wrap_text(const char *in, int max_cols) {
     if (!in) return NULL;
@@ -2134,7 +2136,7 @@ int main(void) {
                         sel_action = -1;
 
 			} else {
-    			debug_utf8("CURL", m.buf ? m.buf : "");
+    			debug_utf8("CURL RAW", m.buf ? m.buf : "");
 
     			page_t *pg = html_to_page(m.buf ? m.buf : "", url_buf);
 

@@ -896,9 +896,6 @@ static void free_page(page_t *page) {
     free(page);
 }
 
-/* ---------- UTF-8 decoder forward declaration ---------- */
-static unsigned utf8_next(const char *s, size_t len, size_t *i);
-
 /* ---------- wrap text to columns ---------- */
 
 
@@ -914,16 +911,9 @@ static char *wrap_text(const char *in, int max_cols) {
     char *out = (char*)malloc(n * 2 + 8);
     if (!out) return NULL;
 
-    /*
-     * max_cols is still supplied by the existing caller. Convert it
-     * back to the exact content width in pixels. This keeps the public
-     * interface unchanged while making wrapping match draw_text().
-     */
-    const int max_px = max_cols > 0 ? max_cols * CH_W : 0;
-
     size_t i = 0;
     size_t o = 0;
-    int line_px = 0;
+    int col = 0;
     int blank_run = 0;
 
     while (i < n) {
@@ -938,7 +928,7 @@ static char *wrap_text(const char *in, int max_cols) {
             continue;
 
         if (cp == '\n') {
-            if (line_px == 0) {
+            if (col == 0) {
                 if (blank_run)
                     continue;
                 blank_run = 1;
@@ -947,7 +937,7 @@ static char *wrap_text(const char *in, int max_cols) {
             }
 
             out[o++] = '\n';
-            line_px = 0;
+            col = 0;
             continue;
         }
 
@@ -960,32 +950,21 @@ static char *wrap_text(const char *in, int max_cols) {
         /*
          * Collapse redundant ASCII spaces as before.
          */
-        if (cp == ' ' && (line_px == 0 || (o > 0 && out[o - 1] == ' ')))
+        if (cp == ' ' && (col == 0 || (o > 0 && out[o - 1] == ' ')))
             continue;
 
         /*
-         * IMPORTANT: use exactly the same advance widths as draw_text().
+         * Wrap BEFORE copying the complete UTF-8 sequence.
          *
-         * ASCII:   CH_W = 12 pixels
-         * Unicode: 16-pixel glyph + 1-pixel gap = 17 pixels
+         * Most Unicode characters count as one logical column here.
+         * The renderer will still use the actual pixel width.
          */
-        int char_w;
-        if (cp >= 32 && cp <= 126)
-            char_w = CH_W;
-        else
-            char_w = 16 + 1;  /* UNICODE_GLYPH_W + 1 */
-
-        /*
-         * Wrap BEFORE copying the complete UTF-8 sequence. This prevents
-         * draw_text() from performing an extra hidden wrap and painting
-         * over the following browser line.
-         */
-        if (max_px > 0 && line_px > 0 && line_px + char_w > max_px) {
+        if (max_cols && col >= max_cols) {
             out[o++] = '\n';
-            line_px = 0;
+            col = 0;
 
             /*
-             * Don't start a wrapped line with an ordinary space.
+             * Don't start a wrapped line with a normal space.
              */
             if (cp == ' ')
                 continue;
@@ -996,18 +975,25 @@ static char *wrap_text(const char *in, int max_cols) {
         } else {
             /*
              * Copy the COMPLETE original UTF-8 sequence.
+             * Never split a multi-byte character.
              */
             memcpy(out + o, in + start, bytes);
             o += bytes;
         }
 
-        line_px += char_w;
+        col++;
         blank_run = 0;
     }
 
     out[o] = 0;
     return out;
 }
+
+
+
+
+
+
 
 /* ---------- curl fetch (tolerant to trimmed-down libcurl) ---------- */
 /* ---------- v1.2: proper HTTP status/error handling ---------- */

@@ -539,6 +539,14 @@ static void extract_button_label(const char *start, const char *end, char *out, 
     trim_inplace(out);
 }
 
+/*
+ * Internal text-formatting markers.
+ * Must be defined before html_to_page(), because the HTML parser emits them.
+ * They are preserved by wrap_text() and consumed by draw_text().
+ */
+#define TEXT_BOLD_ON  0x01
+#define TEXT_BOLD_OFF 0x02
+
 static page_t *html_to_page(const char *html, const char *base_url) {
     if (!html) return NULL;
     size_t length = strlen(html);
@@ -612,7 +620,10 @@ static page_t *html_to_page(const char *html, const char *base_url) {
             else if (!strcmp(tag, "pre")) { in_pre = false; append_line_break(template_text, template_cap, &used); }
             else if (!strcmp(tag, "ol")) { if (ordered_depth > 0) ordered_depth--; }
             else if (!strcmp(tag, "code")) append_text(template_text, template_cap, &used, "`");
-            else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) append_text(template_text, template_cap, &used, "**");
+            else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) {
+                char marker[2] = { TEXT_BOLD_OFF, 0 };
+                append_text(template_text, template_cap, &used, marker);
+            }
             else if (!strcmp(tag, "em") || !strcmp(tag, "i")) append_text(template_text, template_cap, &used, "_");
             else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
                      !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
@@ -653,7 +664,10 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 append_text(template_text, template_cap, &used, number);
             } else append_text(template_text, template_cap, &used, "* ");
         } else if (!strcmp(tag, "code")) append_text(template_text, template_cap, &used, "`");
-        else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) append_text(template_text, template_cap, &used, "**");
+        else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) {
+            char marker[2] = { TEXT_BOLD_ON, 0 };
+            append_text(template_text, template_cap, &used, marker);
+        }
         else if (!strcmp(tag, "em") || !strcmp(tag, "i")) append_text(template_text, template_cap, &used, "_");
         else if (!strcmp(tag, "hr")) {
             append_line_break(template_text, template_cap, &used);
@@ -936,6 +950,12 @@ static char *wrap_text(const char *in, int max_cols) {
 
         if (cp == '\r')
             continue;
+
+        /* Preserve formatting markers without giving them any width. */
+        if (cp == TEXT_BOLD_ON || cp == TEXT_BOLD_OFF) {
+            out[o++] = (char)cp;
+            continue;
+        }
 
         if (cp == '\n') {
             if (line_px == 0) {
@@ -1575,12 +1595,24 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
     int cy = y;
     size_t i = 0;
     size_t L = strlen(s);
+    int bold_depth = 0;
 
     while (i < L) {
         unsigned cp = utf8_next(s, L, &i);
 
         if (cp == 0)
             break;
+
+        if (cp == TEXT_BOLD_ON) {
+            bold_depth++;
+            continue;
+        }
+
+        if (cp == TEXT_BOLD_OFF) {
+            if (bold_depth > 0)
+                bold_depth--;
+            continue;
+        }
 
         if (cp == '\n') {
             cx = x;
@@ -1603,6 +1635,8 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
             }
 
             draw_char(r, cx, cy, (char)cp);
+            if (bold_depth > 0)
+                draw_char(r, cx + 1, cy, (char)cp);
             cx += char_w;
             continue;
         }
@@ -1618,6 +1652,8 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
             }
 
             draw_unicode_char(r, cx, cy, cp);
+            if (bold_depth > 0)
+                draw_unicode_char(r, cx + 1, cy, cp);
             cx += char_w;
         }
     }

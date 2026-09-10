@@ -2,47 +2,79 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 2.1 - Documentation</title>
-  <meta name="description" content="Documentation for Mini Browser 2.1 on the WHY2025 badge">
+  <title>Mini Browser 2.3 - Documentation</title>
+  <meta name="description" content="Documentation for Mini Browser 2.3 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 2.1</h1>
+<h1>Mini Browser 2.3</h1>
 
 <p>
-Mini Browser is a compact, interactive, text-oriented web browser for the WHY2025 badge.
-It is written in C using SDL3 and libcurl.
+Mini Browser is a compact, interactive, text-oriented web browser for the WHY2025 badge,
+written in C using SDL3 and libcurl.
 </p>
 
 <p>
-Version 2.1 is a stable release. It supports normal links, simple GET forms,
-persistent bookmarks, Back/Forward history, URL editing, hold-to-scroll and
-text rendering of common HTML structures.
+Version 2.3 combines links, GET forms, bookmarks and Back/Forward history with broad
+Unicode rendering, monochrome Plane-1 emoji, UTF-8-safe pixel-aware wrapping and
+genuine rendered bold text.
 </p>
 
 <p><a href="/">Back to Mini Browser home</a></p>
 
-<h2>What Mini Browser is</h2>
+<h2>Unicode and UTF-8</h2>
 
 <p>
-Mini Browser downloads HTML and converts it directly into a compact text page suitable
-for the 720 by 720 badge display. Links and interactive form controls are assigned
-numbers so the entire browser can be operated from the keyboard.
+ASCII uses the built-in bitmap font. Additional Unicode characters can be loaded from
+APPS:[mini_browser]unifont_cjk.bin. The tested 2.3 generated font contains 27,696
+glyphs selected from GNU Unifont 17.0.02 Plane-0 and supplementary-plane sources.
 </p>
 
 <p>
-It deliberately avoids the complexity of a modern graphical browser. There is no
-JavaScript engine, CSS layout engine or image renderer.
+Coverage includes broad Latin extensions, Greek, Cyrillic, punctuation, currency,
+arrows, mathematical and technical symbols, box drawing, geometric symbols, CJK
+punctuation, Hiragana, Katakana, CJK ideographs, fullwidth forms and supplementary
+symbol and emoji ranges.
+</p>
+
+<p>
+Wrapping is UTF-8 safe and pixel aware. ASCII and 16x16 Unicode glyphs have different
+rendered widths, and Mini Browser accounts for that when laying out lines.
+</p>
+
+<p>
+If the external Unicode font is not installed, the built-in ASCII renderer remains
+available. Unordered lists intentionally use the ASCII * marker rather than requiring
+a Unicode bullet.
+</p>
+
+<h2>Real bold text</h2>
+
+<p>
+HTML b and strong elements are rendered as genuinely bold text. Mini Browser no longer
+shows literal ** markers for these elements. Bold is produced by an additional
+one-pixel horizontal glyph pass and works for both ASCII and Unicode glyphs.
+</p>
+
+<h2>Monochrome emoji</h2>
+
+<p>
+Many single-codepoint Plane-1 emoji can be rendered from the external GNU Unifont
+bitmap file, for example: 😀 😃 😂 😎 🤖 👍 🐶 🍕 🚀 🌍 💡 💻
+</p>
+
+<p>
+These are monochrome bitmap glyphs, not color emoji. Complex ZWJ sequences, skin-tone
+composition, gender sequences and regional-indicator flag composition are not
+implemented. Variation-selector handling is limited.
 </p>
 
 <h2>Simple HTML forms</h2>
 
 <p>
-Mini Browser 2.1 can use simple GET forms. Supported input types are text, search,
+Mini Browser supports simple GET forms. Supported input types include text, search,
 url, hidden and submit. Submit buttons made with the button element are also supported.
 </p>
-
-<p>A simple form can appear as:</p>
 
 <pre>
 [1] q:
@@ -50,51 +82,19 @@ url, hidden and submit. Submit buttons made with the button element are also sup
 </pre>
 
 <p>
-Type 1 and press Enter to edit the field. Type your search text and press Enter
-again to store it. The browser stays on the same page. Then type 2 and press Enter
-to submit the form.
+Type 1 and press Enter to edit the field. Enter the search text and press Enter again
+to store it. Then type 2 and press Enter to submit.
 </p>
 
 <p>
-Form editing is separate from URL editing. Text typed into a form field therefore
-does not accidentally become the browser URL.
+GET form data is URL encoded. Hidden fields are submitted, disabled fields are ignored,
+and an activated named submit button is included where appropriate. Up to 4 forms with
+up to 8 fields per form are supported.
 </p>
 
 <p>
-GET form data is URL encoded. Spaces become plus signs and unsafe characters are
-percent encoded. Hidden fields are submitted, disabled fields are ignored, and a
-named submit button is included when that button is used.
-</p>
-
-<p>
-Forms whose action already contains a query string are handled correctly by adding
-new parameters with an ampersand.
-</p>
-
-<p>
-Mini Browser can keep up to 4 forms on a page and up to 8 fields in each form.
-</p>
-
-<p>
-POST forms are recognised but are not submitted. Mini Browser displays
-"POST FORMS NOT SUPPORTED".
-</p>
-
-<p>
-Textarea, select menus, checkboxes, radio buttons, file uploads and JavaScript-driven
-forms are not currently supported.
-</p>
-
-<h2>Links and actions</h2>
-
-<p>
-Links and visible form controls share one numbered action system. Up to 160 actions
-can be represented on a page, including up to 128 hyperlinks.
-</p>
-
-<p>
-Type an action number and press Enter, or use Tab and Shift+Tab to move through the
-available actions and press Enter to activate one.
+POST forms are recognised but are not submitted. Textarea, select, checkboxes, radio
+buttons, file uploads and JavaScript-driven forms are not currently supported.
 </p>
 
 <h2>HTML rendering</h2>
@@ -102,110 +102,67 @@ available actions and press Enter to activate one.
 <p>Mini Browser understands useful structure from ordinary HTML, including:</p>
 
 <ul>
-  <li>headings</li>
-  <li>paragraphs and common block elements</li>
+  <li>headings and paragraphs</li>
   <li>line breaks</li>
   <li>ordered and unordered lists</li>
-  <li>preformatted text</li>
-  <li>inline code</li>
-  <li>bold and strong text</li>
+  <li>preformatted and inline code text</li>
+  <li><b>real bold and strong text</b></li>
   <li>emphasis and italic text</li>
   <li>horizontal rules</li>
   <li>simple table rows and cells</li>
-  <li>links</li>
-  <li>simple forms</li>
-  <li>common HTML entities</li>
-  <li>decimal and hexadecimal numeric entities</li>
+  <li>links and simple forms</li>
+  <li>named and numeric HTML entities</li>
 </ul>
 
 <p>
-Comments, doctypes, scripts, styles and normal head content are ignored while
-rendering. The HTML title is extracted separately and can be shown in the top bar.
+Unordered list items use an ASCII * marker for compatibility with installations that
+do not include the external Unicode font.
 </p>
 
-<h2>Scrolling</h2>
+<h2>Navigation</h2>
 
 <p>
-Press Up or Down to move one line. Holding either arrow starts continuous scrolling
-after a short delay. J and K also provide one-line scrolling.
-</p>
-
-<h2>URL editing</h2>
-
-<p>
-Press WHY+E to start a new address beginning with https://.
-Press WHY+C to edit the current URL.
+Links and visible form controls receive action numbers. Type an action number and press
+Enter to activate it.
 </p>
 
 <p>
-While editing, Left and Right move the cursor and Backspace removes the character
-before the cursor. Press Enter to accept the edit or navigate.
+Use Up and Down to scroll; holding an arrow gives continuous scrolling. J and K provide
+one-line scrolling.
 </p>
 
-<p>
-If a typed address has no URL scheme, Mini Browser automatically adds https://.
-</p>
+<h2>Browser shortcuts</h2>
 
-<h2>History</h2>
+<ul>
+  <li>WHY+E - enter a new URL</li>
+  <li>WHY+C - edit the current URL</li>
+  <li>WHY+H - home</li>
+  <li>WHY+R - reload</li>
+  <li>WHY+B - back</li>
+  <li>WHY+G - forward</li>
+  <li>WHY+F - add or remove bookmark</li>
+  <li>WHY+M - bookmarks</li>
+  <li>WHY+Q - quit</li>
+</ul>
 
-<p>
-Press WHY+B to go Back and WHY+G to go Forward. Mini Browser keeps up to 32 history
-entries.
-</p>
-
-<p>
-If you go Back and then navigate to a new page, the old forward branch is discarded,
-as in a conventional browser. Reloading does not create another history entry.
-A successful GET form submission is normal navigation and therefore also participates
-in Back and Forward history.
-</p>
-
-<h2>Bookmarks</h2>
+<h2>Bookmarks and history</h2>
 
 <p>
-Press WHY+F to add the current page to bookmarks. Press WHY+F again on the same URL
-to remove it.
-</p>
-
-<p>
-Press WHY+M to open the local bookmark page. Up to 32 bookmarks are stored persistently
-in BadgeVMS storage.
+Mini Browser stores up to 32 bookmarks and maintains up to 32 HTTP/HTTPS history
+entries. Going Back and then navigating somewhere new discards the old forward branch.
+Reloading does not create a duplicate history entry.
 </p>
 
 <pre>
 APPS:[mini_browser]bookmarks.txt
 </pre>
 
-<h2>Keyboard reference</h2>
-
-<ul>
-  <li>number + Enter - activate numbered action</li>
-  <li>Tab - next action</li>
-  <li>Shift+Tab - previous action</li>
-  <li>Up / Down - scroll; hold for continuous scrolling</li>
-  <li>J / K - one-line scrolling</li>
-  <li>WHY+E - enter new URL</li>
-  <li>WHY+C - edit current URL</li>
-  <li>WHY+H - home</li>
-  <li>WHY+R - reload</li>
-  <li>WHY+B - back</li>
-  <li>WHY+G - forward</li>
-  <li>WHY+F - add/remove bookmark</li>
-  <li>WHY+M - bookmarks</li>
-  <li>WHY+Q - quit</li>
-</ul>
-
 <h2>Network behaviour</h2>
 
 <p>
-Mini Browser uses libcurl and HTTP/1.1 where available. Redirects are followed up
-to a bounded limit. The browser requests identity transfer encoding rather than
-compressed page data.
-</p>
-
-<p>
-Connection failures are shown as readable error pages. HTTP status errors such as
-404 and 500 are also displayed explicitly.
+Mini Browser uses libcurl and HTTP/1.1 where available, follows redirects to a bounded
+limit and requests identity transfer encoding. Connection failures and HTTP errors are
+shown as readable browser pages.
 </p>
 
 <h2>Resource limits</h2>
@@ -222,37 +179,30 @@ Connection failures are shown as readable error pages. HTTP status errors such a
   <li>history entries - 32</li>
 </ul>
 
-<p>
-These bounded limits keep memory usage predictable on the embedded badge.
-</p>
-
 <h2>Unsupported web features</h2>
 
-<p>Mini Browser does not currently implement:</p>
+<p>
+Mini Browser does not implement JavaScript, CSS layout, images, audio/video, POST form
+submission, complex form controls, file uploads, a complete HTML5 DOM/parser, color
+emoji or complex emoji composition.
+</p>
 
-<ul>
-  <li>JavaScript</li>
-  <li>CSS layout and styling</li>
-  <li>images</li>
-  <li>audio or video</li>
-  <li>POST form submission</li>
-  <li>complex form controls</li>
-  <li>file uploads</li>
-  <li>modern browser application APIs</li>
-  <li>a complete HTML5 DOM and parser</li>
-  <li>a full Unicode font</li>
-</ul>
+<h2>Unicode font</h2>
 
 <p>
-Simple server-rendered websites and text-oriented sites work best.
+The tested 2.3 font asset combines unifont_jp-17.0.02.hex and
+unifont_upper-17.0.02.hex into unifont_cjk.bin. GNU Unifont is dual-licensed under the
+SIL Open Font License 1.1 and GNU GPL version 2 or later with the GNU Font Embedding
+Exception. Include the applicable licensing and attribution material when
+redistributing the generated font asset.
 </p>
 
 <h2>Sites to try</h2>
 
 <ul>
-  <li><a href="https://wiby.me/">Wiby</a> - classic-web search and a useful GET form test</li>
-  <li><a href="https://old-search.marginalia.nu/">Marginalia Search</a> - lightweight old interface</li>
-  <li><a href="https://frogfind.de/">FrogFind</a> - lightweight search and page simplification</li>
+  <li><a href="https://wiby.me/">Wiby</a> - lightweight search and GET-form test</li>
+  <li><a href="https://old-search.marginalia.nu/">Marginalia Search</a></li>
+  <li><a href="https://frogfind.de/">FrogFind</a></li>
   <li><a href="https://news.ycombinator.com/">Hacker News</a></li>
   <li><a href="https://text.npr.org/">NPR Text</a></li>
   <li><a href="http://www.textfiles.com/">TEXTFILES.COM</a></li>
@@ -260,54 +210,13 @@ Simple server-rendered websites and text-oriented sites work best.
   <li><a href="https://ifconfig.co/">ifconfig.co</a></li>
 </ul>
 
-<h2>Implementation</h2>
-
-<p>The main processing path is intentionally small:</p>
-
-<pre>
-URL
- |
- v
-libcurl fetch
- |
- v
-HTML-to-text parser
- |
- +-- links
- +-- forms
- +-- title
- |
- v
-numbered actions
- |
- v
-text wrapping
- |
- v
-SDL3 renderer
-</pre>
-
-<p>
-A numbered action can represent a hyperlink, an editable form field or a form submit
-button. This lets the same keyboard navigation mechanism operate all interactive
-content.
-</p>
-
 <h2>Source code</h2>
 
-<p>
-<a href="https://github.com/mactjaap/mini_browser/">Mini Browser source on GitHub</a>
-</p>
-
-<p>
-Project home:
-<a href="https://minibrowser.macip.net/">https://minibrowser.macip.net/</a>
-</p>
+<p><a href="https://github.com/mactjaap/mini_browser/">Mini Browser source on GitHub</a></p>
+<p><a href="https://minibrowser.macip.net/">Mini Browser project home</a></p>
 
 <hr>
-
-<p>Mini Browser 2.1 - WHY2025 BadgeVMS</p>
-
+<p><b>Mini Browser 2.3</b> - WHY2025 BadgeVMS</p>
 <p><a href="/">Back to Mini Browser home</a></p>
 
 </body>

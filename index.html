@@ -2,17 +2,36 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 2.1</title>
-  <meta name="description" content="Home page for Mini Browser 2.1 on the WHY2025 badge">
+  <title>Mini Browser 2.3</title>
+  <meta name="description" content="Home page for Mini Browser 2.3 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 2.1</h1>
+<h1>Mini Browser 2.3</h1>
 
 <p>
 Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
-Version 2.1 supports links, bookmarks, Back/Forward history and simple GET forms.
+Version 2.3 supports links, bookmarks, Back/Forward history, simple GET forms,
+broad Unicode, monochrome emoji and real bold text.
 </p>
+
+<h2>2.3 rendering test</h2>
+
+<p><b>This sentence should be really bold.</b></p>
+
+<p>
+Unicode: Hello! Καλημέρα! Привет! こんにちは! 你好!
+</p>
+
+<p>
+Emoji: 😀 😎 👍 🐶 🍕 🚀 🌍 💡
+</p>
+
+<ul>
+  <li><b>Bold list item</b> - the list marker remains ASCII for compatibility</li>
+  <li>UTF-8-safe and pixel-aware text wrapping</li>
+  <li>Unicode glyphs come from the optional external font file</li>
+</ul>
 
 <h2>Search the small web</h2>
 
@@ -30,26 +49,21 @@ for Mini Browser.
 
 <ul>
   <li><a href="https://wiby.me/">Wiby</a> - search the classic web</li>
-  <li><a href="https://old-search.marginalia.nu/">Marginalia Search</a> - old lightweight interface</li>
+  <li><a href="https://old-search.marginalia.nu/">Marginalia Search</a> - lightweight search</li>
   <li><a href="https://frogfind.de/">FrogFind</a> - search and simplify pages</li>
   <li><a href="https://news.ycombinator.com/">Hacker News</a> - technology news and discussion</li>
   <li><a href="https://text.npr.org/">NPR Text</a> - text-oriented news</li>
   <li><a href="http://www.textfiles.com/">TEXTFILES.COM</a> - historic text files</li>
   <li><a href="https://curl.se/">curl</a> - curl project website</li>
   <li><a href="https://ifconfig.co/">ifconfig.co</a> - network information</li>
-  <li><a href="https://ohmeadhbh.github.io/bobcat/">Bobcat</a> - lightweight web content</li>
 </ul>
 
 <h2>How to browse</h2>
 
 <p>
 Links and form controls have numbers. Type a number and press Enter to activate it.
-You can also use Tab and Shift+Tab to select actions.
-</p>
-
-<p>
-Use the Up and Down arrows to scroll. Hold an arrow key for continuous scrolling.
-J and K also scroll one line at a time.
+Use Up and Down to scroll; hold an arrow for continuous scrolling. J and K also scroll
+one line at a time.
 </p>
 
 <h2>Browser keys</h2>
@@ -66,24 +80,30 @@ J and K also scroll one line at a time.
   <li>WHY+Q - quit</li>
 </ul>
 
-<h2>About</h2>
+<h2>About 2.3</h2>
+
+<p>
+Mini Browser 2.3 uses a built-in ASCII font and can load an external GNU Unifont-based
+font for broad Unicode and monochrome single-codepoint emoji. HTML b and strong text
+are now rendered as genuine bold text.
+</p>
+
+<p>
+Unordered list markers deliberately remain ASCII * characters, so basic list rendering
+does not depend on the external Unicode font.
+</p>
 
 <p>
 Mini Browser intentionally has no JavaScript engine, CSS layout engine or image
-renderer. It is designed for ordinary HTML, text content, links and simple GET forms.
+renderer. It is designed for ordinary server-rendered HTML, text content, links and
+simple GET forms.
 </p>
 
-<p>
-<a href="/readme.html">Mini Browser 2.1 - full documentation</a>
-</p>
-
-<p>
-<a href="https://github.com/mactjaap/mini_browser/">Source code on GitHub</a>
-</p>
+<p><a href="/readme.html">Mini Browser 2.3 - full documentation</a></p>
+<p><a href="https://github.com/mactjaap/mini_browser/">Source code on GitHub</a></p>
 
 <hr>
-
-<p>Mini Browser 2.1 - WHY2025 BadgeVMS</p>
+<p><b>Mini Browser 2.3</b> - WHY2025 BadgeVMS 😀</p>
 
 </body>
 </html>

@@ -917,12 +917,30 @@ static activate_result_t activate_page_action(
         navigation_url[len] = 0;
 
         printf("[mini_browser] Google direct -> %s\n", navigation_url);
-    } else {
-        strncpy(navigation_url, href, navigation_cap);
-        navigation_url[navigation_cap - 1] = 0;
-    }
+} else {
+    strncpy(navigation_url, href, navigation_cap);
+    navigation_url[navigation_cap - 1] = 0;
 
-    return ACTIVATE_NAVIGATE;
+    /*
+     * Google search links contain HTML-escaped query separators:
+     *   &amp;
+     * Decode these only for Google /search URLs before navigation.
+     */
+    if (!strncmp(navigation_url, "http://www.google.com/search?", 29) ||
+        !strncmp(navigation_url, "https://www.google.com/search?", 30)) {
+        char *p;
+
+        while ((p = strstr(navigation_url, "&amp;")) != NULL) {
+            *p = '&';
+            memmove(p + 1, p + 5, strlen(p + 5) + 1);
+        }
+
+        printf("[mini_browser] Google search URL -> %s\n", navigation_url);
+    }
+}
+
+return ACTIVATE_NAVIGATE;
+
 
 
  

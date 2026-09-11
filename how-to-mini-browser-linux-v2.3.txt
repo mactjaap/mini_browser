@@ -1,0 +1,643 @@
+# Mini Browser for Linux — Compile & Install HOWTO
+
+Mini Browser is a tiny text-only web browser written in C.
+
+The Linux edition uses the same lightweight browser model as the Mini Browser
+originally developed for the WHY2025 BadgeVMS / ESP32-P4 badge.
+
+Available Linux releases:
+
+- Mini Browser 1.6 — classic lightweight text browsing, links and bookmarks
+- Mini Browser 2.1 — GET forms, unified numbered actions and Back/Forward history
+- Mini Browser 2.3 — Unicode-aware terminal rendering, real bold text and improved
+  Google search-result navigation
+
+Mini Browser deliberately remains small:
+
+- Text-only browsing
+- No JavaScript
+- No CSS layout engine
+- No images
+- libcurl for HTTP/HTTPS
+- Built-in HTML-to-text parser
+- Numbered links and form controls
+- Persistent bookmarks
+- 64 KiB maximum downloaded page size
+- Maximum 128 links per page
+
+It runs in a normal Linux terminal. X11, Wayland, SDL and ncurses are not
+required.
+
+
+## 1. Recommended version
+
+For a new installation, use Mini Browser 2.3.
+
+Source file:
+
+    mini_browser_linux_v2.3.c
+
+You may keep that filename, or copy it to the generic build name:
+
+    cp mini_browser_linux_v2.3.c mini_browser_linux.c
+
+The examples below use:
+
+    mini_browser_linux.c
+
+
+## 2. What is new in 2.3
+
+Mini Browser 2.3 retains the 2.1 feature set and adds:
+
+- UTF-8 text is preserved
+- Numeric HTML entities are converted to UTF-8
+- Unicode-aware terminal wrapping
+- Terminal display width is calculated with wcwidth()
+- <b> and <strong> are rendered as real terminal bold
+- ASCII "* " is retained for unordered-list markers
+- Correct handling of relative links that contain "http://" or "https://" in a
+  query parameter
+- Direct handling of Google /url?q= search-result wrappers
+- Google search results can therefore open the destination directly instead of
+  first showing Google's redirect-notice page
+- Mini Browser 2.3 User-Agent string
+
+The Linux edition does NOT need the BadgeVMS unifont_cjk.bin font file.
+
+Unicode glyph rendering is provided by your terminal emulator and its configured
+font. If your terminal font does not contain a particular glyph, Mini Browser
+cannot supply that glyph itself.
+
+Bold rendering uses normal ANSI terminal bold when output is connected to a
+terminal.
+
+
+## 3. Existing 2.1 functionality retained in 2.3
+
+Mini Browser 2.3 continues to support:
+
+- Numbered hyperlinks
+- Simple HTML GET forms
+- Text input fields
+- Search input fields
+- URL input fields
+- Hidden form fields
+- Submit inputs
+- Submit buttons
+- application/x-www-form-urlencoded query generation
+- Numbered links and form controls in one action list
+- Back and Forward history
+- Persistent bookmarks
+- Headings
+- Ordered and unordered lists
+- Preformatted text
+- Basic tables
+- Code and emphasis markers
+- Horizontal rules
+- Common HTML entity decoding
+- Numeric decimal and hexadecimal HTML entities
+
+Mini Browser still does NOT support:
+
+- POST forms
+- JavaScript
+- CSS layout
+- Images
+- Video or audio
+- File uploads
+- Checkboxes
+- Radio buttons
+- Select boxes
+- Modern browser authentication APIs
+- A full HTML5 DOM
+
+
+## 4. AlmaLinux / Rocky Linux / RHEL
+
+Install GCC and the libcurl development files:
+
+    dnf install gcc libcurl-devel
+
+Compile Mini Browser 2.3:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_v2.3.c -o mini-browser -lcurl
+
+Or, if you renamed the source:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux.c -o mini-browser -lcurl
+
+Run it:
+
+    ./mini-browser
+
+Open a website directly:
+
+    ./mini-browser https://minibrowser.macip.net
+
+Other examples:
+
+    ./mini-browser https://news.ycombinator.com/
+    ./mini-browser https://wiby.me/
+
+
+## 5. Raspberry Pi OS / Debian / Ubuntu
+
+Install GCC and the libcurl development files:
+
+    apt update
+    apt install gcc libcurl4-openssl-dev
+
+Compile:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_v2.3.c -o mini-browser -lcurl
+
+Run:
+
+    ./mini-browser
+
+Or:
+
+    ./mini-browser https://minibrowser.macip.net
+
+Mini Browser is plain C plus libcurl. The same source can be compiled on x86-64,
+ARM64/AArch64 and other Linux architectures supported by GCC and libcurl.
+
+
+## 6. Terminal and Unicode requirements
+
+For the best 2.3 result, use a UTF-8 locale.
+
+Check it with:
+
+    locale
+
+Useful values normally contain UTF-8, for example:
+
+    LANG=en_US.UTF-8
+
+or:
+
+    LANG=C.UTF-8
+
+Mini Browser calls setlocale() and uses the terminal's character-width
+information when wrapping Unicode text.
+
+The terminal font determines which Unicode and emoji glyphs are visible.
+
+Unlike the BadgeVMS edition, the Linux edition does not load:
+
+    unifont_cjk.bin
+
+from disk.
+
+If your terminal supports monochrome or color emoji, the terminal itself decides
+how those characters are displayed.
+
+
+## 7. Commands in Mini Browser 2.3
+
+Mini Browser 2.3 uses numbered actions.
+
+An action can be:
+
+- A hyperlink
+- An editable form field
+- A form submit button
+
+Commands:
+
+    NUMBER       Activate a numbered link or form control
+    b            Back
+    fwd          Forward
+    >            Forward
+    g URL        Go to a URL
+    g            Enter a URL interactively
+    h            Homepage
+    r            Reload
+    l            Show all numbered actions and URLs
+    f            Add/remove current page as bookmark
+    m            Show bookmarks
+    o NUMBER     Open bookmark
+    ?            Help
+    q            Quit
+
+Example:
+
+    mini-browser> 18
+
+activates action 18 on the current page.
+
+
+## 8. GET forms
+
+Mini Browser 2.3 supports deliberately simple GET forms.
+
+Supported input types:
+
+    text
+    search
+    url
+    hidden
+    submit
+
+It also supports:
+
+    <button type="submit">
+
+For example, a search page may display:
+
+    [1] q:
+    [2] [Search]
+
+Select the field:
+
+    mini-browser> 1
+
+Enter the search text, then activate the submit control:
+
+    mini-browser> 2
+
+Mini Browser builds a normal application/x-www-form-urlencoded GET request.
+
+For example:
+
+    hello world
+
+becomes:
+
+    q=hello+world
+
+Hidden fields are included automatically.
+
+Up to 4 forms and 8 fields per form are handled by the lightweight parser.
+
+POST forms are intentionally unsupported and report:
+
+    POST FORMS NOT SUPPORTED
+
+
+## 9. Google search in 2.3
+
+The Mini Browser home page can use a simple Google GET form such as:
+
+    <form method="GET" action="http://www.google.com/search">
+    <input type="text" name="q" size="34" maxlength="255">
+    <input type="submit" value="Google Search">
+    </form>
+
+Google result links can look like:
+
+    /url?q=https://www.example.com/&amp;sa=U&amp;ved=...
+
+Mini Browser 2.3 contains two relevant fixes.
+
+First, URL resolution now checks whether http:// or https:// occurs at the
+START of an href. It no longer mistakes a relative URL for an absolute URL just
+because a query parameter contains "https://".
+
+Second, when a link is specifically a Google search-result wrapper beginning
+with:
+
+    http://www.google.com/url?q=
+
+or:
+
+    https://www.google.com/url?q=
+
+Mini Browser extracts the q= destination and navigates directly to it.
+
+This avoids Google's intermediate redirect-notice page for these result links.
+
+The Google-specific rule is deliberately narrow. Ordinary links on other sites
+continue through the normal URL-resolution path.
+
+Google's behaviour is an external service and may change independently of Mini
+Browser.
+
+
+## 10. Unicode and HTML entities in 2.3
+
+Raw UTF-8 from a web page is preserved.
+
+For example, pages may contain text such as:
+
+    日本語
+    中文
+    Ελληνικά
+    Русский
+    €
+
+Numeric HTML entities are converted to UTF-8 rather than being replaced with
+question marks.
+
+Examples:
+
+    &#8364;       -> €
+    &#x20AC;      -> €
+    &#26085;      -> 日
+    &#x1F600;     -> 😀
+
+Whether the final glyph is visible depends on the terminal font.
+
+
+## 11. Bold text in 2.3
+
+HTML:
+
+    <b>text</b>
+
+and:
+
+    <strong>text</strong>
+
+are rendered using ANSI terminal bold.
+
+The parser stores internal bold markers while processing and wrapping text.
+Those markers have zero display width. They are converted to terminal bold only
+when the page is printed.
+
+This means bold control bytes do not disturb terminal-width calculations.
+
+When stdout is not connected to a terminal, Mini Browser removes the internal
+bold markers instead of emitting ANSI bold sequences.
+
+
+## 12. Back and Forward
+
+Mini Browser 2.3 uses a browser-style history cursor.
+
+Back:
+
+    b
+
+Forward:
+
+    fwd
+
+or:
+
+    >
+
+Example:
+
+    Page A -> Page B -> Page C
+
+Entering:
+
+    b
+    b
+
+returns to Page A.
+
+Then:
+
+    fwd
+
+moves forward to Page B.
+
+If you go Back and then open a new page, the old Forward branch is discarded.
+
+Reloading a page does not create another history entry.
+
+
+## 13. Bookmarks
+
+Add or remove the current page:
+
+    f
+
+Display bookmarks:
+
+    m
+
+Open bookmark 3:
+
+    o 3
+
+Bookmarks are stored in:
+
+    ~/.mini_browser_bookmarks.txt
+
+They remain available after Mini Browser is restarted.
+
+The Linux bookmark file is independent of the BadgeVMS bookmark file.
+
+
+## 14. HTML rendering
+
+Mini Browser recognizes useful structural elements including:
+
+    p
+    div
+    section
+    article
+    main
+    header
+    footer
+    nav
+    aside
+    blockquote
+    address
+    br
+    h1 ... h6
+    ul
+    ol
+    li
+    pre
+    code
+    strong
+    b
+    em
+    i
+    hr
+    table
+    tr
+    td
+    th
+    a
+    form
+    input
+    button
+
+script, style and head content are suppressed from the visible page.
+
+Mini Browser is a lightweight HTML-to-text parser, not a complete HTML5 browser.
+
+
+## 15. Network behaviour
+
+Mini Browser uses libcurl for HTTP and HTTPS.
+
+HTTP redirects are followed, with a maximum redirect chain of five.
+
+The maximum downloaded page size is:
+
+    64 KiB
+
+This limit is inherited from the constrained BadgeVMS design.
+
+Other limits:
+
+    URL length              256 bytes
+    Links                   128
+    Numbered actions        160
+    Forms per page          4
+    Fields per form         8
+    Editable form value     127 characters
+    Bookmarks               32
+    History entries         32
+
+These bounds keep the implementation small and predictable.
+
+
+## 16. Install system-wide
+
+After compiling successfully:
+
+    cp mini-browser /usr/local/bin/mini-browser
+    chmod 755 /usr/local/bin/mini-browser
+
+Run it from anywhere:
+
+    mini-browser
+
+For example:
+
+    mini-browser https://minibrowser.macip.net
+
+
+## 17. Check the executable
+
+Inspect the binary:
+
+    file mini-browser
+
+Typical x86-64 output identifies an x86-64 ELF executable.
+
+On a 64-bit Raspberry Pi it normally identifies an ARM/AArch64 ELF executable.
+
+GCC builds the same C source for the architecture of the machine on which it is
+compiled.
+
+
+## 18. Keeping older versions
+
+You can keep releases side by side.
+
+Compile 1.6:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_1.6.c -o mini-browser-1.6 -lcurl
+
+Compile 2.1:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_v2.1.c -o mini-browser-2.1 -lcurl
+
+Compile 2.3:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_v2.3.c -o mini-browser-2.3 -lcurl
+
+Install them:
+
+    cp mini-browser-1.6 /usr/local/bin/
+    cp mini-browser-2.1 /usr/local/bin/
+    cp mini-browser-2.3 /usr/local/bin/
+
+
+## 19. Updating an existing Linux installation
+
+Compile the new 2.3 source:
+
+    gcc -O2 -Wall -Wextra mini_browser_linux_v2.3.c -o mini-browser -lcurl
+
+Then replace the installed executable:
+
+    cp mini-browser /usr/local/bin/mini-browser
+
+Your existing bookmark file remains:
+
+    ~/.mini_browser_bookmarks.txt
+
+
+## 20. Uninstall
+
+Remove the generic installation:
+
+    rm /usr/local/bin/mini-browser
+
+Or versioned binaries:
+
+    rm /usr/local/bin/mini-browser-1.6
+    rm /usr/local/bin/mini-browser-2.1
+    rm /usr/local/bin/mini-browser-2.3
+
+Optionally remove bookmarks:
+
+    rm ~/.mini_browser_bookmarks.txt
+
+
+## Recommended websites
+
+Mini Browser works best with lightweight, server-rendered websites.
+
+Examples:
+
+    https://minibrowser.macip.net
+    https://news.ycombinator.com/
+    https://text.npr.org/
+    https://curl.se/
+    http://www.textfiles.com/
+    http://info.cern.ch/
+    https://wiby.me/
+
+The Mini Browser home page also contains a simple Google GET search form for
+version 2.3.
+
+
+## Version comparison
+
+                        1.6             2.1             2.3
+    -----------------------------------------------------------------
+    Text browsing       Yes             Yes             Yes
+    Numbered links      Yes             Yes             Yes
+    Bookmarks           Yes             Yes             Yes
+    Back                Yes             Yes             Yes
+    Forward             No              Yes             Yes
+    GET forms           No              Yes             Yes
+    Text/search fields  No              Yes             Yes
+    Submit buttons      No              Yes             Yes
+    Hidden fields       No              Yes             Yes
+    Unified actions     No              Yes             Yes
+    Improved HTML       Basic           Yes             Yes
+    UTF-8 preservation  Basic/raw       Basic/raw       Yes
+    Numeric Unicode     No              No              Yes
+    Unicode wrapping    No              No              Yes
+    Real terminal bold  No              No              Yes
+    Google wrapper fix  No              No              Yes
+    JavaScript          No              No              No
+    CSS                 No              No              No
+    Images              No              No              No
+    POST forms          No              No              No
+    Maximum page        64 KiB          64 KiB          64 KiB
+    Maximum links       128             128             128
+
+
+## Philosophy
+
+Mini Browser is intentionally not a modern full-featured browser.
+
+There is no JavaScript engine, CSS layout engine, image renderer, DOM, GPU
+acceleration or multi-process browser architecture.
+
+It downloads a bounded page with libcurl, parses useful HTML itself, extracts
+links and forms, and turns the result into readable terminal text.
+
+Version 2.3 improves Unicode, bold text and practical search-engine navigation
+without changing that basic design.
+
+The same browser concept can therefore run on an ESP32-P4 badge, a Raspberry Pi
+or a normal Linux server.
+
+Small, fast and understandable.
+
+...but it seems to work. :-)

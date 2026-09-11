@@ -877,13 +877,55 @@ static activate_result_t activate_page_action(
     if (action->link_index < 0 || action->link_index >= page->link_count)
         return ACTIVATE_NONE;
 
-    printf("[mini_browser] activating link %d -> %s\n",
-           action_index + 1,
-           page->links[action->link_index].href);
+    const char *href = page->links[action->link_index].href;
 
-    strncpy(navigation_url, page->links[action->link_index].href, navigation_cap);
+    printf("[mini_browser] activating link %d -> %s\n",
+       action_index + 1,
+       href);
+
+           printf("[mini_browser] activating link %d -> %s\n",
+           action_index + 1,
+           href);
+
+    /* Google search-result redirect wrapper:
+     *   http(s)://www.google.com/url?q=https://example.com/&amp;sa=...
+     * Navigate directly to the q= destination.
+     */
+    const char *google_http  = "http://www.google.com/url?q=";
+    const char *google_https = "https://www.google.com/url?q=";
+    const char *dest = NULL;
+
+    if (!strncmp(href, google_http, strlen(google_http)))
+        dest = href + strlen(google_http);
+    else if (!strncmp(href, google_https, strlen(google_https)))
+        dest = href + strlen(google_https);
+
+    if (dest) {
+        size_t len = strlen(dest);
+
+        const char *end = strstr(dest, "&amp;");
+        if (!end)
+            end = strchr(dest, '&');
+
+        if (end)
+            len = (size_t)(end - dest);
+
+        if (len >= navigation_cap)
+            len = navigation_cap - 1;
+
+        memcpy(navigation_url, dest, len);
+        navigation_url[len] = 0;
+
+        printf("[mini_browser] Google direct -> %s\n", navigation_url);
+    } else {
+        strncpy(navigation_url, href, navigation_cap);
         navigation_url[navigation_cap - 1] = 0;
-        return ACTIVATE_NAVIGATE;
+    }
+
+    return ACTIVATE_NAVIGATE;
+
+
+ 
     }
 
     if (action->form_index < 0 || action->form_index >= page->form_count)

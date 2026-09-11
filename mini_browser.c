@@ -228,7 +228,12 @@ static void scheme_from_url(const char *base, char *out, size_t cap) {
 }
 static void resolve_url(const char *base, const char *href, char *out, size_t cap) {
     if (!href || !*href) { out[0]=0; return; }
-    if (strstr(href, "://")) { strncpy(out, href, cap); out[cap-1]=0; return; }
+    if (!strncasecmp(href, "http://", 7) ||
+    !strncasecmp(href, "https://", 8)) {
+    strncpy(out, href, cap);
+    out[cap-1]=0;
+    return;
+}
     if (href[0]=='/' && href[1]=='/') {
         char sch[16]; scheme_from_url(base, sch, sizeof sch);
         snprintf(out, cap, "%s:%s", sch, href); return;
@@ -868,10 +873,15 @@ static activate_result_t activate_page_action(
         return ACTIVATE_NONE;
 
     const page_action_t *action = &page->actions[action_index];
-    if (action->type == ACTION_LINK) {
-        if (action->link_index < 0 || action->link_index >= page->link_count)
-            return ACTIVATE_NONE;
-        strncpy(navigation_url, page->links[action->link_index].href, navigation_cap);
+        if (action->type == ACTION_LINK) {
+    if (action->link_index < 0 || action->link_index >= page->link_count)
+        return ACTIVATE_NONE;
+
+    printf("[mini_browser] activating link %d -> %s\n",
+           action_index + 1,
+           page->links[action->link_index].href);
+
+    strncpy(navigation_url, page->links[action->link_index].href, navigation_cap);
         navigation_url[navigation_cap - 1] = 0;
         return ACTIVATE_NAVIGATE;
     }

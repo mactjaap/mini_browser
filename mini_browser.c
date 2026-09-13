@@ -22,6 +22,9 @@
 # define YIELD_NET() ((void)0)
 #endif
 
+/* ---------- Mini Browser version ---------- */
+#define MINI_BROWSER_VERSION "2.3"
+
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
 #define TIMEOUT_S     10
@@ -1154,9 +1157,9 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
     struct curl_slist *hdrs = NULL;
 
     hdrs = curl_slist_append(hdrs,
-        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:2.1) "
+        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
         "Gecko/20100101 "
-        "(compatible; MiniBrowser/2.1; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+        "(compatible; MiniBrowser/" MINI_BROWSER_VERSION "; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
 
     hdrs = curl_slist_append(hdrs,
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -2113,6 +2116,382 @@ static int history_forward(char *out) {
     return 1;
 }
 
+
+/* ---------- Serial screenshot streaming ---------- */
+
+/*
+ * WHY+S requests a screenshot.
+ *
+ * The renderer is read back in small horizontal stripes so we never need
+ * another full-screen framebuffer allocation. Each stripe is converted to
+ * RGB24, RLE-compressed, then transported over the shared serial console.
+ *
+ * The console is not a lossless bulk-data channel: unrelated firmware tasks
+ * also write log messages to it. To make screenshot delivery resilient, each
+ * data record carries its own CRC32 and every group of four data records gets
+ * one XOR parity record. The Mac can therefore reconstruct any one missing or
+ * damaged record per group. A final CRC32 still validates the whole compressed
+ * screenshot before PNG creation.
+ *
+ * Wire format (FEC1):
+ *
+ *   IMG BEGIN <width> <height> RGB24 RLE5FEC1 <chunk-size> <group-size>
+ *   IMG D <sequence> <length> <crc32> <base64-data>
+ *   IMG P <group> <crc32> <base64-parity>
+ *   ...
+ *   IMG END <compressed-bytes> <crc32> <data-chunks>
+ *
+ * Data chunks are padded with zeroes only for parity calculation. The length
+ * field is the actual number of compressed bytes in that data chunk.
+ */
+
+#define SCREENSHOT_STRIPE_H      8
+#define IMG_RAW_CHUNK           48
+#define IMG_FEC_GROUP            4
+#define SCREENSHOT_PACE_MS       8
+
+typedef struct {
+    unsigned char raw[IMG_RAW_CHUNK];
+    size_t used;
+    unsigned sequence;
+    unsigned long compressed_bytes;
+    unsigned crc;
+
+    unsigned char parity[IMG_RAW_CHUNK];
+    unsigned parity_count;
+    unsigned parity_group;
+} screenshot_stream_t;
+
+static unsigned screenshot_crc32_update(unsigned crc,
+                                        const unsigned char *data,
+                                        size_t len) {
+    while (len--) {
+        crc ^= *data++;
+
+        for (int bit = 0; bit < 8; bit++) {
+            unsigned mask = (unsigned)-(int)(crc & 1U);
+            crc = (crc >> 1) ^ (0xEDB88320U & mask);
+        }
+    }
+
+    return crc;
+}
+
+static unsigned screenshot_crc32(const unsigned char *data, size_t len) {
+    unsigned crc = 0xFFFFFFFFU;
+    crc = screenshot_crc32_update(crc, data, len);
+    return crc ^ 0xFFFFFFFFU;
+}
+
+static size_t screenshot_base64_encode(char *out,
+                                       size_t out_size,
+                                       const unsigned char *data,
+                                       size_t len) {
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+    size_t needed = 4U * ((len + 2U) / 3U);
+
+    if (!out || out_size < needed + 1U) {
+        return 0;
+    }
+
+    size_t i = 0;
+    size_t o = 0;
+
+    while (i + 3U <= len) {
+        unsigned a = data[i++];
+        unsigned b = data[i++];
+        unsigned c = data[i++];
+
+        out[o++] = table[(a >> 2) & 0x3F];
+        out[o++] = table[((a & 0x03) << 4) | ((b >> 4) & 0x0F)];
+        out[o++] = table[((b & 0x0F) << 2) | ((c >> 6) & 0x03)];
+        out[o++] = table[c & 0x3F];
+    }
+
+    size_t remaining = len - i;
+
+    if (remaining == 1U) {
+        unsigned a = data[i];
+
+        out[o++] = table[(a >> 2) & 0x3F];
+        out[o++] = table[(a & 0x03) << 4];
+        out[o++] = '=';
+        out[o++] = '=';
+    } else if (remaining == 2U) {
+        unsigned a = data[i];
+        unsigned b = data[i + 1U];
+
+        out[o++] = table[(a >> 2) & 0x3F];
+        out[o++] = table[((a & 0x03) << 4) | ((b >> 4) & 0x0F)];
+        out[o++] = table[(b & 0x0F) << 2];
+        out[o++] = '=';
+    }
+
+    out[o] = '\0';
+    return o;
+}
+
+static void screenshot_transport_pause(void) {
+#if defined(ESP_PLATFORM)
+    vTaskDelay(pdMS_TO_TICKS(SCREENSHOT_PACE_MS));
+#else
+    SDL_Delay(SCREENSHOT_PACE_MS);
+#endif
+}
+
+static bool screenshot_send_parity(screenshot_stream_t *stream) {
+    if (!stream || stream->parity_count == 0) {
+        return true;
+    }
+
+    char encoded[(IMG_RAW_CHUNK * 4 / 3) + 8];
+    size_t encoded_len = screenshot_base64_encode(
+        encoded,
+        sizeof(encoded),
+        stream->parity,
+        IMG_RAW_CHUNK
+    );
+
+    if (encoded_len == 0) {
+        printf("IMG ERROR parity-base64-buffer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    unsigned crc = screenshot_crc32(stream->parity, IMG_RAW_CHUNK);
+
+    printf("IMG P %06u %08X %s\n",
+           stream->parity_group,
+           crc,
+           encoded);
+    fflush(stdout);
+    screenshot_transport_pause();
+
+    memset(stream->parity, 0, sizeof(stream->parity));
+    stream->parity_count = 0;
+    stream->parity_group++;
+    return true;
+}
+
+static bool screenshot_stream_flush(screenshot_stream_t *stream) {
+    if (!stream || stream->used == 0) {
+        return true;
+    }
+
+    char encoded[(IMG_RAW_CHUNK * 4 / 3) + 8];
+    size_t encoded_len = screenshot_base64_encode(
+        encoded,
+        sizeof(encoded),
+        stream->raw,
+        stream->used
+    );
+
+    if (encoded_len == 0) {
+        printf("IMG ERROR data-base64-buffer\n");
+        fflush(stdout);
+        stream->used = 0;
+        return false;
+    }
+
+    unsigned chunk_crc = screenshot_crc32(stream->raw, stream->used);
+
+    printf("IMG D %06u %02u %08X %s\n",
+           stream->sequence,
+           (unsigned)stream->used,
+           chunk_crc,
+           encoded);
+    fflush(stdout);
+    screenshot_transport_pause();
+
+    for (size_t i = 0; i < stream->used; i++) {
+        stream->parity[i] ^= stream->raw[i];
+    }
+
+    stream->sequence++;
+    stream->parity_count++;
+    stream->used = 0;
+
+    if (stream->parity_count == IMG_FEC_GROUP) {
+        return screenshot_send_parity(stream);
+    }
+
+    return true;
+}
+
+static bool screenshot_stream_bytes(screenshot_stream_t *stream,
+                                    const unsigned char *data,
+                                    size_t len) {
+    if (!stream || !data) {
+        return false;
+    }
+
+    stream->crc = screenshot_crc32_update(stream->crc, data, len);
+    stream->compressed_bytes += (unsigned long)len;
+
+    while (len > 0) {
+        size_t room = IMG_RAW_CHUNK - stream->used;
+        size_t take = len < room ? len : room;
+
+        memcpy(stream->raw + stream->used, data, take);
+        stream->used += take;
+        data += take;
+        len -= take;
+
+        if (stream->used == IMG_RAW_CHUNK) {
+            if (!screenshot_stream_flush(stream)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool screenshot_emit_run(screenshot_stream_t *stream,
+                                unsigned count,
+                                unsigned char r,
+                                unsigned char g,
+                                unsigned char b) {
+    unsigned char record[5];
+
+    record[0] = (unsigned char)(count & 0xFFU);
+    record[1] = (unsigned char)((count >> 8) & 0xFFU);
+    record[2] = r;
+    record[3] = g;
+    record[4] = b;
+
+    return screenshot_stream_bytes(stream, record, sizeof(record));
+}
+
+static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
+    if (!renderer) {
+        printf("IMG ERROR no-renderer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    screenshot_stream_t stream;
+    memset(&stream, 0, sizeof(stream));
+    stream.crc = 0xFFFFFFFFU;
+
+    printf("IMG BEGIN %d %d RGB24 RLE5FEC1 %d %d\n",
+           VIEW_W, VIEW_H, IMG_RAW_CHUNK, IMG_FEC_GROUP);
+    fflush(stdout);
+    screenshot_transport_pause();
+
+    for (int top = 0; top < VIEW_H; top += SCREENSHOT_STRIPE_H) {
+        int stripe_h = SCREENSHOT_STRIPE_H;
+
+        if (top + stripe_h > VIEW_H) {
+            stripe_h = VIEW_H - top;
+        }
+
+        SDL_Rect rect = { 0, top, VIEW_W, stripe_h };
+        SDL_Surface *captured = SDL_RenderReadPixels(renderer, &rect);
+
+        if (!captured) {
+            printf("IMG ERROR read-pixels y=%d error=%s\n",
+                   top, SDL_GetError());
+            fflush(stdout);
+            return false;
+        }
+
+        SDL_Surface *rgb = SDL_ConvertSurface(
+            captured,
+            SDL_PIXELFORMAT_RGB24
+        );
+        SDL_DestroySurface(captured);
+
+        if (!rgb) {
+            printf("IMG ERROR convert-rgb24 y=%d error=%s\n",
+                   top, SDL_GetError());
+            fflush(stdout);
+            return false;
+        }
+
+        bool have_run = false;
+        unsigned run_count = 0;
+        unsigned char run_r = 0;
+        unsigned char run_g = 0;
+        unsigned char run_b = 0;
+        bool ok = true;
+
+        for (int y = 0; y < rgb->h && ok; y++) {
+            const unsigned char *row =
+                (const unsigned char *)rgb->pixels +
+                (size_t)y * (size_t)rgb->pitch;
+
+            for (int x = 0; x < rgb->w; x++) {
+                const unsigned char *pixel = row + (size_t)x * 3U;
+                unsigned char r = pixel[0];
+                unsigned char g = pixel[1];
+                unsigned char b = pixel[2];
+
+                if (have_run &&
+                    r == run_r &&
+                    g == run_g &&
+                    b == run_b &&
+                    run_count < 65535U) {
+                    run_count++;
+                    continue;
+                }
+
+                if (have_run &&
+                    !screenshot_emit_run(&stream, run_count,
+                                         run_r, run_g, run_b)) {
+                    ok = false;
+                    break;
+                }
+
+                have_run = true;
+                run_count = 1;
+                run_r = r;
+                run_g = g;
+                run_b = b;
+            }
+        }
+
+        if (ok && have_run) {
+            ok = screenshot_emit_run(&stream, run_count,
+                                     run_r, run_g, run_b);
+        }
+
+        SDL_DestroySurface(rgb);
+
+        if (!ok) {
+            return false;
+        }
+
+        YIELD_NET();
+    }
+
+    if (!screenshot_stream_flush(&stream)) {
+        return false;
+    }
+
+    if (!screenshot_send_parity(&stream)) {
+        return false;
+    }
+
+    unsigned final_crc = stream.crc ^ 0xFFFFFFFFU;
+
+    /* Repeat END so one damaged terminator does not force a timeout. */
+    for (int repeat = 0; repeat < 2; repeat++) {
+        printf("IMG END %lu %08X %u\n",
+               stream.compressed_bytes,
+               final_crc,
+               stream.sequence);
+        fflush(stdout);
+        screenshot_transport_pause();
+    }
+
+    return true;
+}
+
 /* ---------- main ---------- */
 int main(void) {
     printf("[mini_browser] enter main\n");
@@ -2151,6 +2530,7 @@ int main(void) {
     int  scroll_lines = 0;
     int  need_fetch = 1;
     int  sel_action = -1;
+    long last_http_status = 0;
     bool url_editing = false;
     size_t url_cursor = 0;
     bool form_editing = false;
@@ -2188,6 +2568,7 @@ int main(void) {
 
     bool accel_down = false;        /* WHY key held */
     bool inhibit_text_once = false; /* swallow TEXT_INPUT after commands */
+    bool screenshot_pending = false; /* WHY+S: capture next fully rendered frame */
 
     const int max_cols = (VIEW_W - 2*PAD_LR) / CH_W;
     const int lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
@@ -2228,7 +2609,7 @@ int main(void) {
                     }
                     history_navigation = false;
 
-                    snprintf(barline, sizeof(barline), "Loading...");
+                    snprintf(barline, sizeof(barline), "%s", url_buf);
                     draw_ui(ren, barline);
                     SDL_RenderPresent(ren);
 
@@ -2237,6 +2618,7 @@ int main(void) {
                     long http_status = 0;
 
                     int rc = fetch_url(url_buf, &m, &http_status);
+                    last_http_status = http_status;
 
                     if (rc != 0) {
                         printf("[mini_browser] fetch error %d URL='%s'\n",
@@ -2261,10 +2643,6 @@ int main(void) {
                                  url_buf,
                                  curl_error ? curl_error : "Unknown network error");
 
-                        snprintf(status_message, sizeof(status_message),
-                                 "Connection failed");
-                        status_message_until = SDL_GetTicks() + 3000;
-
                         content_wrapped = wrap_text(error_text, max_cols);
                         scroll_lines = 0;
                         sel_action = -1;
@@ -2282,34 +2660,12 @@ int main(void) {
                         content_wrapped = NULL;
 
                         char error_text[512];
-                        const char *http_error_title = "HTTP error";
-
-                        if (http_status == 400) {
-                            http_error_title = "Bad request";
-                        } else if (http_status == 401) {
-                            http_error_title = "Authentication required";
-                        } else if (http_status == 403) {
-                            http_error_title = "Access denied";
-                        } else if (http_status == 404) {
-                            http_error_title = "Page not found";
-                        } else if (http_status == 408) {
-                            http_error_title = "Request timed out";
-                        } else if (http_status == 429) {
-                            http_error_title = "Too many requests";
-                        } else if (http_status >= 500) {
-                            http_error_title = "Server error";
-                        }
-
-                        snprintf(status_message, sizeof(status_message),
-                                 "%s (%ld)",
-                                 http_error_title, http_status);
-                        status_message_until = SDL_GetTicks() + 3000;
-
                         snprintf(error_text, sizeof(error_text),
-                                 "%s (%ld)\n\n"
-                                 "Could not load:\n%s\n\n"
+                                 "HTTP ERROR %ld\n\n"
+                                 "The server returned HTTP status %ld.\n\n"
+                                 "URL:\n%s\n\n"
                                  "Press WHY+B to go back or WHY+R to retry.",
-                                 http_error_title,
+                                 http_status,
                                  http_status,
                                  url_buf);
 
@@ -2363,10 +2719,6 @@ int main(void) {
                                    (unsigned)m.len,
                                    page->link_count,
                                    url_buf);
-
-                            snprintf(status_message, sizeof(status_message),
-                                     "Loaded");
-                            status_message_until = SDL_GetTicks() + 1500;
 
                             if (wrapped) {
                                 printf("\n--- CONTENT START ---\n%s\n--- CONTENT END ---\n",
@@ -2431,8 +2783,25 @@ int main(void) {
                          sel_action + 1, page->action_count);
             }
 
-        } else if (page && page->title[0]) {
-            snprintf(barline, sizeof(barline), "%s", page->title);
+        } else if (screenshot_pending && page && page->title[0]) {
+            /*
+             * Screenshots are meant to document the rendered page, not the
+             * HTTP diagnostics. The normal on-badge UI still shows
+             * "<status>  <title>"; screenshot mode renders one clean frame
+             * containing only the page title.
+             */
+            snprintf(barline, sizeof(barline), "%s",
+                     page->title);
+
+        } else if (page && page->title[0] && last_http_status > 0) {
+            snprintf(barline, sizeof(barline), "%ld  %s",
+                     last_http_status,
+                     page->title);
+
+        } else if (last_http_status > 0) {
+            snprintf(barline, sizeof(barline), "%ld  %s",
+                     last_http_status,
+                     url_buf);
 
         } else {
             snprintf(barline, sizeof(barline), "%s", url_buf);
@@ -2458,6 +2827,11 @@ int main(void) {
                 p = nl ? nl + 1 : NULL;
             }
         }
+        if (screenshot_pending) {
+            screenshot_stream_renderer(ren);
+            screenshot_pending = false;
+        }
+
         SDL_RenderPresent(ren);
 
         /* Events */
@@ -2608,6 +2982,7 @@ int main(void) {
                                 strncpy(url_buf, "bookmarks:", URL_MAX);
                                 url_buf[URL_MAX - 1] = 0;
 
+                                last_http_status = 0;
                                 scroll_lines = 0;
                                 sel_action = -1;
                                 url_editing = false;
@@ -2694,6 +3069,12 @@ int main(void) {
                             inhibit_text_once = true;
                             break;
                         }
+
+                        case SDL_SCANCODE_S:
+                            screenshot_pending = true;
+                            inhibit_text_once = true;
+                            printf("[mini_browser] screenshot requested; clean frame queued\n");
+                            break;
 
                         case SDL_SCANCODE_Q:
                             running = 0;

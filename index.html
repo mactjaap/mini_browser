@@ -12,7 +12,7 @@
 <p>
 Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
 Version 2.3 supports links, bookmarks, Back/Forward history, simple GET forms,
-broad Unicode, monochrome emoji and real bold text.
+broad Unicode, monochrome emoji, real bold text and WHY+S screenshot capture.
 </p>
 
 <h2>Search the small web</h2>
@@ -59,8 +59,32 @@ one line at a time.
   <li>WHY+G - forward</li>
   <li>WHY+F - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
+  <li>WHY+S - capture and transmit a screenshot</li>
   <li>WHY+Q - quit</li>
 </ul>
+
+<h2>Screenshots</h2>
+
+<p>
+Press WHY+S to capture the 716x716 Mini Browser view and transmit it over USB serial.
+The repository includes badge_screenshot.py, a standalone macOS/Linux receiver that
+validates the CRC/FEC protected transfer and saves it as a PNG.
+</p>
+
+<pre>
+./badge_screenshot.py /dev/cu.wchusbserial10
+</pre>
+
+<p>
+Physical WHY+S screenshots do not require custom firmware. An optional customized
+WHY2025 firmware adds host-to-badge keyboard control, so a computer can operate Mini
+Browser remotely. It also includes scripts for automated browser tests and automatic
+screenshots.
+</p>
+
+<p>
+<a href="https://github.com/mactjaap/firmware">Customized WHY2025 firmware and test tools</a>
+</p>
 
 <h2>About 2.3</h2>
 

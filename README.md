@@ -26,6 +26,8 @@ Mini Browser deliberately does **not** try to be a modern graphical browser. The
 - CJK, Greek, Cyrillic, punctuation, symbols and many other scripts/blocks
 - Monochrome single-codepoint emoji
 - Real rendered bold for `<b>` and `<strong>`
+- `WHY+S` screenshot capture with reliable serial transfer
+- Standalone `badge_screenshot.py` receiver for macOS/Linux
 - ASCII `*` markers for unordered lists, so list markers remain usable without the external Unicode font
 - Small built-in 5×7 ASCII bitmap font
 - No JavaScript, CSS layout or image rendering required
@@ -127,7 +129,50 @@ The WHY2025 key acts as the browser accelerator:
 | `WHY+G` | Forward |
 | `WHY+F` | Add/remove current bookmark |
 | `WHY+M` | Open bookmarks |
+| `WHY+S` | Capture and transmit a screenshot |
 | `WHY+Q` | Quit |
+
+## Screenshots
+
+Mini Browser 2.3 can capture the rendered browser view with `WHY+S`.
+
+The screenshot is read from the SDL renderer as RGB24 data, compressed with the browser's lightweight RLE5 format, protected with per-record CRC32 and XOR forward-error correction, and transmitted over the badge's USB serial connection. The current browser viewport is 716×716 pixels.
+
+The repository includes the standalone receiver:
+
+    badge_screenshot.py
+
+On macOS, for example:
+
+    ./badge_screenshot.py /dev/cu.wchusbserial10
+
+On Linux the serial device will commonly look like:
+
+    ./badge_screenshot.py /dev/ttyUSB0
+
+Start the receiver and press `WHY+S` on the badge. The receiver validates and repairs the serial transfer where possible, verifies the final CRC32, decodes the RLE stream and writes a normal PNG file.
+
+A custom firmware is **not required** for physical `WHY+S` screenshot capture. The screenshot-enabled Mini Browser and a USB serial connection are sufficient.
+
+The receiver also supports:
+
+    ./badge_screenshot.py /dev/cu.wchusbserial10 --request
+
+`--request` sends `WHY+S` from the host instead of requiring a physical keypress. This requires the custom firmware described below because stock BadgeVMS firmware does not implement the host-to-badge serial keyboard protocol.
+
+## Optional custom firmware and automated testing
+
+A customized WHY2025 firmware is available at:
+
+    https://github.com/mactjaap/firmware
+
+This firmware extends the BadgeVMS keyboard path with a serial keyboard bridge. A macOS/Linux host can send keyboard events over the same USB serial connection and they enter Mini Browser through the normal BadgeVMS/SDL keyboard event path.
+
+The firmware repository includes `badge_keyboard.py`, which makes it possible to operate Mini Browser from a computer keyboard. Browser accelerator commands such as `WHY+E`, `WHY+H`, `WHY+R`, `WHY+B`, `WHY+G`, `WHY+F`, `WHY+S` and `WHY+Q` can therefore be generated remotely.
+
+The custom firmware repository also contains automated Mini Browser test scripts. These can drive browser navigation, open configured websites, perform searches, exercise browser commands and automatically request and save screenshots after test steps. This is useful for repeatable regression testing without manually operating the badge for every page.
+
+The custom firmware is optional for normal Mini Browser use and for screenshots triggered physically with `WHY+S`. It is required when the host needs to send keyboard commands to the badge, including fully automated tests and `badge_screenshot.py --request`.
 
 ## Bookmarks and history
 
@@ -230,4 +275,4 @@ Home page:
 
 **Mini Browser 2.3**
 
-Version 2.3 combines the stable interactive browser foundation with broad Unicode/emoji rendering, UTF-8-safe pixel-aware wrapping and genuine bold HTML text rendering.
+Version 2.3 combines the stable interactive browser foundation with broad Unicode/emoji rendering, UTF-8-safe pixel-aware wrapping, genuine bold HTML text rendering and `WHY+S` screenshot capture over USB serial.

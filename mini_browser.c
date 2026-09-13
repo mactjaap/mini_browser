@@ -2776,7 +2776,12 @@ int main(void) {
                     }
                     history_navigation = false;
 
-                    snprintf(barline, sizeof(barline), "%s", url_buf);
+                    /*
+                     * User-facing fetch state.  Keep HTTP status codes out of the
+                     * normal title bar; detailed HTTP errors are rendered in the
+                     * page itself.
+                     */
+                    snprintf(barline, sizeof(barline), "Loading...");
                     draw_ui(ren, barline);
                     SDL_RenderPresent(ren);
 
@@ -2881,6 +2886,12 @@ int main(void) {
                             scroll_lines = 0;
                             sel_action = -1;
 
+                            snprintf(status_message,
+                                     sizeof(status_message),
+                                     "Loaded");
+                            status_message_until =
+                                SDL_GetTicks() + 1000;
+
                             printf("[mini_browser] HTTP %ld, %u bytes, %d links from %s\n",
                                    http_status,
                                    (unsigned)m.len,
@@ -2903,12 +2914,22 @@ int main(void) {
         }
 
 /* Compose bar text */
-        if (status_message[0] &&
-            SDL_GetTicks() < status_message_until) {
+        if ((screenshot_pending || full_screenshot_pending) &&
+            page && page->title[0]) {
+
+            /*
+             * Screenshots should always contain the clean page title, even if
+             * a transient "Loaded" or bookmark status is still active.
+             */
+            snprintf(barline, sizeof(barline), "%s",
+                     page->title);
+
+        } else if (status_message[0] &&
+                   SDL_GetTicks() < status_message_until) {
 
             snprintf(barline, sizeof(barline),
-                      "%s",
-                      status_message);
+                     "%s",
+                     status_message);
 
         } else if (form_editing && page &&
                    form_edit_form >= 0 && form_edit_form < page->form_count &&
@@ -2950,26 +2971,13 @@ int main(void) {
                          sel_action + 1, page->action_count);
             }
 
-        } else if ((screenshot_pending || full_screenshot_pending) &&
-                   page && page->title[0]) {
+        } else if (page && page->title[0]) {
             /*
-             * Screenshots are meant to document the rendered page, not the
-             * HTTP diagnostics. The normal on-badge UI still shows
-             * "<status>  <title>"; screenshot modes render a clean title
-             * containing only the page title.
+             * Normal idle state: show the page title, not HTTP 200.
+             * HTTP failures are already shown as readable page content.
              */
             snprintf(barline, sizeof(barline), "%s",
                      page->title);
-
-        } else if (page && page->title[0] && last_http_status > 0) {
-            snprintf(barline, sizeof(barline), "%ld  %s",
-                     last_http_status,
-                     page->title);
-
-        } else if (last_http_status > 0) {
-            snprintf(barline, sizeof(barline), "%ld  %s",
-                     last_http_status,
-                     url_buf);
 
         } else {
             snprintf(barline, sizeof(barline), "%s", url_buf);

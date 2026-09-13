@@ -23,7 +23,7 @@
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "2.3"
+#define MINI_BROWSER_VERSION "2.4"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -128,6 +128,11 @@ static const unsigned char font5x7[96][5] = {
 #define FONT_SCALE  2
 #define CH_W ((FONT_W_COLS + FONT_COL_GAP) * FONT_SCALE)
 #define CH_H ((FONT_H_ROWS) * FONT_SCALE)
+
+/* External Unicode glyph geometry. Needed by wrapping and rendering. */
+#define UNICODE_GLYPH_BYTES 32
+#define UNICODE_GLYPH_W 16
+#define UNICODE_GLYPH_H 16
 
 /* --------- curl memory sink --------- */
 typedef struct { char *buf; size_t len; } mem_t;
@@ -989,34 +994,62 @@ static unsigned utf8_next(const char *s, size_t len, size_t *i);
 /* ---------- wrap text to columns ---------- */
 
 
+static int wrap_glyph_width(unsigned cp) {
+    if (cp == TEXT_BOLD_ON || cp == TEXT_BOLD_OFF)
+        return 0;
+
+    if (cp >= 32 && cp <= 126)
+        return CH_W;
+
+    if (cp >= 0x80 && cp <= 0x10FFFF)
+        return UNICODE_GLYPH_W + 1;
+
+    return 0;
+}
+
+static int wrap_token_width(const char *s, size_t start, size_t end) {
+    int width = 0;
+    size_t i = start;
+
+    while (i < end) {
+        unsigned cp = utf8_next(s, end, &i);
+        if (cp == 0)
+            break;
+        width += wrap_glyph_width(cp);
+    }
+
+    return width;
+}
+
 static char *wrap_text(const char *in, int max_cols) {
     if (!in) return NULL;
 
     size_t n = strlen(in);
 
     /*
-     * Worst case we add roughly one newline per input codepoint.
-     * 2*n + 8 is therefore safely large enough.
+     * Word-aware wrapping can replace a space with a newline and can also
+     * add newlines inside an overlong token. 2*n + 8 remains a generous
+     * upper bound while keeping the allocation small on the badge.
      */
     char *out = (char*)malloc(n * 2 + 8);
     if (!out) return NULL;
 
     /*
-     * max_cols is still supplied by the existing caller. Convert it
-     * back to the exact content width in pixels. This keeps the public
-     * interface unchanged while making wrapping match draw_text().
+     * Keep the existing caller interface, but make every decision in pixels
+     * using exactly the same advances as draw_text().
      */
     const int max_px = max_cols > 0 ? max_cols * CH_W : 0;
+    const int space_w = CH_W;
 
     size_t i = 0;
     size_t o = 0;
     int line_px = 0;
     int blank_run = 0;
+    bool pending_space = false;
 
     while (i < n) {
-        size_t start = i;
+        size_t cp_start = i;
         unsigned cp = utf8_next(in, n, &i);
-        size_t bytes = i - start;
 
         if (cp == 0)
             break;
@@ -1024,13 +1057,16 @@ static char *wrap_text(const char *in, int max_cols) {
         if (cp == '\r')
             continue;
 
-        /* Preserve formatting markers without giving them any width. */
-        if (cp == TEXT_BOLD_ON || cp == TEXT_BOLD_OFF) {
-            out[o++] = (char)cp;
+        /* Treat NBSP as the same break opportunity as an ordinary space. */
+        if (cp == ' ' || cp == 0xA0) {
+            if (line_px > 0)
+                pending_space = true;
             continue;
         }
 
         if (cp == '\n') {
+            pending_space = false;
+
             if (line_px == 0) {
                 if (blank_run)
                     continue;
@@ -1045,57 +1081,74 @@ static char *wrap_text(const char *in, int max_cols) {
         }
 
         /*
-         * Normalize NBSP to an ordinary space.
+         * Find one complete word/token. Formatting markers are part of the
+         * token but have zero width. Space, NBSP, CR and LF end the token.
          */
-        if (cp == 0xA0)
-            cp = ' ';
+        size_t token_start = cp_start;
+        size_t token_end = i;
+        size_t scan = i;
 
-        /*
-         * Collapse redundant ASCII spaces as before.
-         */
-        if (cp == ' ' && (line_px == 0 || (o > 0 && out[o - 1] == ' ')))
-            continue;
+        while (scan < n) {
+            size_t next_start = scan;
+            unsigned next_cp = utf8_next(in, n, &scan);
 
-        /*
-         * IMPORTANT: use exactly the same advance widths as draw_text().
-         *
-         * ASCII:   CH_W = 12 pixels
-         * Unicode: 16-pixel glyph + 1-pixel gap = 17 pixels
-         */
-        int char_w;
-        if (cp >= 32 && cp <= 126)
-            char_w = CH_W;
-        else
-            char_w = 16 + 1;  /* UNICODE_GLYPH_W + 1 */
+            if (next_cp == 0 || next_cp == ' ' || next_cp == 0xA0 ||
+                next_cp == '\r' || next_cp == '\n') {
+                scan = next_start;
+                break;
+            }
 
-        /*
-         * Wrap BEFORE copying the complete UTF-8 sequence. This prevents
-         * draw_text() from performing an extra hidden wrap and painting
-         * over the following browser line.
-         */
-        if (max_px > 0 && line_px > 0 && line_px + char_w > max_px) {
-            out[o++] = '\n';
-            line_px = 0;
-
-            /*
-             * Don't start a wrapped line with an ordinary space.
-             */
-            if (cp == ' ')
-                continue;
+            token_end = scan;
         }
 
-        if (cp == ' ') {
-            out[o++] = ' ';
-        } else {
-            /*
-             * Copy the COMPLETE original UTF-8 sequence.
-             */
-            memcpy(out + o, in + start, bytes);
-            o += bytes;
+        int token_px = wrap_token_width(in, token_start, token_end);
+
+        /*
+         * Prefer moving the whole word to the next line. This is the key
+         * Phase 1.5 behavior: "bookmarks" stays intact instead of becoming
+         * "bookmar" / "ks" merely because the remaining pixels are short.
+         */
+        if (pending_space && line_px > 0) {
+            if (max_px > 0 && line_px + space_w + token_px > max_px) {
+                out[o++] = '\n';
+                line_px = 0;
+            } else {
+                out[o++] = ' ';
+                line_px += space_w;
+            }
+        }
+        pending_space = false;
+
+        /*
+         * Emit the token UTF-8 codepoint by codepoint. Normally the whole
+         * token fits because of the decision above. If a single token is
+         * wider than the line (long URL, CJK without spaces, etc.), fall
+         * back to UTF-8-safe glyph wrapping rather than overflowing.
+         */
+        size_t t = token_start;
+        while (t < token_end) {
+            size_t glyph_start = t;
+            unsigned glyph = utf8_next(in, token_end, &t);
+            size_t glyph_bytes = t - glyph_start;
+
+            if (glyph == 0)
+                break;
+
+            int glyph_w = wrap_glyph_width(glyph);
+
+            if (max_px > 0 && glyph_w > 0 && line_px > 0 &&
+                line_px + glyph_w > max_px) {
+                out[o++] = '\n';
+                line_px = 0;
+            }
+
+            memcpy(out + o, in + glyph_start, glyph_bytes);
+            o += glyph_bytes;
+            line_px += glyph_w;
+            blank_run = 0;
         }
 
-        line_px += char_w;
-        blank_run = 0;
+        i = token_end;
     }
 
     out[o] = 0;
@@ -1210,10 +1263,6 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
 
 #define UNICODE_FONT_FILE "APPS:[mini_browser]unifont_cjk.bin"
 
-#define UNICODE_GLYPH_BYTES 32
-#define UNICODE_GLYPH_W 16
-#define UNICODE_GLYPH_H 16
-
 #define UNICODE_CACHE_SIZE 128
 
 typedef struct {
@@ -1226,13 +1275,27 @@ static FILE *g_unicode_font = NULL;
 static unicode_cache_entry_t g_unicode_cache[UNICODE_CACHE_SIZE];
 
 /*
- * Direct-indexed ranges in unifont_cjk.bin.
+ * Direct-indexed ranges are loaded from unifont_cjk.bin at runtime.
  *
- * Header:
- *   12-byte main header
- *   one 12-byte range record per entry below
+ * MBCJ v1 file format:
  *
- * Glyph data starts immediately after the range table.
+ *   bytes 0..3   "MBCJ"
+ *   uint32 LE    format version (1)
+ *   uint32 LE    range count
+ *
+ * followed by range_count records:
+ *
+ *   uint32 LE    first code point
+ *   uint32 LE    last code point
+ *   uint32 LE    glyph-data offset
+ *
+ * Every code-point slot in a range occupies exactly 32 bytes (16x16,
+ * one bit per pixel). An all-zero slot means that GNU Unifont did not
+ * provide a usable 8x16 or 16x16 glyph for that code point.
+ *
+ * Loading the table from the file rather than compiling offsets into
+ * Mini Browser makes the external font independently replaceable. This
+ * is especially useful for the much broader Unicode coverage in 2.4.
  */
 typedef struct {
     uint32_t start;
@@ -1240,55 +1303,19 @@ typedef struct {
     uint32_t offset;
 } unicode_font_range_t;
 
-static const unicode_font_range_t g_unicode_ranges[] = {
-    { 0x00A0, 0x00FF,      540 }, /* Latin-1 Supplement */
-    { 0x0100, 0x017F,     3612 }, /* Latin Extended-A */
-    { 0x0180, 0x024F,     7708 }, /* Latin Extended-B */
-    { 0x0250, 0x02AF,    14364 }, /* IPA Extensions */
-    { 0x02B0, 0x02FF,    17436 }, /* Spacing Modifier Letters */
-    { 0x0300, 0x036F,    19996 }, /* Combining Diacritical Marks */
-    { 0x0370, 0x03FF,    23580 }, /* Greek and Coptic */
-    { 0x0400, 0x04FF,    28188 }, /* Cyrillic */
-    { 0x0500, 0x052F,    36380 }, /* Cyrillic Supplement */
-    { 0x0530, 0x058F,    37916 }, /* Armenian */
-    { 0x10A0, 0x10FF,    40988 }, /* Georgian */
-    { 0x1E00, 0x1EFF,    44060 }, /* Latin Extended Additional */
-    { 0x1F00, 0x1FFF,    52252 }, /* Greek Extended */
-    { 0x2000, 0x206F,    60444 }, /* General Punctuation */
-    { 0x2070, 0x209F,    64028 }, /* Superscripts and Subscripts */
-    { 0x20A0, 0x20CF,    65564 }, /* Currency Symbols */
-    { 0x2100, 0x214F,    67100 }, /* Letterlike Symbols */
-    { 0x2150, 0x218F,    69660 }, /* Number Forms */
-    { 0x2190, 0x21FF,    71708 }, /* Arrows */
-    { 0x2200, 0x22FF,    75292 }, /* Mathematical Operators */
-    { 0x2300, 0x23FF,    83484 }, /* Miscellaneous Technical */
-    { 0x2500, 0x257F,    91676 }, /* Box Drawing */
-    { 0x2580, 0x259F,    95772 }, /* Block Elements */
-    { 0x25A0, 0x25FF,    96796 }, /* Geometric Shapes */
-    { 0x2600, 0x26FF,    99868 }, /* Miscellaneous Symbols */
-    { 0x2700, 0x27BF,   108060 }, /* Dingbats */
-    { 0x3000, 0x303F,   114204 }, /* CJK Symbols and Punctuation */
-    { 0x3040, 0x309F,   116252 }, /* Hiragana */
-    { 0x30A0, 0x30FF,   119324 }, /* Katakana */
-    { 0x4E00, 0x9FFF,   122396 }, /* CJK Unified Ideographs */
-    { 0xFF00, 0xFFEF,   794140 }, /* Halfwidth and Fullwidth Forms */
-    { 0x1F000, 0x1F02F,   801820 }, /* Mahjong Tiles */
-    { 0x1F0A0, 0x1F0FF,   803356 }, /* Playing Cards */
-    { 0x1F100, 0x1F1FF,   806428 }, /* Enclosed Alphanumeric Supplement */
-    { 0x1F200, 0x1F2FF,   814620 }, /* Enclosed Ideographic Supplement */
-    { 0x1F300, 0x1F5FF,   822812 }, /* Misc Symbols and Pictographs */
-    { 0x1F600, 0x1F64F,   847388 }, /* Emoticons */
-    { 0x1F680, 0x1F6FF,   849948 }, /* Transport and Map Symbols */
-    { 0x1F700, 0x1F77F,   854044 }, /* Alchemical Symbols */
-    { 0x1F780, 0x1F7FF,   858140 }, /* Geometric Shapes Extended */
-    { 0x1F800, 0x1F8FF,   862236 }, /* Supplemental Arrows-C */
-    { 0x1F900, 0x1F9FF,   870428 }, /* Supplemental Symbols and Pictographs */
-    { 0x1FA00, 0x1FA6F,   878620 }, /* Chess Symbols */
-    { 0x1FA70, 0x1FAFF,   882204 } /* Symbols and Pictographs Extended-A */
-};
+#define UNICODE_FONT_FORMAT_VERSION 1U
+#define UNICODE_MAX_RANGES 128U
 
-#define UNICODE_RANGE_COUNT \
-    (sizeof(g_unicode_ranges) / sizeof(g_unicode_ranges[0]))
+static unicode_font_range_t g_unicode_ranges[UNICODE_MAX_RANGES];
+static uint32_t g_unicode_range_count = 0;
+
+static uint32_t unicode_read_le32(const unsigned char *p) {
+    return
+        (uint32_t)p[0] |
+        ((uint32_t)p[1] << 8) |
+        ((uint32_t)p[2] << 16) |
+        ((uint32_t)p[3] << 24);
+}
 
 static int unicode_font_open(void) {
     if (g_unicode_font) {
@@ -1313,20 +1340,82 @@ static int unicode_font_open(void) {
     }
 
     if (memcmp(header, "MBCJ", 4) != 0) {
-        printf("Mini Browser: invalid Unicode font file\n");
+        printf("Mini Browser: invalid Unicode font magic\n");
         fclose(g_unicode_font);
         g_unicode_font = NULL;
         return 0;
     }
 
-    printf("Mini Browser: Unicode CJK font opened: %s\n",
-           UNICODE_FONT_FILE);
+    uint32_t version = unicode_read_le32(header + 4);
+    uint32_t range_count = unicode_read_le32(header + 8);
+
+    if (version != UNICODE_FONT_FORMAT_VERSION) {
+        printf("Mini Browser: unsupported Unicode font format %lu\n",
+               (unsigned long)version);
+        fclose(g_unicode_font);
+        g_unicode_font = NULL;
+        return 0;
+    }
+
+    if (range_count == 0 || range_count > UNICODE_MAX_RANGES) {
+        printf("Mini Browser: invalid Unicode range count %lu\n",
+               (unsigned long)range_count);
+        fclose(g_unicode_font);
+        g_unicode_font = NULL;
+        return 0;
+    }
+
+    uint32_t previous_end = 0;
+    uint32_t table_end = 12U + range_count * 12U;
+
+    for (uint32_t i = 0; i < range_count; i++) {
+        unsigned char record[12];
+
+        if (fread(record, 1, sizeof(record), g_unicode_font)
+            != sizeof(record)) {
+            printf("Mini Browser: Unicode range table read failed\n");
+            fclose(g_unicode_font);
+            g_unicode_font = NULL;
+            g_unicode_range_count = 0;
+            return 0;
+        }
+
+        unicode_font_range_t *range = &g_unicode_ranges[i];
+
+        range->start = unicode_read_le32(record + 0);
+        range->end = unicode_read_le32(record + 4);
+        range->offset = unicode_read_le32(record + 8);
+
+        if (range->start > range->end ||
+            range->offset < table_end ||
+            (i > 0 && range->start <= previous_end)) {
+            printf("Mini Browser: invalid Unicode range record %lu\n",
+                   (unsigned long)i);
+            fclose(g_unicode_font);
+            g_unicode_font = NULL;
+            g_unicode_range_count = 0;
+            return 0;
+        }
+
+        previous_end = range->end;
+    }
+
+    g_unicode_range_count = range_count;
+
+    printf("Mini Browser: Unicode font opened: %s (%lu ranges)\n",
+           UNICODE_FONT_FILE,
+           (unsigned long)g_unicode_range_count);
 
     return 1;
 }
 
+
 static int unicode_font_offset(unsigned cp, long *offset) {
-    for (size_t i = 0; i < UNICODE_RANGE_COUNT; i++) {
+    if (!unicode_font_open()) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < g_unicode_range_count; i++) {
         const unicode_font_range_t *range = &g_unicode_ranges[i];
 
         if (cp >= range->start && cp <= range->end) {
@@ -1360,10 +1449,6 @@ static int load_unicode_glyph(unsigned cp,
     long offset;
 
     if (!unicode_font_offset(cp, &offset)) {
-        return 0;
-    }
-
-    if (!unicode_font_open()) {
         return 0;
     }
 
@@ -1661,74 +1746,347 @@ static void draw_unicode_char(SDL_Renderer *r, int x, int y, unsigned cp) {
 
 
 
-static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
-    if (!r || !s) return;
+typedef struct {
+    unsigned cp;
+    bool bold;
+    unsigned char dir;
+} visual_glyph_t;
+
+#define BIDI_LINE_MAX 256
+#define DIR_NEUTRAL 0
+#define DIR_LTR     1
+#define DIR_RTL     2
+
+typedef struct {
+    uint32_t base;
+    uint32_t isolated;
+    uint32_t final;
+    uint32_t initial;
+    uint32_t medial;
+} arabic_shape_t;
+
+/*
+ * Arabic presentation-form mappings used by the compact Phase 2 shaper.
+ * A zero form means that joining form does not exist for that character.
+ * The table covers the standard Arabic alphabet plus common Persian/Urdu
+ * letters for which Unicode provides one-code-point presentation forms.
+ */
+static const arabic_shape_t g_arabic_shapes[] = {
+    {0x0621,0xFE80,0,0,0},{0x0622,0xFE81,0xFE82,0,0},
+    {0x0623,0xFE83,0xFE84,0,0},{0x0624,0xFE85,0xFE86,0,0},
+    {0x0625,0xFE87,0xFE88,0,0},{0x0626,0xFE89,0xFE8A,0xFE8B,0xFE8C},
+    {0x0627,0xFE8D,0xFE8E,0,0},{0x0628,0xFE8F,0xFE90,0xFE91,0xFE92},
+    {0x0629,0xFE93,0xFE94,0,0},{0x062A,0xFE95,0xFE96,0xFE97,0xFE98},
+    {0x062B,0xFE99,0xFE9A,0xFE9B,0xFE9C},{0x062C,0xFE9D,0xFE9E,0xFE9F,0xFEA0},
+    {0x062D,0xFEA1,0xFEA2,0xFEA3,0xFEA4},{0x062E,0xFEA5,0xFEA6,0xFEA7,0xFEA8},
+    {0x062F,0xFEA9,0xFEAA,0,0},{0x0630,0xFEAB,0xFEAC,0,0},
+    {0x0631,0xFEAD,0xFEAE,0,0},{0x0632,0xFEAF,0xFEB0,0,0},
+    {0x0633,0xFEB1,0xFEB2,0xFEB3,0xFEB4},{0x0634,0xFEB5,0xFEB6,0xFEB7,0xFEB8},
+    {0x0635,0xFEB9,0xFEBA,0xFEBB,0xFEBC},{0x0636,0xFEBD,0xFEBE,0xFEBF,0xFEC0},
+    {0x0637,0xFEC1,0xFEC2,0xFEC3,0xFEC4},{0x0638,0xFEC5,0xFEC6,0xFEC7,0xFEC8},
+    {0x0639,0xFEC9,0xFECA,0xFECB,0xFECC},{0x063A,0xFECD,0xFECE,0xFECF,0xFED0},
+    {0x0641,0xFED1,0xFED2,0xFED3,0xFED4},{0x0642,0xFED5,0xFED6,0xFED7,0xFED8},
+    {0x0643,0xFED9,0xFEDA,0xFEDB,0xFEDC},{0x0644,0xFEDD,0xFEDE,0xFEDF,0xFEE0},
+    {0x0645,0xFEE1,0xFEE2,0xFEE3,0xFEE4},{0x0646,0xFEE5,0xFEE6,0xFEE7,0xFEE8},
+    {0x0647,0xFEE9,0xFEEA,0xFEEB,0xFEEC},{0x0648,0xFEED,0xFEEE,0,0},
+    {0x0649,0xFEEF,0xFEF0,0xFBE8,0xFBE9},{0x064A,0xFEF1,0xFEF2,0xFEF3,0xFEF4},
+    {0x0671,0xFB50,0xFB51,0,0},{0x0677,0xFBDD,0,0,0},
+    {0x0679,0xFB66,0xFB67,0xFB68,0xFB69},{0x067A,0xFB5E,0xFB5F,0xFB60,0xFB61},
+    {0x067B,0xFB52,0xFB53,0xFB54,0xFB55},{0x067E,0xFB56,0xFB57,0xFB58,0xFB59},
+    {0x067F,0xFB62,0xFB63,0xFB64,0xFB65},{0x0680,0xFB5A,0xFB5B,0xFB5C,0xFB5D},
+    {0x0683,0xFB76,0xFB77,0xFB78,0xFB79},{0x0684,0xFB72,0xFB73,0xFB74,0xFB75},
+    {0x0686,0xFB7A,0xFB7B,0xFB7C,0xFB7D},{0x0687,0xFB7E,0xFB7F,0xFB80,0xFB81},
+    {0x0688,0xFB88,0xFB89,0,0},{0x068C,0xFB84,0xFB85,0,0},
+    {0x068D,0xFB82,0xFB83,0,0},{0x068E,0xFB86,0xFB87,0,0},
+    {0x0691,0xFB8C,0xFB8D,0,0},{0x0698,0xFB8A,0xFB8B,0,0},
+    {0x06A4,0xFB6A,0xFB6B,0xFB6C,0xFB6D},{0x06A6,0xFB6E,0xFB6F,0xFB70,0xFB71},
+    {0x06A9,0xFB8E,0xFB8F,0xFB90,0xFB91},{0x06AD,0xFBD3,0xFBD4,0xFBD5,0xFBD6},
+    {0x06AF,0xFB92,0xFB93,0xFB94,0xFB95},{0x06B1,0xFB9A,0xFB9B,0xFB9C,0xFB9D},
+    {0x06B3,0xFB96,0xFB97,0xFB98,0xFB99},{0x06BA,0xFB9E,0xFB9F,0,0},
+    {0x06BB,0xFBA0,0xFBA1,0xFBA2,0xFBA3},{0x06BE,0xFBAA,0xFBAB,0xFBAC,0xFBAD},
+    {0x06C0,0xFBA4,0xFBA5,0,0},{0x06C1,0xFBA6,0xFBA7,0xFBA8,0xFBA9},
+    {0x06C5,0xFBE0,0xFBE1,0,0},{0x06C6,0xFBD9,0xFBDA,0,0},
+    {0x06C7,0xFBD7,0xFBD8,0,0},{0x06C8,0xFBDB,0xFBDC,0,0},
+    {0x06C9,0xFBE2,0xFBE3,0,0},{0x06CB,0xFBDE,0xFBDF,0,0},
+    {0x06CC,0xFBFC,0xFBFD,0xFBFE,0xFBFF},{0x06D0,0xFBE4,0xFBE5,0xFBE6,0xFBE7},
+    {0x06D2,0xFBAE,0xFBAF,0,0},{0x06D3,0xFBB0,0xFBB1,0,0}
+};
+
+static const arabic_shape_t *arabic_shape_info(unsigned cp) {
+    for (size_t i = 0; i < sizeof(g_arabic_shapes) / sizeof(g_arabic_shapes[0]); i++) {
+        if (g_arabic_shapes[i].base == cp)
+            return &g_arabic_shapes[i];
+    }
+    return NULL;
+}
+
+static bool arabic_transparent(unsigned cp) {
+    return (cp >= 0x0610 && cp <= 0x061A) ||
+           (cp >= 0x064B && cp <= 0x065F) ||
+           cp == 0x0670 ||
+           (cp >= 0x06D6 && cp <= 0x06ED);
+}
+
+static void arabic_shape_line(visual_glyph_t *g, int count) {
+    unsigned original[BIDI_LINE_MAX];
+
+    for (int i = 0; i < count; i++)
+        original[i] = g[i].cp;
+
+    for (int i = 0; i < count; i++) {
+        const arabic_shape_t *cur = arabic_shape_info(original[i]);
+        if (!cur)
+            continue;
+
+        int p = i - 1;
+        while (p >= 0 && arabic_transparent(original[p]))
+            p--;
+
+        int n = i + 1;
+        while (n < count && arabic_transparent(original[n]))
+            n++;
+
+        const arabic_shape_t *prev = p >= 0 ? arabic_shape_info(original[p]) : NULL;
+        const arabic_shape_t *next = n < count ? arabic_shape_info(original[n]) : NULL;
+
+        bool join_prev = prev && prev->initial && cur->final;
+        bool join_next = next && cur->initial && next->final;
+
+        if (join_prev && join_next && cur->medial)
+            g[i].cp = cur->medial;
+        else if (join_prev && cur->final)
+            g[i].cp = cur->final;
+        else if (join_next && cur->initial)
+            g[i].cp = cur->initial;
+        else if (cur->isolated)
+            g[i].cp = cur->isolated;
+    }
+}
+
+static unsigned char bidi_dir(unsigned cp) {
+    /* European and Arabic-Indic numbers stay left-to-right as number runs. */
+    if ((cp >= '0' && cp <= '9') ||
+        (cp >= 0x0660 && cp <= 0x0669) ||
+        (cp >= 0x06F0 && cp <= 0x06F9))
+        return DIR_LTR;
+
+    if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z'))
+        return DIR_LTR;
+
+    if ((cp >= 0x0590 && cp <= 0x05FF) ||
+        (cp >= 0x0600 && cp <= 0x08FF) ||
+        (cp >= 0xFB1D && cp <= 0xFDFF) ||
+        (cp >= 0xFE70 && cp <= 0xFEFF))
+        return DIR_RTL;
+
+    if ((cp >= 0x00C0 && cp <= 0x02AF) ||
+        (cp >= 0x0370 && cp <= 0x058F) ||
+        (cp >= 0x0900 && cp <= 0x1FFF) ||
+        (cp >= 0x2C00 && cp <= 0xD7FF))
+        return DIR_LTR;
+
+    return DIR_NEUTRAL;
+}
+
+static int visual_glyph_width(unsigned cp) {
+    return wrap_glyph_width(cp);
+}
+
+static void reverse_glyphs(visual_glyph_t *g, int a, int b) {
+    while (a < b) {
+        visual_glyph_t t = g[a];
+        g[a] = g[b];
+        g[b] = t;
+        a++;
+        b--;
+    }
+}
+
+/*
+ * Compact embedded bidi pass. It handles the common browser cases we need:
+ * RTL paragraph detection, Hebrew/Arabic runs, mixed LTR text and numbers,
+ * and neutral punctuation/spaces. It is intentionally bounded and is not a
+ * complete implementation of every Unicode Bidirectional Algorithm rule.
+ */
+static int bidi_visualize_line(visual_glyph_t *g, int count, bool *base_rtl) {
+    if (count <= 0) {
+        *base_rtl = false;
+        return count;
+    }
+
+    unsigned char base = DIR_LTR;
+    for (int i = 0; i < count; i++) {
+        unsigned char d = bidi_dir(g[i].cp);
+        if (d != DIR_NEUTRAL) {
+            base = d;
+            break;
+        }
+    }
+    *base_rtl = (base == DIR_RTL);
+
+    for (int i = 0; i < count; i++)
+        g[i].dir = bidi_dir(g[i].cp);
+
+    /* Resolve neutral characters from their neighbors, otherwise paragraph base. */
+    for (int i = 0; i < count; i++) {
+        if (g[i].dir != DIR_NEUTRAL)
+            continue;
+
+        unsigned char left = DIR_NEUTRAL;
+        unsigned char right = DIR_NEUTRAL;
+
+        for (int p = i - 1; p >= 0; p--) {
+            if (g[p].dir != DIR_NEUTRAL) {
+                left = g[p].dir;
+                break;
+            }
+        }
+        for (int n = i + 1; n < count; n++) {
+            if (g[n].dir != DIR_NEUTRAL) {
+                right = g[n].dir;
+                break;
+            }
+        }
+
+        g[i].dir = (left != DIR_NEUTRAL && left == right) ? left : base;
+    }
+
+    visual_glyph_t tmp[BIDI_LINE_MAX];
+    int out = 0;
+
+    if (base == DIR_LTR) {
+        int i = 0;
+        while (i < count) {
+            int j = i + 1;
+            while (j < count && g[j].dir == g[i].dir)
+                j++;
+
+            if (g[i].dir == DIR_RTL) {
+                for (int k = j - 1; k >= i; k--)
+                    tmp[out++] = g[k];
+            } else {
+                for (int k = i; k < j; k++)
+                    tmp[out++] = g[k];
+            }
+            i = j;
+        }
+    } else {
+        int j = count;
+        while (j > 0) {
+            int i = j - 1;
+            while (i > 0 && g[i - 1].dir == g[j - 1].dir)
+                i--;
+
+            if (g[i].dir == DIR_RTL) {
+                for (int k = j - 1; k >= i; k--)
+                    tmp[out++] = g[k];
+            } else {
+                for (int k = i; k < j; k++)
+                    tmp[out++] = g[k];
+            }
+            j = i;
+        }
+    }
+
+    memcpy(g, tmp, (size_t)out * sizeof(g[0]));
+    return out;
+}
+
+static void draw_visual_line(SDL_Renderer *r, int x, int y,
+                             visual_glyph_t *g, int count, int max_w) {
+    if (count <= 0)
+        return;
+
+    arabic_shape_line(g, count);
+
+    bool base_rtl = false;
+    count = bidi_visualize_line(g, count, &base_rtl);
+
+    int line_w = 0;
+    for (int i = 0; i < count; i++)
+        line_w += visual_glyph_width(g[i].cp);
 
     int cx = x;
+    if (base_rtl && line_w < max_w)
+        cx = x + max_w - line_w;
+
     int cy = y;
-    size_t i = 0;
-    size_t L = strlen(s);
-    int bold_depth = 0;
 
-    while (i < L) {
-        unsigned cp = utf8_next(s, L, &i);
-
-        if (cp == 0)
-            break;
-
-        if (cp == TEXT_BOLD_ON) {
-            bold_depth++;
-            continue;
-        }
-
-        if (cp == TEXT_BOLD_OFF) {
-            if (bold_depth > 0)
-                bold_depth--;
-            continue;
-        }
-
-        if (cp == '\n') {
-            cx = x;
-            cy += (CH_H + LINE_SPACING);
-            continue;
-        }
-
+    for (int i = 0; i < count; i++) {
+        unsigned cp = g[i].cp;
         if (cp == 0xA0)
             cp = ' ';
 
-        /*
-         * Existing ASCII path.
-         */
-        if (cp >= 32 && cp <= 126) {
-            int char_w = (FONT_W_COLS + FONT_COL_GAP) * FONT_SCALE;
+        int char_w = visual_glyph_width(cp);
+        if (char_w <= 0)
+            continue;
 
-            if (cx + char_w > x + max_w) {
-                cx = x;
-                cy += (CH_H + LINE_SPACING);
+        if (cx + char_w > x + max_w) {
+            cx = x;
+            cy += (CH_H + LINE_SPACING);
+        }
+
+        if (cp >= 32 && cp <= 126) {
+            draw_char(r, cx, cy, (char)cp);
+            if (g[i].bold)
+                draw_char(r, cx + 1, cy, (char)cp);
+        } else if (cp >= 0x80 && cp <= 0x10FFFF) {
+            draw_unicode_char(r, cx, cy, cp);
+            if (g[i].bold)
+                draw_unicode_char(r, cx + 1, cy, cp);
+        }
+
+        cx += char_w;
+    }
+}
+
+static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
+    if (!r || !s) return;
+
+    size_t i = 0;
+    size_t L = strlen(s);
+    int cy = y;
+    int bold_depth = 0;
+
+    while (i <= L) {
+        visual_glyph_t line[BIDI_LINE_MAX];
+        int count = 0;
+        bool saw_newline = false;
+
+        while (i < L) {
+            unsigned cp = utf8_next(s, L, &i);
+            if (cp == 0)
+                break;
+
+            if (cp == TEXT_BOLD_ON) {
+                bold_depth++;
+                continue;
+            }
+            if (cp == TEXT_BOLD_OFF) {
+                if (bold_depth > 0)
+                    bold_depth--;
+                continue;
+            }
+            if (cp == '\n') {
+                saw_newline = true;
+                break;
             }
 
-            draw_char(r, cx, cy, (char)cp);
-            if (bold_depth > 0)
-                draw_char(r, cx + 1, cy, (char)cp);
-            cx += char_w;
+            if (count < BIDI_LINE_MAX) {
+                line[count].cp = cp;
+                line[count].bold = bold_depth > 0;
+                line[count].dir = DIR_NEUTRAL;
+                count++;
+            }
+        }
+
+        draw_visual_line(r, x, cy, line, count, max_w);
+
+        if (saw_newline) {
+            cy += (CH_H + LINE_SPACING);
             continue;
         }
-
-        /*
-         * Temporary Unicode test path.
-         */
-        if (cp >= 0x80 && cp <= 0x10FFFF) {
-            int char_w = UNICODE_GLYPH_W + 1;
-            if (cx + char_w > x + max_w) {
-                cx = x;
-                cy += (CH_H + LINE_SPACING);
-            }
-
-            draw_unicode_char(r, cx, cy, cp);
-            if (bold_depth > 0)
-                draw_unicode_char(r, cx + 1, cy, cp);
-            cx += char_w;
-        }
+        break;
     }
 }
 

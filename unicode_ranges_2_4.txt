@@ -1,0 +1,106 @@
+Mini Browser 2.4 Unicode Phase 1 range profile
+Ranges: 101
+Code-point slots: 56352
+Maximum MBCJ size (32 bytes/slot): 1804488 bytes (1.72 MiB)
+
+U+00A0-U+058F  Latin, IPA, combining marks, Greek, Cyrillic, Armenian
+U+0590-U+05FF  Hebrew
+U+0600-U+06FF  Arabic
+U+0700-U+074F  Syriac
+U+0750-U+077F  Arabic Supplement
+U+0780-U+07BF  Thaana
+U+07C0-U+07FF  NKo
+U+0800-U+083F  Samaritan
+U+0840-U+085F  Mandaic
+U+0860-U+086F  Syriac Supplement
+U+0870-U+089F  Arabic Extended-B
+U+08A0-U+08FF  Arabic Extended-A
+U+0900-U+097F  Devanagari
+U+0980-U+09FF  Bengali
+U+0A00-U+0A7F  Gurmukhi
+U+0A80-U+0AFF  Gujarati
+U+0B00-U+0B7F  Odia
+U+0B80-U+0BFF  Tamil
+U+0C00-U+0C7F  Telugu
+U+0C80-U+0CFF  Kannada
+U+0D00-U+0D7F  Malayalam
+U+0D80-U+0DFF  Sinhala
+U+0E00-U+0E7F  Thai
+U+0E80-U+0EFF  Lao
+U+0F00-U+0FFF  Tibetan
+U+1000-U+109F  Myanmar
+U+10A0-U+10FF  Georgian
+U+1100-U+11FF  Hangul Jamo
+U+1200-U+137F  Ethiopic
+U+13A0-U+13FF  Cherokee
+U+1400-U+167F  Unified Canadian Aboriginal Syllabics
+U+1680-U+169F  Ogham
+U+16A0-U+16FF  Runic
+U+1700-U+177F  Philippine scripts
+U+1780-U+17FF  Khmer
+U+1800-U+18AF  Mongolian
+U+1AB0-U+1AFF  Combining Diacritical Marks Extended
+U+1B00-U+1BBF  Balinese and Sundanese
+U+1C00-U+1C7F  Lepcha and Ol Chiki
+U+1CD0-U+1CFF  Vedic Extensions
+U+1D00-U+1DBF  Phonetic Extensions
+U+1DC0-U+1DFF  Combining Diacritical Marks Supplement
+U+1E00-U+1FFF  Latin Extended Additional and Greek Extended
+U+2000-U+23FF  Punctuation, currency, arrows, math and technical symbols
+U+2500-U+27BF  Box drawing, blocks, shapes, symbols and dingbats
+U+2C00-U+2C5F  Glagolitic
+U+2C60-U+2C7F  Latin Extended-C
+U+2C80-U+2CFF  Coptic
+U+2D00-U+2D2F  Georgian Supplement
+U+2D30-U+2D7F  Tifinagh
+U+2D80-U+2DDF  Ethiopic Extended
+U+2DE0-U+2DFF  Cyrillic Extended-A
+U+2E00-U+2E7F  Supplemental Punctuation
+U+3000-U+318F  CJK punctuation, Kana, Bopomofo, Hangul compatibility
+U+31A0-U+31FF  Bopomofo Extended, CJK strokes, Katakana extensions
+U+3400-U+4DBF  CJK Unified Ideographs Extension A
+U+4E00-U+9FFF  CJK Unified Ideographs
+U+A000-U+A4CF  Yi syllables/radicals
+U+A4D0-U+A4FF  Lisu
+U+A500-U+A63F  Vai
+U+A640-U+A69F  Cyrillic Extended-B
+U+A6A0-U+A6FF  Bamum
+U+A720-U+A7FF  Latin Extended-D
+U+A800-U+A82F  Syloti Nagri
+U+A840-U+A87F  Phags-pa
+U+A880-U+A8DF  Saurashtra
+U+A8E0-U+A8FF  Devanagari Extended
+U+A900-U+A92F  Kayah Li
+U+A930-U+A95F  Rejang
+U+A960-U+A97F  Hangul Jamo Extended-A
+U+A980-U+A9DF  Javanese
+U+AA00-U+AA5F  Cham
+U+AA60-U+AA7F  Myanmar Extended-A
+U+AA80-U+AADF  Tai Viet
+U+AB00-U+AB2F  Ethiopic Extended-A
+U+AB30-U+AB6F  Latin Extended-E
+U+ABC0-U+ABFF  Meetei Mayek
+U+AC00-U+D7AF  Hangul Syllables
+U+D7B0-U+D7FF  Hangul Jamo Extended-B
+U+F900-U+FAFF  CJK Compatibility Ideographs
+U+FB00-U+FB4F  Alphabetic Presentation Forms
+U+FB50-U+FDFF  Arabic Presentation Forms-A
+U+FE00-U+FE0F  Variation Selectors
+U+FE20-U+FE2F  Combining Half Marks
+U+FE30-U+FE4F  CJK Compatibility Forms
+U+FE50-U+FE6F  Small Form Variants
+U+FE70-U+FEFF  Arabic Presentation Forms-B
+U+FF00-U+FFEF  Halfwidth and Fullwidth Forms
+U+1F000-U+1F02F  Mahjong Tiles
+U+1F0A0-U+1F0FF  Playing Cards
+U+1F100-U+1F1FF  Enclosed Alphanumeric Supplement
+U+1F200-U+1F2FF  Enclosed Ideographic Supplement
+U+1F300-U+1F5FF  Miscellaneous Symbols and Pictographs
+U+1F600-U+1F64F  Emoticons
+U+1F680-U+1F6FF  Transport and Map Symbols
+U+1F700-U+1F77F  Alchemical Symbols
+U+1F780-U+1F7FF  Geometric Shapes Extended
+U+1F800-U+1F8FF  Supplemental Arrows-C
+U+1F900-U+1F9FF  Supplemental Symbols and Pictographs
+U+1FA00-U+1FA6F  Chess Symbols
+U+1FA70-U+1FAFF  Symbols and Pictographs Extended-A

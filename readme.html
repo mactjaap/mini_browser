@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 2.3 - Documentation</title>
-  <meta name="description" content="Documentation for Mini Browser 2.3 on the WHY2025 badge">
+  <title>Mini Browser 2.4 - Documentation</title>
+  <meta name="description" content="Documentation for Mini Browser 2.4 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 2.3</h1>
+<h1>Mini Browser 2.4</h1>
 
 <p>
 Mini Browser is a compact, interactive, text-oriented web browser for the WHY2025 badge,
@@ -15,9 +15,9 @@ written in C using SDL3 and libcurl.
 </p>
 
 <p>
-Version 2.3 combines links, GET forms, bookmarks and Back/Forward history with broad
-Unicode rendering, monochrome Plane-1 emoji, UTF-8-safe pixel-aware wrapping and
-genuine rendered bold text.
+Version 2.4 combines links, GET forms, bookmarks and Back/Forward history with
+56,352-glyph Unicode rendering, word-aware UTF-8-safe pixel wrapping, RTL/Bidi
+rendering, contextual Arabic shaping, monochrome Plane-1 emoji and genuine bold text.
 </p>
 
 <p><a href="/">Back to Mini Browser home</a></p>
@@ -26,26 +26,45 @@ genuine rendered bold text.
 
 <p>
 ASCII uses the built-in bitmap font. Additional Unicode characters can be loaded from
-APPS:[mini_browser]unifont_cjk.bin. The tested 2.3 generated font contains 27,696
-glyphs selected from GNU Unifont 17.0.02 Plane-0 and supplementary-plane sources.
+APPS:[mini_browser]unifont_cjk.bin. The tested 2.4 generated font contains 56,352
+usable glyphs across 101 ranges selected from GNU Unifont 17.0.02 Plane-0 and
+supplementary-plane sources. The MBCJ v1 range table is read from the file header
+at runtime rather than being hard-coded in the browser source.
 </p>
 
 <p>
-Coverage includes broad Latin extensions, Greek, Cyrillic, punctuation, currency,
-arrows, mathematical and technical symbols, box drawing, geometric symbols, CJK
-punctuation, Hiragana, Katakana, CJK ideographs, fullwidth forms and supplementary
-symbol and emoji ranges.
+Coverage includes broad Latin extensions (including Icelandic), Greek, Cyrillic,
+Armenian, Hebrew, Arabic and Arabic presentation forms, Indic scripts, Thai, Lao,
+Tibetan, Georgian, Ethiopic, Cherokee, Runic, Hangul/Korean, Hiragana, Katakana,
+Bopomofo, CJK Extension A, CJK ideographs, Yi, punctuation, currency, mathematical
+and technical symbols, fullwidth forms and supplementary symbol/emoji ranges.
 </p>
 
 <p>
-Wrapping is UTF-8 safe and pixel aware. ASCII and 16x16 Unicode glyphs have different
-rendered widths, and Mini Browser accounts for that when laying out lines.
+Wrapping is UTF-8 safe, pixel aware and word aware. Complete words stay together
+where possible. CJK text and overlong unbroken tokens fall back to UTF-8-safe
+glyph-level wrapping. ASCII and 16x16 Unicode glyphs have different rendered widths,
+and Mini Browser accounts for that when laying out lines.
 </p>
 
 <p>
 If the external Unicode font is not installed, the built-in ASCII renderer remains
 available. Unordered lists intentionally use the ASCII * marker rather than requiring
 a Unicode bullet.
+</p>
+
+<h2>RTL/Bidi and Arabic shaping</h2>
+
+<p>
+Mini Browser 2.4 renders Hebrew and Arabic right-to-left and supports mixed LTR/RTL
+lines. Arabic letters are contextually shaped into their joining forms using glyphs
+included in the 2.4 Unicode font.
+</p>
+
+<p>
+The implementation is deliberately compact for BadgeVMS and is not a claim of complete
+support for every Unicode Bidirectional Algorithm control or every complex-script
+shaping rule.
 </p>
 
 <h2>Real bold text</h2>
@@ -142,17 +161,22 @@ one-line scrolling.
   <li>WHY+G - forward</li>
   <li>WHY+F - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
-  <li>WHY+S - capture and transmit a screenshot</li>
+  <li>WHY+S - capture and transmit the visible 716x716 viewport</li>
+  <li>WHY+Z - capture and transmit the complete rendered page</li>
   <li>WHY+Q - quit</li>
 </ul>
 
 <h2>Screenshots</h2>
 
 <p>
-Mini Browser 2.3 can capture the rendered browser view with WHY+S. The screenshot is
-read from the SDL renderer as RGB24 data, compressed with the lightweight RLE5 format,
-protected with per-record CRC32 and XOR forward-error correction, and transmitted over
-the badge's USB serial connection. The current browser viewport is 716x716 pixels.
+Mini Browser 2.4 supports two screenshot modes. WHY+S captures the visible 716x716
+browser viewport. WHY+Z captures the complete rendered page, including content below
+the viewport. Full-page capture reuses the normal renderer as a slice-based scratch
+surface, so it does not allocate a giant 716xN framebuffer or change the current
+scroll position.
+
+Both modes use RGB24 data from the SDL renderer, lightweight RLE5 compression,
+per-record CRC32 and XOR forward-error correction, transmitted over USB serial.
 </p>
 
 <p>
@@ -162,6 +186,12 @@ Start it on a serial-connected macOS or Linux computer and then press WHY+S on t
 
 <pre>
 ./badge_screenshot.py /dev/cu.wchusbserial10
+</pre>
+
+<p>For a complete rendered page:</p>
+
+<pre>
+./badge_screenshot.py /dev/cu.wchusbserial10 --full-page
 </pre>
 
 <p>
@@ -181,6 +211,7 @@ The receiver can also request the screenshot from the host:
 
 <pre>
 ./badge_screenshot.py /dev/cu.wchusbserial10 --request
+./badge_screenshot.py /dev/cu.wchusbserial10 --full-page --request
 </pre>
 
 <p>
@@ -200,7 +231,7 @@ macOS/Linux computer to send keyboard events to Mini Browser over USB serial.
 <p>
 The firmware repository includes badge_keyboard.py for interactive computer-keyboard
 control of the badge. This also allows browser accelerator commands such as WHY+E,
-WHY+H, WHY+R, WHY+B, WHY+G, WHY+F, WHY+S and WHY+Q to be generated remotely.
+WHY+H, WHY+R, WHY+B, WHY+G, WHY+F, WHY+S, WHY+Z and WHY+Q to be generated remotely.
 </p>
 
 <p>
@@ -261,8 +292,9 @@ emoji or complex emoji composition.
 <h2>Unicode font</h2>
 
 <p>
-The tested 2.3 font asset combines unifont_jp-17.0.02.hex and
-unifont_upper-17.0.02.hex into unifont_cjk.bin. GNU Unifont is dual-licensed under the
+The tested 2.4 font asset combines unifont_jp-17.0.02.hex and
+unifont_upper-17.0.02.hex into unifont_cjk.bin. The generated MBCJ v1 file contains
+56,352 usable glyphs across 101 ranges and is 1,804,488 bytes (about 1.72 MiB). GNU Unifont is dual-licensed under the
 SIL Open Font License 1.1 and GNU GPL version 2 or later with the GNU Font Embedding
 Exception. Include the applicable licensing and attribution material when
 redistributing the generated font asset.
@@ -287,7 +319,7 @@ redistributing the generated font asset.
 <p><a href="https://minibrowser.macip.net/">Mini Browser project home</a></p>
 
 <hr>
-<p><b>Mini Browser 2.3</b> - WHY2025 BadgeVMS</p>
+<p><b>Mini Browser 2.4</b> - WHY2025 BadgeVMS</p>
 <p><a href="/">Back to Mini Browser home</a></p>
 
 </body>

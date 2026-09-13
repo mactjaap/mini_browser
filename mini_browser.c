@@ -2151,7 +2151,6 @@ int main(void) {
     int  scroll_lines = 0;
     int  need_fetch = 1;
     int  sel_action = -1;
-    long last_http_status = 0;
     bool url_editing = false;
     size_t url_cursor = 0;
     bool form_editing = false;
@@ -2229,7 +2228,7 @@ int main(void) {
                     }
                     history_navigation = false;
 
-                    snprintf(barline, sizeof(barline), "%s", url_buf);
+                    snprintf(barline, sizeof(barline), "Loading...");
                     draw_ui(ren, barline);
                     SDL_RenderPresent(ren);
 
@@ -2238,7 +2237,6 @@ int main(void) {
                     long http_status = 0;
 
                     int rc = fetch_url(url_buf, &m, &http_status);
-                    last_http_status = http_status;
 
                     if (rc != 0) {
                         printf("[mini_browser] fetch error %d URL='%s'\n",
@@ -2263,6 +2261,10 @@ int main(void) {
                                  url_buf,
                                  curl_error ? curl_error : "Unknown network error");
 
+                        snprintf(status_message, sizeof(status_message),
+                                 "Connection failed");
+                        status_message_until = SDL_GetTicks() + 3000;
+
                         content_wrapped = wrap_text(error_text, max_cols);
                         scroll_lines = 0;
                         sel_action = -1;
@@ -2280,12 +2282,34 @@ int main(void) {
                         content_wrapped = NULL;
 
                         char error_text[512];
+                        const char *http_error_title = "HTTP error";
+
+                        if (http_status == 400) {
+                            http_error_title = "Bad request";
+                        } else if (http_status == 401) {
+                            http_error_title = "Authentication required";
+                        } else if (http_status == 403) {
+                            http_error_title = "Access denied";
+                        } else if (http_status == 404) {
+                            http_error_title = "Page not found";
+                        } else if (http_status == 408) {
+                            http_error_title = "Request timed out";
+                        } else if (http_status == 429) {
+                            http_error_title = "Too many requests";
+                        } else if (http_status >= 500) {
+                            http_error_title = "Server error";
+                        }
+
+                        snprintf(status_message, sizeof(status_message),
+                                 "%s (%ld)",
+                                 http_error_title, http_status);
+                        status_message_until = SDL_GetTicks() + 3000;
+
                         snprintf(error_text, sizeof(error_text),
-                                 "HTTP ERROR %ld\n\n"
-                                 "The server returned HTTP status %ld.\n\n"
-                                 "URL:\n%s\n\n"
+                                 "%s (%ld)\n\n"
+                                 "Could not load:\n%s\n\n"
                                  "Press WHY+B to go back or WHY+R to retry.",
-                                 http_status,
+                                 http_error_title,
                                  http_status,
                                  url_buf);
 
@@ -2339,6 +2363,10 @@ int main(void) {
                                    (unsigned)m.len,
                                    page->link_count,
                                    url_buf);
+
+                            snprintf(status_message, sizeof(status_message),
+                                     "Loaded");
+                            status_message_until = SDL_GetTicks() + 1500;
 
                             if (wrapped) {
                                 printf("\n--- CONTENT START ---\n%s\n--- CONTENT END ---\n",
@@ -2403,15 +2431,8 @@ int main(void) {
                          sel_action + 1, page->action_count);
             }
 
-        } else if (page && page->title[0] && last_http_status > 0) {
-            snprintf(barline, sizeof(barline), "%ld  %s",
-                     last_http_status,
-                     page->title);
-
-        } else if (last_http_status > 0) {
-            snprintf(barline, sizeof(barline), "%ld  %s",
-                     last_http_status,
-                     url_buf);
+        } else if (page && page->title[0]) {
+            snprintf(barline, sizeof(barline), "%s", page->title);
 
         } else {
             snprintf(barline, sizeof(barline), "%s", url_buf);
@@ -2587,7 +2608,6 @@ int main(void) {
                                 strncpy(url_buf, "bookmarks:", URL_MAX);
                                 url_buf[URL_MAX - 1] = 0;
 
-                                last_http_status = 0;
                                 scroll_lines = 0;
                                 sel_action = -1;
                                 url_editing = false;

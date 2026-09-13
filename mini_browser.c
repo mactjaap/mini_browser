@@ -2367,27 +2367,18 @@ static bool screenshot_emit_run(screenshot_stream_t *stream,
     return screenshot_stream_bytes(stream, record, sizeof(record));
 }
 
-static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
-    if (!renderer) {
-        printf("IMG ERROR no-renderer\n");
-        fflush(stdout);
+static bool screenshot_stream_capture_region(SDL_Renderer *renderer,
+                                             screenshot_stream_t *stream,
+                                             int capture_height) {
+    if (!renderer || !stream || capture_height <= 0 || capture_height > VIEW_H) {
         return false;
     }
 
-    screenshot_stream_t stream;
-    memset(&stream, 0, sizeof(stream));
-    stream.crc = 0xFFFFFFFFU;
-
-    printf("IMG BEGIN %d %d RGB24 RLE5FEC1 %d %d\n",
-           VIEW_W, VIEW_H, IMG_RAW_CHUNK, IMG_FEC_GROUP);
-    fflush(stdout);
-    screenshot_transport_pause();
-
-    for (int top = 0; top < VIEW_H; top += SCREENSHOT_STRIPE_H) {
+    for (int top = 0; top < capture_height; top += SCREENSHOT_STRIPE_H) {
         int stripe_h = SCREENSHOT_STRIPE_H;
 
-        if (top + stripe_h > VIEW_H) {
-            stripe_h = VIEW_H - top;
+        if (top + stripe_h > capture_height) {
+            stripe_h = capture_height - top;
         }
 
         SDL_Rect rect = { 0, top, VIEW_W, stripe_h };
@@ -2441,7 +2432,7 @@ static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
                 }
 
                 if (have_run &&
-                    !screenshot_emit_run(&stream, run_count,
+                    !screenshot_emit_run(stream, run_count,
                                          run_r, run_g, run_b)) {
                     ok = false;
                     break;
@@ -2456,7 +2447,7 @@ static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
         }
 
         if (ok && have_run) {
-            ok = screenshot_emit_run(&stream, run_count,
+            ok = screenshot_emit_run(stream, run_count,
                                      run_r, run_g, run_b);
         }
 
@@ -2469,27 +2460,202 @@ static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
         YIELD_NET();
     }
 
-    if (!screenshot_stream_flush(&stream)) {
+    return true;
+}
+
+static bool screenshot_stream_begin(screenshot_stream_t *stream,
+                                    int width,
+                                    int height) {
+    if (!stream || width <= 0 || height <= 0) {
         return false;
     }
 
-    if (!screenshot_send_parity(&stream)) {
+    memset(stream, 0, sizeof(*stream));
+    stream->crc = 0xFFFFFFFFU;
+
+    printf("IMG BEGIN %d %d RGB24 RLE5FEC1 %d %d\n",
+           width, height, IMG_RAW_CHUNK, IMG_FEC_GROUP);
+    fflush(stdout);
+    screenshot_transport_pause();
+    return true;
+}
+
+static bool screenshot_stream_finish(screenshot_stream_t *stream) {
+    if (!stream) {
         return false;
     }
 
-    unsigned final_crc = stream.crc ^ 0xFFFFFFFFU;
+    if (!screenshot_stream_flush(stream)) {
+        return false;
+    }
+
+    if (!screenshot_send_parity(stream)) {
+        return false;
+    }
+
+    unsigned final_crc = stream->crc ^ 0xFFFFFFFFU;
 
     /* Repeat END so one damaged terminator does not force a timeout. */
     for (int repeat = 0; repeat < 2; repeat++) {
         printf("IMG END %lu %08X %u\n",
-               stream.compressed_bytes,
+               stream->compressed_bytes,
                final_crc,
-               stream.sequence);
+               stream->sequence);
         fflush(stdout);
         screenshot_transport_pause();
     }
 
     return true;
+}
+
+static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
+    if (!renderer) {
+        printf("IMG ERROR no-renderer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    screenshot_stream_t stream;
+
+    if (!screenshot_stream_begin(&stream, VIEW_W, VIEW_H)) {
+        return false;
+    }
+
+    if (!screenshot_stream_capture_region(renderer, &stream, VIEW_H)) {
+        return false;
+    }
+
+    return screenshot_stream_finish(&stream);
+}
+
+static int screenshot_wrapped_line_count(const char *content_wrapped) {
+    if (!content_wrapped || !*content_wrapped) {
+        return 0;
+    }
+
+    int lines = 0;
+    const char *p = content_wrapped;
+
+    while (p && *p) {
+        lines++;
+        const char *nl = strchr(p, '\n');
+        p = nl ? nl + 1 : NULL;
+    }
+
+    return lines;
+}
+
+static int screenshot_full_page_height(const char *content_wrapped) {
+    int lines = screenshot_wrapped_line_count(content_wrapped);
+    int line_step = CH_H + LINE_SPACING;
+    int height = PAD_TOP + PAD_BOTTOM;
+
+    if (lines > 0) {
+        height += lines * line_step;
+    }
+
+    if (height < VIEW_H) {
+        height = VIEW_H;
+    }
+
+    return height;
+}
+
+static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
+                                              const char *bar_text,
+                                              const char *content_wrapped,
+                                              int slice_top,
+                                              int slice_height) {
+    if (!renderer || slice_top < 0 || slice_height <= 0) {
+        return;
+    }
+
+    if (slice_top == 0) {
+        /* The browser chrome belongs only at the top of the long image. */
+        draw_ui(renderer, bar_text);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+    }
+
+    if (!content_wrapped || !*content_wrapped) {
+        return;
+    }
+
+    const int line_step = CH_H + LINE_SPACING;
+    const int slice_bottom = slice_top + slice_height;
+    const char *p = content_wrapped;
+    int line_index = 0;
+
+    while (p && *p) {
+        const char *nl = strchr(p, '\n');
+        int len = nl ? (int)(nl - p) : (int)strlen(p);
+        int logical_y = PAD_TOP + line_index * line_step;
+
+        if (logical_y + CH_H > slice_top && logical_y < slice_bottom) {
+            char tmp[1024];
+            if (len > (int)sizeof(tmp) - 1) {
+                len = (int)sizeof(tmp) - 1;
+            }
+
+            memcpy(tmp, p, (size_t)len);
+            tmp[len] = 0;
+
+            SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+            draw_text(renderer,
+                      PAD_LR,
+                      logical_y - slice_top,
+                      tmp,
+                      VIEW_W - 2 * PAD_LR);
+        }
+
+        line_index++;
+        p = nl ? nl + 1 : NULL;
+    }
+}
+
+static bool screenshot_stream_full_page(SDL_Renderer *renderer,
+                                        const char *bar_text,
+                                        const char *content_wrapped) {
+    if (!renderer) {
+        printf("IMG ERROR no-renderer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    int full_height = screenshot_full_page_height(content_wrapped);
+    screenshot_stream_t stream;
+
+    printf("[mini_browser] full-page screenshot height=%d\n", full_height);
+    fflush(stdout);
+
+    if (!screenshot_stream_begin(&stream, VIEW_W, full_height)) {
+        return false;
+    }
+
+    for (int slice_top = 0; slice_top < full_height; slice_top += VIEW_H) {
+        int slice_height = VIEW_H;
+
+        if (slice_top + slice_height > full_height) {
+            slice_height = full_height - slice_top;
+        }
+
+        screenshot_render_full_page_slice(renderer,
+                                          bar_text,
+                                          content_wrapped,
+                                          slice_top,
+                                          slice_height);
+
+        if (!screenshot_stream_capture_region(renderer,
+                                              &stream,
+                                              slice_height)) {
+            return false;
+        }
+
+        YIELD_NET();
+    }
+
+    return screenshot_stream_finish(&stream);
 }
 
 /* ---------- main ---------- */
@@ -2568,7 +2734,8 @@ int main(void) {
 
     bool accel_down = false;        /* WHY key held */
     bool inhibit_text_once = false; /* swallow TEXT_INPUT after commands */
-    bool screenshot_pending = false; /* WHY+S: capture next fully rendered frame */
+    bool screenshot_pending = false;      /* WHY+S: visible 716x716 frame */
+    bool full_screenshot_pending = false; /* WHY+Z: complete rendered page */
 
     const int max_cols = (VIEW_W - 2*PAD_LR) / CH_W;
     const int lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
@@ -2783,11 +2950,12 @@ int main(void) {
                          sel_action + 1, page->action_count);
             }
 
-        } else if (screenshot_pending && page && page->title[0]) {
+        } else if ((screenshot_pending || full_screenshot_pending) &&
+                   page && page->title[0]) {
             /*
              * Screenshots are meant to document the rendered page, not the
              * HTTP diagnostics. The normal on-badge UI still shows
-             * "<status>  <title>"; screenshot mode renders one clean frame
+             * "<status>  <title>"; screenshot modes render a clean title
              * containing only the page title.
              */
             snprintf(barline, sizeof(barline), "%s",
@@ -2827,6 +2995,18 @@ int main(void) {
                 p = nl ? nl + 1 : NULL;
             }
         }
+        if (full_screenshot_pending) {
+            screenshot_stream_full_page(ren, barline, content_wrapped);
+            full_screenshot_pending = false;
+
+            /*
+             * Full-page capture reuses the 716x716 renderer as a scratch
+             * surface. Do not present its final slice on the badge; the next
+             * loop iteration redraws the user's unchanged viewport.
+             */
+            continue;
+        }
+
         if (screenshot_pending) {
             screenshot_stream_renderer(ren);
             screenshot_pending = false;
@@ -3074,6 +3254,12 @@ int main(void) {
                             screenshot_pending = true;
                             inhibit_text_once = true;
                             printf("[mini_browser] screenshot requested; clean frame queued\n");
+                            break;
+
+                        case SDL_SCANCODE_Z:
+                            full_screenshot_pending = true;
+                            inhibit_text_once = true;
+                            printf("[mini_browser] full-page screenshot requested; clean page queued\n");
                             break;
 
                         case SDL_SCANCODE_Q:

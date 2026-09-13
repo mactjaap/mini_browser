@@ -122,25 +122,36 @@ def decode_rle5(data, width, height):
     return bytes(rgb)
 
 
-def default_output():
+def default_output(full_page=False):
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return Path(f"minibrowser-{timestamp}.png")
+    prefix = "minibrowser-full" if full_page else "minibrowser"
+    return Path(f"{prefix}-{timestamp}.png")
 
 
-def request_screenshot(port):
+def request_screenshot(port, full_page=False):
     # WHY key down
     port.write(b"E E3 1 00\n")
     port.flush()
     time.sleep(0.03)
 
-    # S down/up (USB HID scancode 0x16)
-    port.write(b"E 16 1 73\n")
-    port.flush()
-    time.sleep(0.03)
+    if full_page:
+        # Z down/up (USB HID scancode 0x1D) -> WHY+Z
+        port.write(b"E 1D 1 7A\n")
+        port.flush()
+        time.sleep(0.03)
 
-    port.write(b"E 16 0 00\n")
-    port.flush()
-    time.sleep(0.03)
+        port.write(b"E 1D 0 00\n")
+        port.flush()
+        time.sleep(0.03)
+    else:
+        # S down/up (USB HID scancode 0x16) -> WHY+S
+        port.write(b"E 16 1 73\n")
+        port.flush()
+        time.sleep(0.03)
+
+        port.write(b"E 16 0 00\n")
+        port.flush()
+        time.sleep(0.03)
 
     # WHY key up
     port.write(b"E E3 0 00\n")
@@ -176,6 +187,12 @@ def receive_screenshot(port, output_path, timeout, verbose=False):
                 errors="replace",
             ).rstrip("\r")
             stripped = line.strip()
+
+            # Treat --timeout as an inactivity timeout once an image transfer
+            # has started. Full-page WHY+Z screenshots can legitimately take
+            # much longer than a 716x716 viewport screenshot.
+            if begin_match is not None and stripped.startswith("IMG "):
+                deadline = time.monotonic() + timeout
 
             if begin_match is None:
                 match = BEGIN_RE.fullmatch(stripped)
@@ -293,7 +310,7 @@ def receive_screenshot(port, output_path, timeout, verbose=False):
     if begin_match is None:
         raise TimeoutError(
             "Timed out waiting for IMG BEGIN. "
-            "Press WHY+S while Mini Browser is running."
+            "Press WHY+S or WHY+Z while Mini Browser is running."
         )
 
     if end_match is None:
@@ -437,8 +454,9 @@ def receive_screenshot(port, output_path, timeout, verbose=False):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Receive Mini Browser WHY+S screenshots from a WHY2025 "
-            "badge over USB serial and save them as PNG files."
+            "Receive Mini Browser WHY+S viewport or WHY+Z full-page "
+            "screenshots from a WHY2025 badge over USB serial and save "
+            "them as PNG files."
         )
     )
 
@@ -473,7 +491,7 @@ def main():
         type=float,
         default=DEFAULT_TIMEOUT,
         help=(
-            f"transfer timeout in seconds "
+            f"inactivity timeout in seconds "
             f"(default: {DEFAULT_TIMEOUT:g})"
         ),
     )
@@ -482,8 +500,18 @@ def main():
         "--request",
         action="store_true",
         help=(
-            "send a synthetic WHY+S to the badge instead of "
-            "waiting for the physical keyboard shortcut"
+            "send the selected WHY shortcut to the badge instead of "
+            "waiting for the physical keyboard shortcut; requires the "
+            "custom serial-keyboard firmware"
+        ),
+    )
+
+    parser.add_argument(
+        "--full-page",
+        action="store_true",
+        help=(
+            "receive/request a full rendered page with WHY+Z instead of "
+            "the normal 716x716 WHY+S viewport screenshot"
         ),
     )
 
@@ -499,7 +527,7 @@ def main():
     output_path = (
         Path(args.output)
         if args.output
-        else default_output()
+        else default_output(args.full_page)
     )
 
     port = None
@@ -516,11 +544,13 @@ def main():
 
         print(f"Serial: {args.device} @ {args.baud}")
 
+        shortcut = "WHY+Z" if args.full_page else "WHY+S"
+
         if args.request:
-            print("Requesting screenshot with WHY+S...")
-            request_screenshot(port)
+            print(f"Requesting screenshot with {shortcut}...")
+            request_screenshot(port, full_page=args.full_page)
         else:
-            print("Press WHY+S on the badge.")
+            print(f"Press {shortcut} on the badge.")
 
         result = receive_screenshot(
             port,

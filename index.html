@@ -3,11 +3,16 @@
 <head>
   <meta charset="utf-8">
   <title>Mini Browser 2.4</title>
-  <meta name="description" content="Home page for Mini Browser 2.4 on the WHY2025 badge">
+  <meta
+    name="description"
+    content="Home page for Mini Browser 2.4 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 2.4</h1>
+<p><b>Mini Browser 2.4</b></p>
+
+<pre>
+</pre>
 
 <p>
 Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
@@ -15,6 +20,9 @@ Version 2.4 supports links, bookmarks, Back/Forward history, simple GET forms,
 56,352 Unicode glyphs, word-aware wrapping, RTL/Bidi text, Arabic shaping,
 monochrome emoji, real bold text and full-page screenshots.
 </p>
+
+<pre>
+</pre>
 
 <h2>Search the small web</h2>
 
@@ -27,6 +35,9 @@ monochrome emoji, real bold text and full-page screenshots.
 Wiby is a search engine focused on simple, lightweight websites and is a good match
 for Mini Browser.
 </p>
+
+<pre>
+</pre>
 
 <h2>Recommended</h2>
 
@@ -41,13 +52,19 @@ for Mini Browser.
   <li><a href="https://ifconfig.co/">ifconfig.co</a> - network information</li>
 </ul>
 
+<pre>
+</pre>
+
 <h2>How to browse</h2>
 
 <p>
 Links and form controls have numbers. Type a number and press Enter to activate it.
-Use Up and Down to scroll; hold an arrow for continuous scrolling. J and K also scroll
-one line at a time.
+Use Up and Down to scroll; hold an arrow for continuous scrolling.
+J and K also scroll one line at a time.
 </p>
+
+<pre>
+</pre>
 
 <h2>Browser keys</h2>
 
@@ -65,13 +82,17 @@ one line at a time.
   <li>WHY+Q - quit</li>
 </ul>
 
+<pre>
+</pre>
+
 <h2>Screenshots</h2>
 
 <p>
-Press WHY+S to capture the visible 716x716 Mini Browser view, or WHY+Z to capture
-the complete rendered page. Screenshots are transmitted over USB serial. The repository
-includes badge_screenshot.py, a standalone macOS/Linux receiver that validates the
-CRC/FEC protected transfer and saves it as a PNG.
+Press WHY+S to capture the visible 716x716 Mini Browser view,
+or WHY+Z to capture the complete rendered page.
+Screenshots are transmitted over USB serial.
+The repository includes badge_screenshot.py, a standalone macOS/Linux receiver
+that validates the CRC/FEC-protected transfer and saves it as a PNG.
 </p>
 
 <pre>
@@ -80,42 +101,59 @@ CRC/FEC protected transfer and saves it as a PNG.
 </pre>
 
 <p>
-Physical WHY+S screenshots do not require custom firmware. An optional customized
-WHY2025 firmware adds host-to-badge keyboard control, so a computer can operate Mini
-Browser remotely. It also includes scripts for automated browser tests and automatic
-screenshots.
+Physical WHY+S and WHY+Z screenshots do not require custom firmware.
+An optional customized WHY2025 firmware adds host-to-badge keyboard control,
+so a computer can operate Mini Browser remotely.
+It also includes scripts for automated browser tests and automatic screenshots.
 </p>
 
 <p>
-<a href="https://github.com/mactjaap/firmware">Customized WHY2025 firmware and test tools</a>
+<a href="https://github.com/mactjaap/firmware">
+Customized WHY2025 firmware and test tools
+</a>
 </p>
+
+<pre>
+</pre>
 
 <h2>About 2.4</h2>
 
 <p>
-Mini Browser 2.4 keeps the built-in ASCII font and uses an external GNU Unifont-based
-MBCJ font with 56,352 usable glyphs across 101 ranges. Text wrapping preserves complete
-words where possible, while CJK and overlong tokens safely fall back to glyph wrapping.
-Hebrew and Arabic are rendered right-to-left, with contextual Arabic shaping. HTML b
-and strong text are rendered as genuine bold text.
+Mini Browser 2.4 keeps the built-in ASCII font and uses an external
+GNU Unifont-based MBCJ font with 56,352 usable glyphs across 101 ranges.
+Text wrapping preserves complete words where possible, while CJK and
+overlong tokens safely fall back to glyph wrapping.
+Hebrew and Arabic are rendered right-to-left, with contextual Arabic shaping.
+HTML b and strong text are rendered as genuine bold text.
 </p>
 
 <p>
-Unordered list markers deliberately remain ASCII * characters, so basic list rendering
-does not depend on the external Unicode font.
+Unordered list markers deliberately remain ASCII * characters,
+so basic list rendering does not depend on the external Unicode font.
 </p>
 
 <p>
-Mini Browser intentionally has no JavaScript engine, CSS layout engine or image
-renderer. It is designed for ordinary server-rendered HTML, text content, links and
-simple GET forms.
+Mini Browser intentionally has no JavaScript engine, CSS layout engine
+or image renderer. It is designed for ordinary server-rendered HTML,
+text content, links and simple GET forms.
 </p>
 
-<p><a href="/readme.html">Mini Browser 2.4 - full documentation</a></p>
-<p><a href="https://github.com/mactjaap/mini_browser/">Source code on GitHub</a></p>
+<p>
+<a href="/readme.html">Mini Browser 2.4 - full documentation</a>
+</p>
+
+<p>
+<a href="https://github.com/mactjaap/mini_browser/">Source code on GitHub</a>
+</p>
+
+<pre>
+</pre>
 
 <hr>
-<p><b>Mini Browser 2.4</b> - WHY2025 BadgeVMS</p>
+
+<p>
+<b>Mini Browser 2.4</b> - WHY2025 BadgeVMS
+</p>
 
 </body>
 </html>

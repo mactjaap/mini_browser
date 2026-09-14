@@ -283,6 +283,100 @@ screenshots triggered physically with `WHY+S`. It is required when the
 host needs to send keyboard commands to the badge, including fully
 automated tests and `badge_screenshot.py --request`.
 
+## Opening URLs from macOS or Linux
+
+The repository includes `badge_open_url.py`, a small host-side tool for sending URLs
+directly to Mini Browser over the custom firmware's serial keyboard bridge. This is
+useful for testing because URLs can be pasted on the computer instead of being typed
+manually on the badge.
+
+The script requires Python 3 and `pyserial`:
+
+``` sh
+python3 -m pip install pyserial
+```
+
+To paste a URL interactively:
+
+``` sh
+./badge_open_url.py
+```
+
+Paste the URL at the prompt and press Enter. The script sends `WHY+E`, enters the URL
+through the normal BadgeVMS keyboard path and presses Enter.
+
+A URL can also be supplied directly:
+
+``` sh
+./badge_open_url.py https://example.com/
+```
+
+To open the URL currently on the macOS or Linux clipboard:
+
+``` sh
+./badge_open_url.py --clipboard
+```
+
+The script can also run a list of URLs as a simple Mini Browser presentation. Put one
+URL per line in a text file. Blank lines and lines beginning with `#` are ignored.
+
+For example, `urls.txt`:
+
+``` text
+# Mini Browser demonstration
+https://example.com/
+https://news.ycombinator.com/
+https://wiby.me/
+```
+
+Run the presentation with:
+
+``` sh
+./badge_open_url.py -f urls.txt
+```
+
+Each page is displayed for 30 seconds by default. Change the interval with `-s`:
+
+``` sh
+./badge_open_url.py -f urls.txt -s 10
+```
+
+Use `-z` to request a complete `WHY+Z` screenshot of every page in the list:
+
+``` sh
+./badge_open_url.py -f urls.txt -z
+```
+
+This combines the URL presentation with `badge_screenshot.py --full-page --request`.
+The screenshot receiver can be specified explicitly:
+
+``` sh
+./badge_open_url.py -f urls.txt -z --screenshot-script ./badge_screenshot.py
+```
+
+When `badge_screenshot.py` is in the same directory as `badge_open_url.py`, it is
+normally found automatically. Screenshots are written through the screenshot receiver;
+the presentation script uses a `screenshots` directory by default.
+
+A useful automated demonstration and screenshot run is therefore:
+
+``` sh
+./badge_open_url.py -f urls.txt -s 15 -z
+```
+
+The script auto-detects common macOS and Linux serial devices. A device can also be
+selected explicitly:
+
+``` sh
+./badge_open_url.py --device /dev/cu.wchusbserial10 https://example.com/
+```
+
+On Linux the device will commonly be something such as `/dev/ttyUSB0` or
+`/dev/ttyACM0`.
+
+Because URL entry and host-requested screenshots use the serial keyboard bridge,
+`badge_open_url.py` requires the customized WHY2025 firmware described above.
+
 ## Bookmarks and history
 
 Mini Browser stores up to 32 bookmarks and keeps up to 32 HTTP/HTTPS

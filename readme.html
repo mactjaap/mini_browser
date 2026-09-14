@@ -247,6 +247,122 @@ screenshots. It is required when a host must send keyboard commands to the badge
 including fully automated tests and badge_screenshot.py --request.
 </p>
 
+<pre>
+</pre>
+
+<h2>Opening URLs from macOS or Linux</h2>
+
+<p>
+The repository includes <b>badge_open_url.py</b>, a small host-side tool for sending
+URLs directly to Mini Browser over the custom firmware's serial keyboard bridge. This
+is useful for testing because URLs can be pasted on the computer instead of being typed
+manually on the badge.
+</p>
+
+<p>The script requires Python 3 and pyserial:</p>
+
+<pre>
+python3 -m pip install pyserial
+</pre>
+
+<p>To paste a URL interactively:</p>
+
+<pre>
+./badge_open_url.py
+</pre>
+
+<p>
+Paste the URL at the prompt and press Enter. The script sends WHY+E, enters the URL
+through the normal BadgeVMS keyboard path and presses Enter.
+</p>
+
+<p>A URL can also be supplied directly:</p>
+
+<pre>
+./badge_open_url.py https://example.com/
+</pre>
+
+<p>To open the URL currently on the macOS or Linux clipboard:</p>
+
+<pre>
+./badge_open_url.py --clipboard
+</pre>
+
+<p>
+The script can also run a list of URLs as a simple Mini Browser presentation. Put one
+URL per line in a text file. Blank lines and lines beginning with # are ignored.
+</p>
+
+<p>For example, urls.txt:</p>
+
+<pre>
+# Mini Browser demonstration
+https://example.com/
+https://news.ycombinator.com/
+https://wiby.me/
+</pre>
+
+<p>Run the presentation with:</p>
+
+<pre>
+./badge_open_url.py -f urls.txt
+</pre>
+
+<p>
+Each page is displayed for 30 seconds by default. Change the interval with -s:
+</p>
+
+<pre>
+./badge_open_url.py -f urls.txt -s 10
+</pre>
+
+<p>
+Use -z to request a complete WHY+Z screenshot of every page in the list:
+</p>
+
+<pre>
+./badge_open_url.py -f urls.txt -z
+</pre>
+
+<p>
+This combines the URL presentation with badge_screenshot.py --full-page --request.
+The screenshot receiver can be specified explicitly:
+</p>
+
+<pre>
+./badge_open_url.py -f urls.txt -z --screenshot-script ./badge_screenshot.py
+</pre>
+
+<p>
+When badge_screenshot.py is in the same directory as badge_open_url.py, it is normally
+found automatically. Screenshots are written through the screenshot receiver; the
+presentation script uses a screenshots directory by default.
+</p>
+
+<p>A useful automated demonstration and screenshot run is therefore:</p>
+
+<pre>
+./badge_open_url.py -f urls.txt -s 15 -z
+</pre>
+
+<p>
+The script auto-detects common macOS and Linux serial devices. A device can also be
+selected explicitly:
+</p>
+
+<pre>
+./badge_open_url.py --device /dev/cu.wchusbserial10 https://example.com/
+</pre>
+
+<p>
+On Linux the device will commonly be something such as /dev/ttyUSB0 or /dev/ttyACM0.
+</p>
+
+<p>
+Because URL entry and host-requested screenshots use the serial keyboard bridge,
+badge_open_url.py requires the customized WHY2025 firmware described above.
+</p>
+
 <h2>Bookmarks and history</h2>
 
 <p>

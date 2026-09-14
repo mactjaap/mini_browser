@@ -1,0 +1,5 @@
+# Mini Browser demo
+https://minibrowser.macip.net/e.html
+https://minibrowser.macip.net/em.html
+https://minibrowser.macip.net/w.html
+https://minibrowser.macip.net/u.html

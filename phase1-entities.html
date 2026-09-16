@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 1 &amp; Entities &#x1F600;</title>
+</head>
+<body>
+<h1>Mini Browser 2.5 Phase 1 Entity Tests</h1>
+
+<p>NAMED: &amp; &lt; &gt; &quot; &apos; &copy; &reg; &trade; &euro; &pound; &yen; &cent; &deg; &plusmn; &times; &divide; &bull; &middot; &hellip; &ndash; &mdash; &lsquo; &rsquo; &ldquo; &rdquo; &laquo; &raquo;</p>
+
+<p>DECIMAL: &#169; &#8364; &#937; &#20013;</p>
+
+<p>HEX: &#x00A9; &#x20AC; &#x03A9; &#x4E2D;</p>
+
+<p>UNICODE: Greek=&#x03A9; Chinese=&#x4E2D;&#x6587; Emoji=&#x1F600;</p>
+
+<p>ARABIC: &#x0633;&#x0644;&#x0627;&#x0645;</p>
+
+<p>INVALID: zero=&#0; surrogate=&#xD800; too-high=&#x110000;</p>
+
+<p>MALFORMED: &doesnotexist; &#xyz; &#xZZZZ;</p>
+
+<p>NBSP: left&nbsp;right</p>
+
+<p><a href="phase1-entity-target.html?a=one&amp;b=two">Entity URL test</a></p>
+
+<form method="get" action="phase1-entity-target.html">
+<label>q: <input type="text" name="q" value=""></label>
+<button type="submit">Search &amp; Go</button>
+</form>
+
+<p>END PHASE1 ENTITY TEST</p>
+</body>
+</html>

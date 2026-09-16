@@ -1375,19 +1375,39 @@ def phase2_rtl(badge):
 
 
 def phase2_huge_words(badge):
-    content = phase2_open(badge, "phase2-huge-words.html")
-    require_content(
-        content,
-        "START HUGE ASCII",
-        "AFTER HUGE ASCII",
-        "START HUGE CJK",
-        "AFTER HUGE CJK",
-        "END HUGE WORDS",
+    # This page intentionally produces a very large CONTENT block. Do not use
+    # latest_content_block() here: the regression harness keeps a bounded serial
+    # history, so CONTENT START may fall out of history before CONTENT END.
+    # Verify completion directly from trailing serial sentinels instead.
+    filename = "phase2-huge-words.html"
+
+    badge.clear_log()
+    open_direct_url(
+        badge,
+        phase2_url(filename),
+        phase2_expect(filename),
     )
+
+    badge.wait_for(
+        r"\[mini_browser\] parser: links=\d+ actions=\d+ forms=\d+",
+        10,
+    )
+    badge.wait_for(r"AFTER HUGE ASCII", 20)
+    badge.wait_for(r"AFTER HUGE CJK", 20)
+    badge.wait_for(r"END HUGE WORDS", 20)
+    badge.wait_for(r"--- CONTENT END ---", 20)
+
+    links, actions, forms = phase2_parser_counts(badge)
+    if (links, actions, forms) != (0, 0, 0):
+        raise RuntimeError(
+            f"Expected parser counts 0/0/0, got {links}/{actions}/{forms}"
+        )
+
     return [
-        "12 KiB unbroken ASCII word did not hang or stop parsing",
-        "2048-glyph CJK run did not hang or stop parsing",
-        "Sentinels after both oversized runs were reached",
+        "12 KiB unbroken ASCII word completed without hang/crash",
+        "2048-glyph CJK run completed without hang/crash",
+        "Trailing sentinels and CONTENT END were emitted",
+        "Parser remained bounded: links=0 actions=0 forms=0",
     ]
 
 

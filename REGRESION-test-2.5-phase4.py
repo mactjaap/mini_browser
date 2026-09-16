@@ -39,7 +39,7 @@ import serial
 
 CONFIG = {
     "serial": {
-        "device": "/dev/cu.wchusbserial10",
+        "device": "/dev/cu.wchusbserial110",
         "baudrate": 115200,
         "startup_delay": 2.0,
         "default_timeout": 1000,
@@ -1576,12 +1576,12 @@ def phase3_post_parser(badge):
         "POST FORM END",
     )
 
-    actions = numbered_actions(content)
-    labels = [normalize_control_text(a["label"]) for a in actions]
-
-    for wanted in ("user: WHY2025", "message: Hello Mini Browser!", "send post"):
-        if not any(wanted in label for label in labels):
-            raise RuntimeError(f"Expected POST form action missing: {wanted}")
+    # Verify the rendered controls directly. numbered_actions() is intended
+    # for compact single-line controls and is unnecessarily brittle when a
+    # form control is wrapped by the pixel-aware renderer.
+    for wanted in ("user: WHY2025", "message: Hello Mini Browser!", "[Send POST]"):
+        if wanted not in joined:
+            raise RuntimeError(f"Expected POST form control missing: {wanted}")
 
     links, actions_count, forms = phase2_parser_counts(badge)
     if (links, actions_count, forms) != (0, 3, 1):
@@ -1637,7 +1637,10 @@ def phase3_submit_default_post(badge):
         "POST RESULT END",
     )
 
-    if "RAW: " + expected_body not in joined:
+    # The raw body is a long unbroken token and Mini Browser deliberately
+    # glyph-wraps overlong tokens. Rejoin rendered lines before exact compare.
+    compact = "".join(line.strip() for line in content)
+    if "RAW:" + expected_body not in compact:
         raise RuntimeError("Server did not receive the exact expected POST body")
 
     return [
@@ -1694,13 +1697,109 @@ def phase3_submit_edited_post(badge):
         "POST RESULT END",
     )
 
-    if "RAW: " + expected_body not in joined:
+    # Same wrapping rule as the default POST test above.
+    compact = "".join(line.strip() for line in content)
+    if "RAW:" + expected_body not in compact:
         raise RuntimeError("Edited value was not encoded in exact POST body")
 
     return [
         "Editable POST field changed before submission",
         "Edited value reached server intact",
         "Ampersand encoded as %26 in raw request body",
+    ]
+
+
+
+
+def phase4_open(badge, path, end_marker):
+    badge.clear_log()
+    open_direct_url(
+        badge,
+        "minibrowser.macip.net/" + path,
+        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path),
+    )
+    badge.wait_for(re.escape(end_marker), 15)
+    badge.settle(0.5)
+    return latest_content_block(badge)
+
+
+def phase4_set_and_send_cookie(badge):
+    content = phase4_open(badge, "phase4-cookie-set.php", "END COOKIE SET")
+    require_content(content, "COOKIE SET PAGE", "Set mb_session=alpha123")
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_session domain=minibrowser\.macip\.net path=/ secure=1 count=1",
+        10,
+    )
+
+    content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
+    require_content(content, "COOKIE CHECK PAGE", "mb_session: alpha123")
+    badge.wait_for(r"\[mini_browser\] cookie send: .*mb_session=alpha123", 10)
+
+    return [
+        "Set-Cookie was captured into the bounded in-memory jar",
+        "Secure cookie was sent on the next HTTPS request",
+        "Server received mb_session=alpha123",
+    ]
+
+
+def phase4_replace_cookie(badge):
+    content = phase4_open(badge, "phase4-cookie-replace.php", "END COOKIE REPLACE")
+    require_content(content, "COOKIE REPLACE PAGE", "Replaced mb_session with beta456")
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_session domain=minibrowser\.macip\.net path=/ secure=1 count=1",
+        10,
+    )
+
+    content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
+    require_content(content, "mb_session: beta456")
+    badge.wait_for(r"\[mini_browser\] cookie send: .*mb_session=beta456", 10)
+
+    return [
+        "Cookie with the same name/domain/path replaced the previous value",
+        "Jar remained bounded at one matching cookie",
+        "Server received the replacement value beta456",
+    ]
+
+
+def phase4_path_scope(badge):
+    content = phase4_open(badge, "phase4-cookie-path-set.php", "END PATH COOKIE SET")
+    require_content(content, "PATH COOKIE SET", "mb_path=private789")
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_path domain=minibrowser\.macip\.net path=/phase4-private secure=1 count=2",
+        10,
+    )
+
+    content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
+    require_content(content, "mb_path: (missing)")
+    if "mb_path=private789" in "\n".join(badge.get_lines()):
+        raise RuntimeError("Path-scoped cookie leaked outside /phase4-private")
+
+    content = phase4_open(badge, "phase4-private/check.php", "END PRIVATE COOKIE CHECK")
+    require_content(content, "mb_path: private789")
+    badge.wait_for(r"\[mini_browser\] cookie send: .*mb_path=private789", 10)
+
+    return [
+        "Path-scoped cookie was not sent outside its path",
+        "The same cookie was sent inside /phase4-private",
+        "Server received mb_path=private789 only on the matching path",
+    ]
+
+
+def phase4_delete_cookie(badge):
+    content = phase4_open(badge, "phase4-cookie-delete.php", "END COOKIE DELETE")
+    require_content(content, "COOKIE DELETE PAGE", "Deleted mb_session")
+    badge.wait_for(
+        r"\[mini_browser\] cookie delete: mb_session domain=minibrowser\.macip\.net path=/ count=1",
+        10,
+    )
+
+    content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
+    require_content(content, "mb_session: (missing)")
+
+    return [
+        "Max-Age=0 deleted the matching cookie",
+        "Deleted session cookie was no longer sent",
+        "Unrelated path cookie remained in the bounded jar",
     ]
 
 
@@ -1973,6 +2072,23 @@ def main():
         ]
 
         for description, test_func in phase3_cases:
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 2.5 Phase 4: bounded in-memory cookie jar.
+        phase4_cases = [
+            ("Phase 4: store and send cookie", lambda: phase4_set_and_send_cookie(badge)),
+            ("Phase 4: replace cookie", lambda: phase4_replace_cookie(badge)),
+            ("Phase 4: path-scoped cookie", lambda: phase4_path_scope(badge)),
+            ("Phase 4: delete cookie", lambda: phase4_delete_cookie(badge)),
+        ]
+
+        for description, test_func in phase4_cases:
             run_test(
                 results,
                 number,

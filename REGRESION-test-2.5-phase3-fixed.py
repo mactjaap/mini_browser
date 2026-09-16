@@ -1576,12 +1576,12 @@ def phase3_post_parser(badge):
         "POST FORM END",
     )
 
-    actions = numbered_actions(content)
-    labels = [normalize_control_text(a["label"]) for a in actions]
-
-    for wanted in ("user: WHY2025", "message: Hello Mini Browser!", "send post"):
-        if not any(wanted in label for label in labels):
-            raise RuntimeError(f"Expected POST form action missing: {wanted}")
+    # Verify the rendered controls directly. numbered_actions() is intended
+    # for compact single-line controls and is unnecessarily brittle when a
+    # form control is wrapped by the pixel-aware renderer.
+    for wanted in ("user: WHY2025", "message: Hello Mini Browser!", "[Send POST]"):
+        if wanted not in joined:
+            raise RuntimeError(f"Expected POST form control missing: {wanted}")
 
     links, actions_count, forms = phase2_parser_counts(badge)
     if (links, actions_count, forms) != (0, 3, 1):
@@ -1637,7 +1637,10 @@ def phase3_submit_default_post(badge):
         "POST RESULT END",
     )
 
-    if "RAW: " + expected_body not in joined:
+    # The raw body is a long unbroken token and Mini Browser deliberately
+    # glyph-wraps overlong tokens. Rejoin rendered lines before exact compare.
+    compact = "".join(line.strip() for line in content)
+    if "RAW:" + expected_body not in compact:
         raise RuntimeError("Server did not receive the exact expected POST body")
 
     return [
@@ -1694,7 +1697,9 @@ def phase3_submit_edited_post(badge):
         "POST RESULT END",
     )
 
-    if "RAW: " + expected_body not in joined:
+    # Same wrapping rule as the default POST test above.
+    compact = "".join(line.strip() for line in content)
+    if "RAW:" + expected_body not in compact:
         raise RuntimeError("Edited value was not encoded in exact POST body")
 
     return [

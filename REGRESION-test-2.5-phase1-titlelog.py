@@ -1164,40 +1164,27 @@ def phase1_entity_url(badge):
 
 
 def phase1_title_entity(badge):
-    # Use a unique query string so this test does not collide with a bookmark
-    # the user may already have for the ordinary Phase 1 test page.
+    # Use a unique query string so this fetch has an unambiguous log sequence.
     url = CONFIG["phase1"]["url"] + "?titlecheck=1"
     expected = (
         r"HTTP 200.*https://minibrowser\.macip\.net/"
         r"phase1-entities\.html\?titlecheck=1"
     )
-    phase1_open(badge, url, expected)
 
     badge.clear_log()
-    badge.why("F")
-    badge.wait_for(r"bookmark added: .*phase1-entities\.html\?titlecheck=1", 10)
+    open_direct_url(badge, url, expected)
 
-    badge.clear_log()
-    badge.why("M")
-    badge.wait_for(r"opened bookmarks:", 10)
-    badge.settle(0.8)
-
-    content = latest_content_block(badge)
-    require_content(content, "Phase 1 & Entities 😀")
-
-    # Return to the page and remove the temporary bookmark.
-    badge.clear_log()
-    badge.why("B")
-    badge.wait_for(expected, 20)
-    badge.settle(0.5)
-
-    badge.clear_log()
-    badge.why("F")
-    badge.wait_for(r"bookmark removed: .*phase1-entities\.html\?titlecheck=1", 10)
+    # This line is emitted directly from page->title immediately after
+    # html_to_page(), so it tests the actual decoded title rather than
+    # inferring it through the synthetic Bookmarks page.
+    badge.wait_for(
+        r"\[mini_browser\] page title: Phase 1 & Entities 😀",
+        10,
+    )
 
     return [
-        "Decoded <title> verified through the bookmark title",
-        "Temporary regression-test bookmark removed",
+        "Decoded <title> verified directly from page->title diagnostic",
+        "Expected title: Phase 1 & Entities 😀",
     ]
 
 

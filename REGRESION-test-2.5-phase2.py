@@ -12,6 +12,7 @@ Tests supported:
 - Exercise WHY-key badge/browser commands
 - Verify action-number correction with Backspace
 - Verify Mini Browser 2.5 Phase 1 HTML/entity handling
+- Verify Mini Browser 2.5 Phase 2 parser torture/limits
 - Print a PASS / NOT PASSED summary
 
 Serial keyboard protocol:
@@ -56,6 +57,12 @@ CONFIG = {
         "url": "minibrowser.macip.net/phase1-entities.html",
         "url_pattern": r"HTTP 200.*https://minibrowser\.macip\.net/phase1-entities\.html",
         "target_pattern": r"HTTP 200.*https://minibrowser\.macip\.net/phase1-entity-target\.html\?a=one&b=two",
+    },
+
+    # Mini Browser 2.5 Phase 2 controlled parser-torture pages.
+    # Upload all phase2-*.html files to the minibrowser.macip.net document root.
+    "phase2": {
+        "base": "minibrowser.macip.net/",
     },
 
     # Generic web-site tests.
@@ -1164,40 +1171,27 @@ def phase1_entity_url(badge):
 
 
 def phase1_title_entity(badge):
-    # Use a unique query string so this test does not collide with a bookmark
-    # the user may already have for the ordinary Phase 1 test page.
+    # Use a unique query string so this fetch has an unambiguous log sequence.
     url = CONFIG["phase1"]["url"] + "?titlecheck=1"
     expected = (
         r"HTTP 200.*https://minibrowser\.macip\.net/"
         r"phase1-entities\.html\?titlecheck=1"
     )
-    phase1_open(badge, url, expected)
 
     badge.clear_log()
-    badge.why("F")
-    badge.wait_for(r"bookmark added: .*phase1-entities\.html\?titlecheck=1", 10)
+    open_direct_url(badge, url, expected)
 
-    badge.clear_log()
-    badge.why("M")
-    badge.wait_for(r"opened bookmarks:", 10)
-    badge.settle(0.8)
-
-    content = latest_content_block(badge)
-    require_content(content, "Phase 1 & Entities 😀")
-
-    # Return to the page and remove the temporary bookmark.
-    badge.clear_log()
-    badge.why("B")
-    badge.wait_for(expected, 20)
-    badge.settle(0.5)
-
-    badge.clear_log()
-    badge.why("F")
-    badge.wait_for(r"bookmark removed: .*phase1-entities\.html\?titlecheck=1", 10)
+    # This line is emitted directly from page->title immediately after
+    # html_to_page(), so it tests the actual decoded title rather than
+    # inferring it through the synthetic Bookmarks page.
+    badge.wait_for(
+        r"\[mini_browser\] page title: Phase 1 & Entities 😀",
+        10,
+    )
 
     return [
-        "Decoded <title> verified through the bookmark title",
-        "Temporary regression-test bookmark removed",
+        "Decoded <title> verified directly from page->title diagnostic",
+        "Expected title: Phase 1 & Entities 😀",
     ]
 
 
@@ -1223,6 +1217,280 @@ def phase1_button_entity(badge):
 
     return [
         f"Button label decoded: [{matching[0]['number']}] Search & Go"
+    ]
+
+
+def phase2_url(filename):
+    return CONFIG["phase2"]["base"] + filename
+
+
+def phase2_expect(filename):
+    return (
+        r"HTTP 200.*https://minibrowser\.macip\.net/"
+        + re.escape(filename)
+    )
+
+
+def phase2_open(badge, filename):
+    badge.clear_log()
+    open_direct_url(
+        badge,
+        phase2_url(filename),
+        phase2_expect(filename),
+    )
+    badge.wait_for(r"\[mini_browser\] parser: links=\d+ actions=\d+ forms=\d+", 10)
+    badge.settle(0.5)
+
+    content = latest_content_block(badge)
+    if not content:
+        raise RuntimeError(
+            f"{filename} loaded but no CONTENT block was captured"
+        )
+
+    return content
+
+
+def phase2_parser_counts(badge):
+    lines = badge.get_lines()
+    pattern = re.compile(
+        r"\[mini_browser\] parser: links=(\d+) actions=(\d+) forms=(\d+)"
+    )
+    found = None
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            found = tuple(int(x) for x in match.groups())
+
+    if found is None:
+        raise RuntimeError("No parser-count diagnostic found")
+
+    return found
+
+
+def phase2_malformed(badge):
+    content = phase2_open(badge, "phase2-malformed.html")
+    joined = require_content(
+        content,
+        "START MALFORMED",
+        "quoted greater-than survived",
+        "END MALFORMED",
+        "RECOVERY LINK",
+    )
+    if "unknown" in joined.lower() and "</unknown>" in joined.lower():
+        raise RuntimeError("Unknown closing tag leaked into rendered text")
+    return [
+        "Mismatched/unknown tags did not crash or stop parsing",
+        "Quoted > inside an attribute did not terminate the tag early",
+        "Parser reached END MALFORMED and recovery link",
+    ]
+
+
+def phase2_links(badge):
+    content = phase2_open(badge, "phase2-links.html")
+    require_content(content, "START LINKS", "END LINKS")
+    actions = numbered_actions(content)
+    labels = [a["label"] for a in actions]
+
+    for wanted in ("Alpha link", "Root link", "Absolute link"):
+        if not any(wanted in label for label in labels):
+            raise RuntimeError(f"Supported link missing: {wanted}")
+
+    for forbidden in (
+        "Unsupported mail link",
+        "Unsupported javascript link",
+        "Fragment only",
+    ):
+        if any(forbidden in label for label in labels):
+            raise RuntimeError(f"Unsupported link became an action: {forbidden}")
+
+    links, action_count, forms = phase2_parser_counts(badge)
+    if (links, action_count, forms) != (3, 3, 0):
+        raise RuntimeError(
+            f"Expected parser counts 3/3/0, got {links}/{action_count}/{forms}"
+        )
+
+    return [
+        "Relative, root-relative and absolute HTTP(S) links became actions",
+        "mailto:, javascript: and fragment-only links were not actionable",
+        "Parser counts: links=3 actions=3 forms=0",
+    ]
+
+
+def phase2_forms(badge):
+    content = phase2_open(badge, "phase2-forms.html")
+    require_content(content, "START FORMS", "END FORMS")
+    actions = numbered_actions(content)
+    labels = [normalize_control_text(a["label"]) for a in actions]
+
+    for wanted in ("q: hello", "s: world", "submit torture form"):
+        if not any(wanted in label for label in labels):
+            raise RuntimeError(f"Expected form action missing: {wanted}")
+
+    if any("ignored-no-name" in label for label in labels):
+        raise RuntimeError("Nameless editable input became an action")
+    if any("ignored" in label and "disabled" in label for label in labels):
+        raise RuntimeError("Disabled editable input became an action")
+
+    links, action_count, forms = phase2_parser_counts(badge)
+    if forms != 1:
+        raise RuntimeError(f"Expected one parsed form, got {forms}")
+    if action_count != 3:
+        raise RuntimeError(f"Expected three actionable controls, got {action_count}")
+
+    return [
+        "Hidden/editable/disabled/nameless fields parsed without corruption",
+        "Two editable controls plus submit produced three actions",
+    ]
+
+
+def phase2_unicode(badge):
+    content = phase2_open(badge, "phase2-unicode.html")
+    require_content(
+        content,
+        "café naïve façade",
+        "Ελληνικά Ω",
+        "Привет мир",
+        "שלום עולם",
+        "السلام عليكم",
+        "中文 日本語 한국어",
+        "😀 🚀 ★",
+        "END UNICODE",
+    )
+    return ["Multiscript UTF-8 survived parser and wrapping pipeline"]
+
+
+def phase2_rtl(badge):
+    content = phase2_open(badge, "phase2-rtl.html")
+    require_content(
+        content,
+        "שלום 123 ABC",
+        "السلام 456 ESP32",
+        "LEFT שלום 789 RIGHT",
+        "END RTL",
+    )
+    return [
+        "Logical RTL/mixed-direction UTF-8 remained intact in CONTENT",
+        "Renderer can apply existing Phase 2.4 Bidi/shaping independently",
+    ]
+
+
+def phase2_huge_words(badge):
+    content = phase2_open(badge, "phase2-huge-words.html")
+    require_content(
+        content,
+        "START HUGE ASCII",
+        "AFTER HUGE ASCII",
+        "START HUGE CJK",
+        "AFTER HUGE CJK",
+        "END HUGE WORDS",
+    )
+    return [
+        "12 KiB unbroken ASCII word did not hang or stop parsing",
+        "2048-glyph CJK run did not hang or stop parsing",
+        "Sentinels after both oversized runs were reached",
+    ]
+
+
+def phase2_tables(badge):
+    content = phase2_open(badge, "phase2-tables.html")
+    joined = require_content(
+        content,
+        "Name",
+        "Value",
+        "Unicode",
+        "Alpha",
+        "123",
+        "Ω",
+        "Beta",
+        "456",
+        "中",
+        "Gamma",
+        "789",
+        "😀",
+        "END TABLES",
+    )
+    if "|" not in joined:
+        raise RuntimeError("Table cell separators were not emitted")
+    return ["Table rows/cells survived with text separators and Unicode"]
+
+
+def phase2_nested_formatting(badge):
+    content = phase2_open(badge, "phase2-nested-formatting.html")
+    require_content(
+        content,
+        "plain",
+        "bold",
+        "bold italic",
+        "code inside strong",
+        "quote",
+        "one",
+        "two",
+        "first",
+        "second",
+        "END NESTED FORMATTING",
+    )
+    return [
+        "Nested/mixed formatting did not corrupt or stop parser",
+        "Lists, blockquote and code content remained present",
+    ]
+
+
+def phase2_link_limits(badge):
+    content = phase2_open(badge, "phase2-limits.html")
+    require_content(content, "START LIMITS", "END LIMITS")
+
+    links, actions, forms = phase2_parser_counts(badge)
+    if links != 128:
+        raise RuntimeError(f"MAX_LINKS expected 128, parser reported {links}")
+    if actions != 128:
+        raise RuntimeError(f"Expected 128 link actions, parser reported {actions}")
+    if forms != 0:
+        raise RuntimeError(f"Expected no forms, parser reported {forms}")
+
+    numbered = numbered_actions(content)
+    numbers = [a["number"] for a in numbered]
+    if len(numbers) != 128:
+        raise RuntimeError(
+            f"Expected 128 visible numbered link actions, found {len(numbers)}"
+        )
+    if numbers[0] != 1 or numbers[-1] != 128:
+        raise RuntimeError(
+            f"Expected action range 1..128, got {numbers[0]}..{numbers[-1]}"
+        )
+
+    return [
+        "140 input links safely capped at MAX_LINKS=128",
+        "Visible deterministic action range is exactly 1..128",
+        "Parser reached END LIMITS after refusing additional links",
+    ]
+
+
+def phase2_form_limits(badge):
+    content = phase2_open(badge, "phase2-form-limits.html")
+    require_content(content, "START FORM LIMITS", "END FORM LIMITS")
+
+    links, actions, forms = phase2_parser_counts(badge)
+    if forms != 4:
+        raise RuntimeError(f"MAX_FORMS expected 4, parser reported {forms}")
+
+    # Each accepted form contains 10 editable inputs followed by a submit.
+    # MAX_FORM_FIELDS=8 means only the first eight fields are retained; the
+    # later submit is intentionally outside the accepted field budget.
+    if actions != 32:
+        raise RuntimeError(
+            f"Expected 4 forms x 8 editable actions = 32, got {actions}"
+        )
+
+    numbered = numbered_actions(content)
+    if len(numbered) != 32:
+        raise RuntimeError(
+            f"Expected 32 visible form-field actions, found {len(numbered)}"
+        )
+
+    return [
+        "Six input forms safely capped at MAX_FORMS=4",
+        "Ten fields/form safely capped at MAX_FORM_FIELDS=8",
+        "Resulting action count remained bounded and deterministic at 32",
     ]
 
 
@@ -1446,6 +1714,29 @@ def main():
         ]
 
         for description, test_func in phase1_cases:
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 2.5 Phase 2: parser torture and hard-limit regressions.
+        phase2_cases = [
+            ("Phase 2: malformed HTML recovery", lambda: phase2_malformed(badge)),
+            ("Phase 2: link parsing/filtering", lambda: phase2_links(badge)),
+            ("Phase 2: form parser robustness", lambda: phase2_forms(badge)),
+            ("Phase 2: raw Unicode parser path", lambda: phase2_unicode(badge)),
+            ("Phase 2: RTL/mixed-direction parser path", lambda: phase2_rtl(badge)),
+            ("Phase 2: huge unbroken words", lambda: phase2_huge_words(badge)),
+            ("Phase 2: table parsing", lambda: phase2_tables(badge)),
+            ("Phase 2: nested formatting", lambda: phase2_nested_formatting(badge)),
+            ("Phase 2: MAX_LINKS/MAX_ACTIONS boundary", lambda: phase2_link_limits(badge)),
+            ("Phase 2: MAX_FORMS/MAX_FORM_FIELDS boundary", lambda: phase2_form_limits(badge)),
+        ]
+
+        for description, test_func in phase2_cases:
             run_test(
                 results,
                 number,

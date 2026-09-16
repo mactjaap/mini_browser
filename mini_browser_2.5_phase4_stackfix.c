@@ -1,0 +1,4527 @@
+#if defined(ESP_PLATFORM)
+#include "esp_log.h"
+#endif
+
+#include "badgevms/wifi.h"
+#include "curl/curl.h"
+#include <SDL3/SDL.h>
+#include <ctype.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>   /* for strncasecmp */
+
+/* --- Yield macro for BadgeVMS/ESP-IDF, no-op on desktop --- */
+#if defined(ESP_PLATFORM)
+# include "freertos/FreeRTOS.h"
+# include "freertos/task.h"
+# define YIELD_NET() vTaskDelay(pdMS_TO_TICKS(2))
+#else
+# define YIELD_NET() ((void)0)
+#endif
+
+/* ---------- Mini Browser version ---------- */
+#define MINI_BROWSER_VERSION "2.5"
+
+/* ---------- Limits & layout ---------- */
+#define MAX_BYTES     (64 * 1024)
+#define TIMEOUT_S     10
+#define URL_MAX       256
+#define PAD_LR        10
+#define PAD_TOP       34
+#define PAD_BOTTOM    10
+#define VIEW_W        716
+#define VIEW_H        716
+#define URLBAR_H      24
+#define LINE_SPACING  2
+#define MAX_LINKS     128
+#define MAX_ACTIONS   160
+#define MAX_FORMS       4
+#define MAX_FORM_FIELDS 8
+#define FORM_VALUE_MAX 128
+#define POST_BODY_MAX  2048
+
+/* Mini Browser 2.5 Phase 4 - bounded session cookie jar.
+ * Cookie storage and scratch buffers are static/global on purpose:
+ * BadgeVMS gives the application task a tight stack budget.
+ */
+#define MAX_COOKIES          12
+#define COOKIE_NAME_MAX      31
+#define COOKIE_VALUE_MAX     95
+#define COOKIE_DOMAIN_MAX    95
+#define COOKIE_PATH_MAX      95
+#define COOKIE_HEADER_MAX   768
+#define COOKIE_SET_MAX      384
+
+/* --- Scroll repeat constants for hold-to-scroll --- */
+#define SCROLL_REPEAT_DELAY_MS 300
+#define SCROLL_REPEAT_INTERVAL_MS 55
+
+/* --- Icon placement inside URL bar --- */
+#define ICON_LEFT   2
+#define ICON_TOP    2
+#define ICON_SIZE   20
+#define ICON_GAP    8                 /* gap between icon and URL text */
+#define URL_TEXT_X  (PAD_LR + ICON_SIZE + ICON_GAP)  /* start X for URL text */
+
+/* ---------- Home + special-key targets ---------- */
+#define HOME_URL          "https://minibrowser.macip.net"
+#define SPECIAL_URL_124   "https://text.npr.org"
+#define SPECIAL_URL_125   "https://news.ycombinator.com/"
+#define SPECIAL_URL_126   "http://www.textfiles.com/"
+#define SPECIAL_URL_127   "https://ifconfig.co"
+#define SPECIAL_URL_128   "https://ohmeadhbh.github.io/bobcat/"
+#define SPECIAL_URL_129   "https://curl.se/"
+
+/* ---------- Accelerator + special scancodes ---------- */
+#define SC_ACCELERATOR    ((SDL_Scancode)0xE3)  /* WHY2025 key */
+#define SC_SPECIAL_124    ((SDL_Scancode)0x124)
+#define SC_SPECIAL_125    ((SDL_Scancode)0x125)
+#define SC_SPECIAL_126    ((SDL_Scancode)0x126)
+#define SC_SPECIAL_127    ((SDL_Scancode)0x127)
+#define SC_SPECIAL_128    ((SDL_Scancode)0x128)
+#define SC_SPECIAL_129    ((SDL_Scancode)0x129)
+
+/* ---------- 5x7 bitmap font (ASCII 32..127) ---------- */
+static const unsigned char font5x7[96][5] = {
+/* SP */ {0,0,0,0,0},      {/*!*/0x00,0x00,0x5F,0x00,0x00},   {/*"*/0x00,0x07,0x00,0x07,0x00},
+/* #  */ {0x14,0x7F,0x14,0x7F,0x14},                           /* $ */ {0x24,0x2A,0x7F,0x2A,0x12},
+/* %  */ {0x23,0x13,0x08,0x64,0x62},                           /* & */ {0x36,0x49,0x55,0x22,0x50},
+/* '  */ {0x00,0x05,0x03,0x00,0x00},                           /* ( */ {0x00,0x1C,0x22,0x41,0x00},
+/* )  */ {0x00,0x41,0x22,0x1C,0x00},                           /* * */ {0x14,0x08,0x3E,0x08,0x14},
+/* +  */ {0x08,0x08,0x3E,0x08,0x08},                           /* , */ {0x00,0x50,0x30,0x00,0x00},
+/* -  */ {0x08,0x08,0x08,0x08,0x08},                           /* . */ {0x00,0x60,0x60,0x00,0x00},
+/* /  */ {0x20,0x10,0x08,0x04,0x02},                           /* 0 */ {0x3E,0x51,0x49,0x45,0x3E},
+/* 1  */ {0x00,0x42,0x7F,0x40,0x00},                           /* 2 */ {0x42,0x61,0x51,0x49,0x46},
+/* 3  */ {0x21,0x41,0x45,0x4B,0x31},                           /* 4 */ {0x18,0x14,0x12,0x7F,0x10},
+/* 5  */ {0x27,0x45,0x45,0x45,0x39},                           /* 6 */ {0x3C,0x4A,0x49,0x49,0x30},
+/* 7  */ {0x01,0x71,0x09,0x05,0x03},                           /* 8 */ {0x36,0x49,0x49,0x49,0x36},
+/* 9  */ {0x06,0x49,0x49,0x29,0x1E},                           /* : */ {0x00,0x36,0x36,0x00,0x00},
+/* ;  */ {0x00,0x56,0x36,0x00,0x00},                           /* < */ {0x08,0x14,0x22,0x41,0x00},
+/* =  */ {0x14,0x14,0x14,0x14,0x14},                           /* > */ {0x00,0x41,0x22,0x14,0x08},
+/* ?  */ {0x02,0x01,0x51,0x09,0x06},                           /* @ */ {0x32,0x49,0x79,0x41,0x3E},
+/* A  */ {0x7E,0x11,0x11,0x11,0x7E},                           /* B */ {0x7F,0x49,0x49,0x49,0x36},
+/* C  */ {0x3E,0x41,0x41,0x41,0x22},                           /* D */ {0x7F,0x41,0x41,0x22,0x1C},
+/* E  */ {0x7F,0x49,0x49,0x49,0x41},                           /* F */ {0x7F,0x09,0x09,0x09,0x01},
+/* G  */ {0x3E,0x41,0x49,0x49,0x7A},                           /* H */ {0x7F,0x08,0x08,0x08,0x7F},
+/* I  */ {0x00,0x41,0x7F,0x41,0x00},                           /* J */ {0x20,0x40,0x41,0x3F,0x01},
+/* K  */ {0x7F,0x08,0x14,0x22,0x41},                           /* L */ {0x7F,0x40,0x40,0x40,0x40},
+/* M  */ {0x7F,0x02,0x0C,0x02,0x7F},                           /* N */ {0x7F,0x04,0x08,0x10,0x7F},
+/* O  */ {0x3E,0x41,0x41,0x41,0x3E},                           /* P */ {0x7F,0x09,0x09,0x09,0x06},
+/* Q  */ {0x3E,0x41,0x51,0x21,0x5E},                           /* R */ {0x7F,0x09,0x19,0x29,0x46},
+/* S  */ {0x46,0x49,0x49,0x49,0x31},                           /* T */ {0x01,0x01,0x7F,0x01,0x01},
+/* U  */ {0x3F,0x40,0x40,0x40,0x3F},                           /* V */ {0x1F,0x20,0x40,0x20,0x1F},
+/* W  */ {0x7F,0x20,0x18,0x20,0x7F},                           /* X */ {0x63,0x14,0x08,0x14,0x63},
+/* Y  */ {0x07,0x08,0x70,0x08,0x07},                           /* Z */ {0x61,0x51,0x49,0x45,0x43},
+/* [  */ {0x00,0x7F,0x41,0x41,0x00},                           /* \ */ {0x02,0x04,0x08,0x10,0x20},
+/* ]  */ {0x00,0x41,0x41,0x7F,0x00},                           /* ^ */ {0x04,0x02,0x01,0x02,0x04},
+/* _  */ {0x40,0x40,0x40,0x40,0x40},                           /* ` */ {0x00,0x01,0x02,0x04,0x00},
+/* a  */ {0x20,0x54,0x54,0x54,0x78},                           /* b */ {0x7F,0x48,0x44,0x44,0x38},
+/* c  */ {0x38,0x44,0x44,0x44,0x20},                           /* d */ {0x38,0x44,0x44,0x48,0x7F},
+/* e  */ {0x38,0x54,0x54,0x54,0x18},                           /* f */ {0x08,0x7E,0x09,0x01,0x02},
+/* g  */ {0x0C,0x52,0x52,0x52,0x3E},                           /* h */ {0x7F,0x08,0x04,0x04,0x78},
+/* i  */ {0x00,0x44,0x7D,0x40,0x00},                           /* j */ {0x20,0x40,0x44,0x3D,0x00},
+/* k  */ {0x7F,0x10,0x28,0x44,0x00},                           /* l */ {0x00,0x41,0x7F,0x40,0x00},
+/* m  */ {0x7C,0x04,0x18,0x04,0x78},                           /* n */ {0x7C,0x08,0x04,0x04,0x78},
+/* o  */ {0x38,0x44,0x44,0x44,0x38},                           /* p */ {0x7C,0x14,0x14,0x14,0x08},
+/* q  */ {0x08,0x14,0x14,0x14,0x7C},                           /* r */ {0x7C,0x08,0x04,0x04,0x08},
+/* s  */ {0x48,0x54,0x54,0x54,0x20},                           /* t */ {0x04,0x3F,0x44,0x40,0x20},
+/* u  */ {0x3C,0x40,0x40,0x20,0x7C},                           /* v */ {0x1C,0x20,0x40,0x20,0x1C},
+/* w  */ {0x3C,0x40,0x30,0x40,0x3C},                           /* x */ {0x44,0x28,0x10,0x28,0x44},
+/* y  */ {0x0C,0x50,0x50,0x50,0x3C},                           /* z */ {0x44,0x64,0x54,0x4C,0x44},
+/* {  */ {0x00,0x08,0x36,0x41,0x00},                           /* | */ {0x00,0x00,0x7F,0x00,0x00},
+/* }  */ {0x00,0x41,0x36,0x08,0x00},                           /* ~ */ {0x08,0x04,0x08,0x10,0x08}
+};
+
+#define FONT_W_COLS 5
+#define FONT_H_ROWS 7
+#define FONT_COL_GAP 1
+#define FONT_SCALE  2
+#define CH_W ((FONT_W_COLS + FONT_COL_GAP) * FONT_SCALE)
+#define CH_H ((FONT_H_ROWS) * FONT_SCALE)
+
+/* External Unicode glyph geometry. Needed by wrapping and rendering. */
+#define UNICODE_GLYPH_BYTES 32
+#define UNICODE_GLYPH_W 16
+#define UNICODE_GLYPH_H 16
+
+/* --------- curl memory sink --------- */
+typedef struct { char *buf; size_t len; } mem_t;
+static size_t wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
+    size_t n = sz * nm, keep = n;
+    mem_t *m = (mem_t*)ud;
+    if (m->len >= MAX_BYTES) return n;
+    if (m->len + keep > MAX_BYTES) keep = MAX_BYTES - m->len;
+    char *p = (char*)realloc(m->buf, m->len + keep + 1);
+    if (!p) return 0;
+    m->buf = p;
+    memcpy(m->buf + m->len, ptr, keep);
+    m->len += keep;
+    m->buf[m->len] = 0;
+    return n;
+}
+
+/* ---------- link + page model ---------- */
+typedef struct {
+    char href[URL_MAX];
+} link_t;
+
+typedef struct {
+    char name[64];
+    char value[FORM_VALUE_MAX];
+    char label[64];
+    char type[16];
+    bool disabled;
+} form_field_t;
+
+typedef struct {
+    char action[URL_MAX];
+    char method[8];
+    char enctype[48];
+    form_field_t fields[MAX_FORM_FIELDS];
+    int field_count;
+} form_t;
+
+typedef enum {
+    ACTION_LINK,
+    ACTION_FORM_FIELD,
+    ACTION_FORM_SUBMIT
+} action_type_t;
+
+typedef struct {
+    action_type_t type;
+    int link_index;
+    int form_index;
+    int field_index;
+} page_action_t;
+
+typedef struct {
+    char *text;
+    char *text_template;
+    link_t links[MAX_LINKS];
+    int link_count;
+    page_action_t actions[MAX_ACTIONS];
+    int action_count;
+    char base[URL_MAX];         /* base URL for resolution */
+    char title[128];            /* page <title> */
+    form_t forms[MAX_FORMS];
+    int form_count;
+} page_t;
+
+/* ---------- URL helpers ---------- */
+static void get_scheme_host(const char *url, char *out, size_t cap) {
+    const char *p = strstr(url, "://");
+    if (!p) { out[0]=0; return; }
+    p += 3;
+    const char *slash = strchr(p, '/');
+    size_t n = slash ? (size_t)(slash - url) : strlen(url);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, url, n); out[n]=0;
+}
+static void get_dir(const char *url, char *out, size_t cap) {
+    const char *q = url;
+    const char *p = strrchr(q, '/');
+    if (!p) { out[0]=0; return; }
+    size_t n = (size_t)(p - q) + 1;
+    if (n >= cap) n = cap - 1;
+    memcpy(out, q, n); out[n]=0;
+}
+static void base_no_query_or_hash(const char *u, char *out, size_t cap) {
+    size_t n = strlen(u), cut = n;
+    for (size_t i=0;i<n;i++){ if (u[i]=='?' || u[i]=='#'){ cut=i; break; } }
+    if (cut >= cap) cut = cap-1;
+    memcpy(out, u, cut); out[cut]=0;
+}
+static void base_no_hash(const char *u, char *out, size_t cap) {
+    size_t n = strlen(u), cut = n;
+    for (size_t i=0;i<n;i++){ if (u[i]=='#'){ cut=i; break; } }
+    if (cut >= cap) cut = cap-1;
+    memcpy(out, u, cut); out[cut]=0;
+}
+static void scheme_from_url(const char *base, char *out, size_t cap) {
+    if (!base) { strncpy(out, "https", cap); out[cap-1]=0; return; }
+    const char *p = strstr(base, "://");
+    if (!p) { strncpy(out, "https", cap); out[cap-1]=0; return; }
+    size_t n = (size_t)(p - base);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, base, n); out[n]=0;
+}
+static void resolve_url(const char *base, const char *href, char *out, size_t cap) {
+    if (!href || !*href) { out[0]=0; return; }
+    if (!strncasecmp(href, "http://", 7) ||
+    !strncasecmp(href, "https://", 8)) {
+    strncpy(out, href, cap);
+    out[cap-1]=0;
+    return;
+}
+    if (href[0]=='/' && href[1]=='/') {
+        char sch[16]; scheme_from_url(base, sch, sizeof sch);
+        snprintf(out, cap, "%s:%s", sch, href); return;
+    }
+    if (href[0]=='/') {
+        char origin[URL_MAX]; get_scheme_host(base, origin, sizeof origin);
+        snprintf(out, cap, "%s%s", origin, href); return;
+    }
+    if (href[0]=='?') {
+        char base2[URL_MAX]; base_no_query_or_hash(base, base2, sizeof base2);
+        snprintf(out, cap, "%s%s", base2, href); return;
+    }
+    if (href[0]=='#') {
+        char base2[URL_MAX]; base_no_hash(base, base2, sizeof base2);
+        snprintf(out, cap, "%s%s", base2, href); return;
+    }
+    if (href[0]=='.' && href[1]=='/') href += 2;
+    char dir[URL_MAX]; get_dir(base, dir, sizeof dir);
+    snprintf(out, cap, "%s%s", dir, href);
+}
+
+/* --- URL sanitation --- */
+static void trim_inplace(char *s) {
+    if (!s) return;
+    size_t n = strlen(s);
+    size_t i = 0; while (i < n && isspace((unsigned char)s[i])) i++;
+    size_t j = n; while (j > i && isspace((unsigned char)s[j-1])) j--;
+    if (i > 0 || j < n) { memmove(s, s + i, j - i); s[j - i] = 0; }
+}
+static int has_scheme(const char *u) { return u && strstr(u, "://") != NULL; }
+static int is_http_scheme(const char *u) {
+    return u && (strncmp(u, "http://", 7)==0 || strncmp(u, "https://", 8)==0);
+}
+static void normalize_typed_url(char *buf) {
+    trim_inplace(buf);
+    if (!buf[0]) return;
+    if (!has_scheme(buf)) {
+        char tmp[URL_MAX]; strncpy(tmp, buf, URL_MAX); tmp[URL_MAX-1]=0;
+        snprintf(buf, URL_MAX, "https://%s", tmp);
+    }
+}
+
+/* ---------- HTML entity decode ---------- */
+
+typedef struct {
+    const char *name;
+    unsigned long codepoint;
+} html_entity_t;
+
+/*
+ * Deliberately bounded named-entity table.  These cover the common entities
+ * encountered by the Mini Browser without importing a full HTML5 entity
+ * database. Numeric decimal/hexadecimal references support all Unicode
+ * scalar values.
+ */
+static const html_entity_t g_html_entities[] = {
+    {"amp",    0x0026}, {"lt",     0x003C}, {"gt",     0x003E},
+    {"quot",   0x0022}, {"apos",   0x0027}, {"nbsp",   0x0020},
+    {"copy",   0x00A9}, {"reg",    0x00AE}, {"trade",  0x2122},
+    {"euro",   0x20AC}, {"cent",   0x00A2}, {"pound",  0x00A3},
+    {"yen",    0x00A5}, {"sect",   0x00A7}, {"para",   0x00B6},
+    {"deg",    0x00B0}, {"plusmn", 0x00B1}, {"times",  0x00D7},
+    {"divide", 0x00F7}, {"middot", 0x00B7}, {"bull",   0x2022},
+    {"hellip", 0x2026}, {"ndash",  0x2013}, {"mdash",  0x2014},
+    {"lsquo",  0x2018}, {"rsquo",  0x2019}, {"ldquo",  0x201C},
+    {"rdquo",  0x201D}, {"laquo",  0x00AB}, {"raquo",  0x00BB}
+};
+
+static unsigned long html_numeric_codepoint(unsigned long cp) {
+    /*
+     * HTML numeric character references do not map NUL, surrogate code
+     * points or values beyond Unicode to literal output. Use U+FFFD.
+     */
+    if (cp == 0 || cp > 0x10FFFFUL || (cp >= 0xD800UL && cp <= 0xDFFFUL))
+        return 0xFFFDUL;
+
+    /*
+     * HTML's legacy numeric-reference replacements for the C1 range.
+     * This makes common real-world references such as &#128; render as €.
+     */
+    static const unsigned short c1[32] = {
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+        0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178
+    };
+    if (cp >= 0x80UL && cp <= 0x9FUL)
+        return c1[cp - 0x80UL];
+
+    return cp;
+}
+
+static int emit_utf8_codepoint(unsigned long cp, char *out, size_t *o, size_t cap) {
+    cp = html_numeric_codepoint(cp);
+
+    if (cp <= 0x7F) {
+        if (*o + 1 > cap) return 0;
+        out[(*o)++] = (char)cp;
+    } else if (cp <= 0x7FF) {
+        if (*o + 2 > cap) return 0;
+        out[(*o)++] = (char)(0xC0 | (cp >> 6));
+        out[(*o)++] = (char)(0x80 | (cp & 0x3F));
+    } else if (cp <= 0xFFFF) {
+        if (*o + 3 > cap) return 0;
+        out[(*o)++] = (char)(0xE0 | (cp >> 12));
+        out[(*o)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[(*o)++] = (char)(0x80 | (cp & 0x3F));
+    } else {
+        if (*o + 4 > cap) return 0;
+        out[(*o)++] = (char)(0xF0 | (cp >> 18));
+        out[(*o)++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[(*o)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[(*o)++] = (char)(0x80 | (cp & 0x3F));
+    }
+    return 1;
+}
+
+static const char *emit_named_entity(const char *h, char *out, size_t *o, size_t cap) {
+    if (!h || *h != '&') return NULL;
+
+    const char *p = h + 1;
+    const char *semi = strchr(p, ';');
+    if (!semi) return NULL;
+
+    size_t name_len = (size_t)(semi - p);
+    if (!name_len || name_len > 12) return NULL;
+
+    for (size_t i = 0; i < sizeof(g_html_entities) / sizeof(g_html_entities[0]); i++) {
+        const char *name = g_html_entities[i].name;
+        if (strlen(name) == name_len && !strncmp(p, name, name_len)) {
+            if (!emit_utf8_codepoint(g_html_entities[i].codepoint, out, o, cap))
+                return NULL;
+            return semi + 1;
+        }
+    }
+    return NULL;
+}
+
+static const char *emit_numeric_entity(const char *h, char *out, size_t *o, size_t cap) {
+    if (!h || h[0] != '&' || h[1] != '#') return NULL;
+
+    int base = 10;
+    const char *p = h + 2;
+    if (*p == 'x' || *p == 'X') {
+        base = 16;
+        p++;
+    }
+
+    unsigned long value = 0;
+    const char *digits = p;
+
+    while (*p && *p != ';') {
+        int digit;
+        if (*p >= '0' && *p <= '9') digit = *p - '0';
+        else if (base == 16 && *p >= 'a' && *p <= 'f') digit = 10 + *p - 'a';
+        else if (base == 16 && *p >= 'A' && *p <= 'F') digit = 10 + *p - 'A';
+        else return NULL;
+
+        if (digit >= base ||
+            value > (ULONG_MAX - (unsigned long)digit) / (unsigned long)base)
+            return NULL;
+
+        value = value * (unsigned long)base + (unsigned long)digit;
+        p++;
+    }
+
+    if (p == digits || *p != ';') return NULL;
+    if (!emit_utf8_codepoint(value, out, o, cap)) return NULL;
+    return p + 1;
+}
+
+static const char *emit_html_entity(const char *h, char *out, size_t *o, size_t cap) {
+    if (!h || *h != '&') return NULL;
+    if (h[1] == '#') return emit_numeric_entity(h, out, o, cap);
+    return emit_named_entity(h, out, o, cap);
+}
+
+/*
+ * Decode entities in a bounded string. Unknown/malformed entities are copied
+ * literally. src and dst must not overlap.
+ */
+static void decode_html_entities(const char *src, char *dst, size_t dst_cap) {
+    if (!dst || !dst_cap) return;
+    dst[0] = 0;
+    if (!src) return;
+
+    size_t used = 0;
+    const char *p = src;
+
+    while (*p && used + 1 < dst_cap) {
+        if (*p == '&') {
+            const char *next = emit_html_entity(p, dst, &used, dst_cap - 1);
+            if (next) {
+                p = next;
+                continue;
+            }
+        }
+        dst[used++] = *p++;
+    }
+    dst[used] = 0;
+}
+
+/* --------- href filter --------- */
+static int is_supported_href(const char *h) {
+    if (!h || !*h || h[0] == '#') return 0;
+    if (!strncasecmp(h, "javascript:", 11)) return 0;
+    if (!strncasecmp(h, "mailto:", 7)) return 0;
+    if (!strncasecmp(h, "data:", 5)) return 0;
+    return 1;
+}
+
+static const char *find_case_insensitive(const char *haystack, const char *needle) {
+    if (!haystack || !needle || !*needle) return haystack;
+    size_t needle_len = strlen(needle);
+    for (const char *p = haystack; *p; p++) {
+        if (!strncasecmp(p, needle, needle_len)) return p;
+    }
+    return NULL;
+}
+
+static const char *find_tag_end(const char *start, const char *end) {
+    char quote = 0;
+    for (const char *p = start; p < end; p++) {
+        if (quote) {
+            if (*p == quote) quote = 0;
+        } else if (*p == '"' || *p == '\'') {
+            quote = *p;
+        } else if (*p == '>') {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+static int tag_attribute(const char *start, const char *end, const char *wanted,
+                         char *out, size_t out_cap) {
+    const char *p = start;
+    size_t wanted_len = strlen(wanted);
+
+    while (p < end) {
+        while (p < end && (isspace((unsigned char)*p) || *p == '/')) p++;
+        const char *name = p;
+        while (p < end && (isalnum((unsigned char)*p) || *p == '-' || *p == '_')) p++;
+        size_t name_len = (size_t)(p - name);
+        if (!name_len) { p++; continue; }
+        while (p < end && isspace((unsigned char)*p)) p++;
+
+        const char *value = NULL;
+        size_t value_len = 0;
+        if (p < end && *p == '=') {
+            p++;
+            while (p < end && isspace((unsigned char)*p)) p++;
+            if (p < end && (*p == '"' || *p == '\'')) {
+                char quote = *p++;
+                value = p;
+                while (p < end && *p != quote) p++;
+                value_len = (size_t)(p - value);
+                if (p < end) p++;
+            } else {
+                value = p;
+                while (p < end && !isspace((unsigned char)*p) && *p != '>') p++;
+                value_len = (size_t)(p - value);
+            }
+        }
+
+        if (name_len == wanted_len && !strncasecmp(name, wanted, wanted_len)) {
+            if (out && out_cap && value) {
+                char raw[URL_MAX];
+                size_t copy_len = value_len;
+                if (copy_len >= sizeof(raw)) copy_len = sizeof(raw) - 1;
+                memcpy(raw, value, copy_len);
+                raw[copy_len] = 0;
+                decode_html_entities(raw, out, out_cap);
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void lower_ascii(char *s) {
+    for (; s && *s; s++) *s = (char)tolower((unsigned char)*s);
+}
+
+static int append_bytes(char *out, size_t cap, size_t *used, const char *text, size_t len) {
+    if (*used + len >= cap) return 0;
+    memcpy(out + *used, text, len);
+    *used += len;
+    out[*used] = 0;
+    return 1;
+}
+
+static int append_text(char *out, size_t cap, size_t *used, const char *text) {
+    return append_bytes(out, cap, used, text, strlen(text));
+}
+
+static void append_line_break(char *out, size_t cap, size_t *used) {
+    if (*used && out[*used - 1] != '\n') append_text(out, cap, used, "\n");
+}
+
+static int append_action_marker(char *out, size_t cap, size_t *used, int action_index) {
+    char marker[8];
+    int n = snprintf(marker, sizeof(marker), "\001%03d\002", action_index);
+    return n > 0 && (size_t)n < sizeof(marker) && append_bytes(out, cap, used, marker, (size_t)n);
+}
+
+static int add_action(page_t *page, action_type_t type, int link_index,
+                      int form_index, int field_index) {
+    if (page->action_count >= MAX_ACTIONS) return -1;
+    int index = page->action_count++;
+    page->actions[index].type = type;
+    page->actions[index].link_index = link_index;
+    page->actions[index].form_index = form_index;
+    page->actions[index].field_index = field_index;
+    return index;
+}
+
+static int refresh_page_text(page_t *page) {
+    if (!page || !page->text_template) return 0;
+    size_t cap = strlen(page->text_template) +
+                 (size_t)page->action_count * (FORM_VALUE_MAX + 96) + 1;
+    char *rendered = (char*)malloc(cap);
+    if (!rendered) return 0;
+
+    size_t used = 0;
+    const char *p = page->text_template;
+    while (*p) {
+        if ((unsigned char)p[0] == 1 && isdigit((unsigned char)p[1]) &&
+            isdigit((unsigned char)p[2]) && isdigit((unsigned char)p[3]) &&
+            (unsigned char)p[4] == 2) {
+            int action_index = (p[1] - '0') * 100 + (p[2] - '0') * 10 + (p[3] - '0');
+            if (action_index >= 0 && action_index < page->action_count) {
+                const page_action_t *action = &page->actions[action_index];
+                char line[FORM_VALUE_MAX + 96];
+                line[0] = 0;
+                if (action->type == ACTION_FORM_FIELD &&
+                    action->form_index >= 0 && action->form_index < page->form_count) {
+                    const form_t *form = &page->forms[action->form_index];
+                    if (action->field_index >= 0 && action->field_index < form->field_count) {
+                        const form_field_t *field = &form->fields[action->field_index];
+                        snprintf(line, sizeof(line), "[%d] %s: %s\n",
+                                 action_index + 1, field->name, field->value);
+                    }
+                } else if (action->type == ACTION_FORM_SUBMIT &&
+                           action->form_index >= 0 && action->form_index < page->form_count) {
+                    const form_t *form = &page->forms[action->form_index];
+                    if (action->field_index >= 0 && action->field_index < form->field_count) {
+                        const form_field_t *field = &form->fields[action->field_index];
+                        snprintf(line, sizeof(line), "[%d] [%s]\n",
+                                 action_index + 1, field->label[0] ? field->label : "Submit");
+                    }
+                }
+                if (!append_text(rendered, cap, &used, line)) { free(rendered); return 0; }
+            }
+            p += 5;
+            continue;
+        }
+        if (!append_bytes(rendered, cap, &used, p, 1)) { free(rendered); return 0; }
+        p++;
+    }
+
+    free(page->text);
+    page->text = rendered;
+    return 1;
+}
+
+static void extract_html_title(const char *html, char *out, size_t cap) {
+    if (!out || !cap) return;
+    out[0] = 0;
+    if (!html) return;
+    const char *start = find_case_insensitive(html, "<title");
+    if (!start || !(start = strchr(start, '>'))) return;
+    start++;
+    const char *end = find_case_insensitive(start, "</title>");
+    if (!end) return;
+    size_t n = (size_t)(end - start);
+    if (n >= cap) n = cap - 1;
+    char raw[256];
+    if (n >= sizeof(raw)) n = sizeof(raw) - 1;
+    memcpy(raw, start, n);
+    raw[n] = 0;
+    decode_html_entities(raw, out, cap);
+    trim_inplace(out);
+}
+
+static void extract_button_label(const char *start, const char *end, char *out, size_t cap) {
+    size_t used = 0;
+    bool spacing = false;
+    if (!cap) return;
+    for (const char *p = start; p < end && used + 1 < cap; p++) {
+        if (*p == '<') {
+            const char *tag_end = find_tag_end(p + 1, end);
+            if (!tag_end) break;
+            p = tag_end;
+        } else if (isspace((unsigned char)*p)) {
+            spacing = used > 0;
+        } else {
+            if (spacing && used + 1 < cap) out[used++] = ' ';
+            spacing = false;
+            out[used++] = *p;
+        }
+    }
+    out[used] = 0;
+    trim_inplace(out);
+
+    if (strchr(out, '&')) {
+        char raw[256];
+        strncpy(raw, out, sizeof(raw));
+        raw[sizeof(raw) - 1] = 0;
+        decode_html_entities(raw, out, cap);
+    }
+}
+
+/*
+ * Internal text-formatting markers.
+ * Must be defined before html_to_page(), because the HTML parser emits them.
+ * They are preserved by wrap_text() and consumed by draw_text().
+ */
+#define TEXT_BOLD_ON  0x01
+#define TEXT_BOLD_OFF 0x02
+
+static page_t *html_to_page(const char *html, const char *base_url) {
+    if (!html) return NULL;
+    size_t length = strlen(html);
+    size_t template_cap = length + (size_t)MAX_ACTIONS * 8 + 1;
+    char *template_text = (char*)calloc(1, template_cap);
+    page_t *page = (page_t*)calloc(1, sizeof(page_t));
+    if (!template_text || !page) { free(template_text); free(page); return NULL; }
+
+    strncpy(page->base, base_url ? base_url : "", URL_MAX);
+    page->base[URL_MAX - 1] = 0;
+    extract_html_title(html, page->title, sizeof(page->title));
+
+    const char *html_end = html + length;
+    size_t used = 0;
+    bool in_head = false, in_script = false, in_style = false, in_pre = false;
+    int current_form = -1;
+    int ordered_depth = 0, ordered_item = 0;
+
+    for (const char *cursor = html; cursor < html_end && *cursor; ) {
+        if (*cursor != '<') {
+            if (!in_head && !in_script && !in_style) {
+                if (*cursor == '&') {
+                    const char *next = emit_html_entity(cursor, template_text, &used, template_cap - 1);
+                    if (next) { cursor = next; continue; }
+                }
+                if (in_pre) {
+                    if (*cursor != '\r') append_bytes(template_text, template_cap, &used, cursor, 1);
+                } else if (isspace((unsigned char)*cursor)) {
+                    if (used && template_text[used - 1] != ' ' && template_text[used - 1] != '\n')
+                        append_text(template_text, template_cap, &used, " ");
+                } else {
+                    append_bytes(template_text, template_cap, &used, cursor, 1);
+                }
+            }
+            cursor++;
+            continue;
+        }
+
+        if (cursor + 4 <= html_end && !strncmp(cursor, "<!--", 4)) {
+            const char *comment_end = strstr(cursor + 4, "-->");
+            cursor = comment_end ? comment_end + 3 : html_end;
+            continue;
+        }
+        if (cursor + 1 < html_end && (cursor[1] == '!' || cursor[1] == '?')) {
+            const char *tag_end = find_tag_end(cursor + 2, html_end);
+            cursor = tag_end ? tag_end + 1 : html_end;
+            continue;
+        }
+
+        const char *p = cursor + 1;
+        bool closing = false;
+        if (p < html_end && *p == '/') { closing = true; p++; }
+        while (p < html_end && isspace((unsigned char)*p)) p++;
+        char tag[16]; size_t tag_len = 0;
+        while (p < html_end && tag_len + 1 < sizeof(tag) && isalpha((unsigned char)*p))
+            tag[tag_len++] = (char)tolower((unsigned char)*p++);
+        tag[tag_len] = 0;
+        const char *attributes = p;
+        const char *tag_end = find_tag_end(attributes, html_end);
+        if (!tag_end) break;
+        const char *after_tag = tag_end + 1;
+
+        if (closing) {
+            if (!strcmp(tag, "head")) in_head = false;
+            else if (!strcmp(tag, "script")) in_script = false;
+            else if (!strcmp(tag, "style")) in_style = false;
+            else if (!strcmp(tag, "form")) { current_form = -1; append_line_break(template_text, template_cap, &used); }
+            else if (!strcmp(tag, "pre")) { in_pre = false; append_line_break(template_text, template_cap, &used); }
+            else if (!strcmp(tag, "ol")) { if (ordered_depth > 0) ordered_depth--; }
+            else if (!strcmp(tag, "code")) append_text(template_text, template_cap, &used, "`");
+            else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) {
+                char marker[2] = { TEXT_BOLD_OFF, 0 };
+                append_text(template_text, template_cap, &used, marker);
+            }
+            else if (!strcmp(tag, "em") || !strcmp(tag, "i")) append_text(template_text, template_cap, &used, "_");
+            else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                     !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                     !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                     !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
+                     !strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                     !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6") ||
+                     !strcmp(tag, "tr") || !strcmp(tag, "table"))
+                append_line_break(template_text, template_cap, &used);
+            cursor = after_tag;
+            continue;
+        }
+
+        if (!strcmp(tag, "head")) in_head = true;
+        else if (!strcmp(tag, "script")) in_script = true;
+        else if (!strcmp(tag, "style")) in_style = true;
+        else if (!strcmp(tag, "pre")) { append_line_break(template_text, template_cap, &used); in_pre = true; }
+        else if (!strcmp(tag, "br")) append_line_break(template_text, template_cap, &used);
+        else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                 !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                 !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                 !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "tr"))
+            append_line_break(template_text, template_cap, &used);
+        else if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                 !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
+            append_line_break(template_text, template_cap, &used);
+            append_text(template_text, template_cap, &used, "= ");
+        } else if (!strcmp(tag, "ul")) {
+            ordered_depth = 0;
+        } else if (!strcmp(tag, "ol")) {
+            ordered_depth++;
+            ordered_item = 0;
+        } else if (!strcmp(tag, "li")) {
+            append_line_break(template_text, template_cap, &used);
+            if (ordered_depth) {
+                char number[16];
+                snprintf(number, sizeof(number), "%d. ", ++ordered_item);
+                append_text(template_text, template_cap, &used, number);
+            } else append_text(template_text, template_cap, &used, "* ");
+        } else if (!strcmp(tag, "code")) append_text(template_text, template_cap, &used, "`");
+        else if (!strcmp(tag, "strong") || !strcmp(tag, "b")) {
+            char marker[2] = { TEXT_BOLD_ON, 0 };
+            append_text(template_text, template_cap, &used, marker);
+        }
+        else if (!strcmp(tag, "em") || !strcmp(tag, "i")) append_text(template_text, template_cap, &used, "_");
+        else if (!strcmp(tag, "hr")) {
+            append_line_break(template_text, template_cap, &used);
+            append_text(template_text, template_cap, &used, "--------------------------------\n");
+        } else if (!strcmp(tag, "td") || !strcmp(tag, "th")) {
+            if (used && template_text[used - 1] != '\n' && template_text[used - 1] != ' ')
+                append_text(template_text, template_cap, &used, " | ");
+        } else if (!strcmp(tag, "form")) {
+            append_line_break(template_text, template_cap, &used);
+            if (page->form_count < MAX_FORMS) {
+                current_form = page->form_count++;
+                form_t *form = &page->forms[current_form];
+                memset(form, 0, sizeof(*form));
+                strncpy(form->method, "get", sizeof(form->method));
+                strncpy(form->enctype, "application/x-www-form-urlencoded",
+                        sizeof(form->enctype));
+                tag_attribute(attributes, tag_end, "action", form->action, sizeof(form->action));
+                if (tag_attribute(attributes, tag_end, "method", form->method, sizeof(form->method)))
+                    lower_ascii(form->method);
+                if (tag_attribute(attributes, tag_end, "enctype", form->enctype, sizeof(form->enctype)))
+                    lower_ascii(form->enctype);
+            } else current_form = -1;
+        } else if (!strcmp(tag, "input") && current_form >= 0) {
+            form_t *form = &page->forms[current_form];
+            if (form->field_count < MAX_FORM_FIELDS) {
+                form_field_t field;
+                memset(&field, 0, sizeof(field));
+                strncpy(field.type, "text", sizeof(field.type));
+                tag_attribute(attributes, tag_end, "name", field.name, sizeof(field.name));
+                tag_attribute(attributes, tag_end, "value", field.value, sizeof(field.value));
+                if (tag_attribute(attributes, tag_end, "type", field.type, sizeof(field.type))) lower_ascii(field.type);
+                field.disabled = tag_attribute(attributes, tag_end, "disabled", NULL, 0);
+
+                bool editable = !strcmp(field.type, "text") || !strcmp(field.type, "search") || !strcmp(field.type, "url");
+                bool hidden = !strcmp(field.type, "hidden");
+                bool submit = !strcmp(field.type, "submit");
+                if ((editable && field.name[0]) || (hidden && field.name[0]) || submit) {
+                    int field_index = form->field_count++;
+                    form->fields[field_index] = field;
+                    if (submit) {
+                        strncpy(form->fields[field_index].label,
+                                field.value[0] ? field.value : "Submit",
+                                sizeof(form->fields[field_index].label));
+                        if (!field.disabled) {
+                            int action = add_action(page, ACTION_FORM_SUBMIT, -1, current_form, field_index);
+                            if (action >= 0) append_action_marker(template_text, template_cap, &used, action);
+                        }
+                    } else if (editable && !field.disabled) {
+                        int action = add_action(page, ACTION_FORM_FIELD, -1, current_form, field_index);
+                        if (action >= 0) append_action_marker(template_text, template_cap, &used, action);
+                    }
+                }
+            }
+        } else if (!strcmp(tag, "button") && current_form >= 0) {
+            form_t *form = &page->forms[current_form];
+            char type[16] = "submit";
+            tag_attribute(attributes, tag_end, "type", type, sizeof(type));
+            lower_ascii(type);
+            const char *close = find_case_insensitive(after_tag, "</button>");
+            if (!strcmp(type, "submit") && form->field_count < MAX_FORM_FIELDS) {
+                int field_index = form->field_count++;
+                form_field_t *field = &form->fields[field_index];
+                memset(field, 0, sizeof(*field));
+                strncpy(field->type, "submit", sizeof(field->type));
+                tag_attribute(attributes, tag_end, "name", field->name, sizeof(field->name));
+                tag_attribute(attributes, tag_end, "value", field->value, sizeof(field->value));
+                field->disabled = tag_attribute(attributes, tag_end, "disabled", NULL, 0);
+                if (close) extract_button_label(after_tag, close, field->label, sizeof(field->label));
+                if (!field->label[0]) strncpy(field->label, field->value[0] ? field->value : "Submit", sizeof(field->label));
+                if (!field->disabled) {
+                    int action = add_action(page, ACTION_FORM_SUBMIT, -1, current_form, field_index);
+                    if (action >= 0) append_action_marker(template_text, template_cap, &used, action);
+                }
+            }
+            if (close) {
+                const char *close_end = strchr(close, '>');
+                cursor = close_end ? close_end + 1 : html_end;
+                continue;
+            }
+        } else if (!strcmp(tag, "a")) {
+            char href[URL_MAX] = "";
+            if (tag_attribute(attributes, tag_end, "href", href, sizeof(href)) &&
+                is_supported_href(href) && page->link_count < MAX_LINKS) {
+                char absolute[URL_MAX];
+                resolve_url(page->base, href, absolute, sizeof(absolute));
+                if (is_supported_href(absolute)) {
+                    int link_index = page->link_count++;
+                    strncpy(page->links[link_index].href, absolute, URL_MAX);
+                    page->links[link_index].href[URL_MAX - 1] = 0;
+                    int action = add_action(page, ACTION_LINK, link_index, -1, -1);
+                    if (action >= 0) {
+                        char number[16];
+                        snprintf(number, sizeof(number), "[%d]", action + 1);
+                        append_text(template_text, template_cap, &used, number);
+                    }
+                }
+            }
+        }
+
+        cursor = after_tag;
+    }
+
+    template_text[used] = 0;
+    page->text_template = template_text;
+    if (!refresh_page_text(page)) {
+        free(page->text_template);
+        free(page);
+        return NULL;
+    }
+    return page;
+}
+
+static int form_urlencode(const char *src, char *out, size_t out_cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t used = 0;
+    if (!out_cap) return 0;
+    for (size_t i = 0; src && src[i]; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            if (used + 1 >= out_cap) return 0;
+            out[used++] = (char)c;
+        } else if (c == ' ') {
+            if (used + 1 >= out_cap) return 0;
+            out[used++] = '+';
+        } else {
+            if (used + 3 >= out_cap) return 0;
+            out[used++] = '%';
+            out[used++] = hex[c >> 4];
+            out[used++] = hex[c & 15];
+        }
+    }
+    out[used] = 0;
+    return 1;
+}
+
+static int append_url_part(char *out, size_t out_cap, const char *part) {
+    size_t used = strlen(out), len = strlen(part);
+    if (used + len >= out_cap) return 0;
+    memcpy(out + used, part, len + 1);
+    return 1;
+}
+
+static int build_get_form_url(const page_t *page, int form_index,
+                              int submit_field_index, char *out, size_t out_cap) {
+    if (!page || form_index < 0 || form_index >= page->form_count || !out_cap) return 0;
+    const form_t *form = &page->forms[form_index];
+    const char *method = form->method[0] ? form->method : "get";
+    if (strcasecmp(method, "get")) return -1;
+
+    if (form->action[0]) resolve_url(page->base, form->action, out, out_cap);
+    else { strncpy(out, page->base, out_cap); out[out_cap - 1] = 0; }
+    char *hash = strchr(out, '#');
+    if (hash) *hash = 0;
+
+    bool has_query = strchr(out, '?') != NULL;
+    bool first_parameter = true;
+    for (int i = 0; i < form->field_count; i++) {
+        const form_field_t *field = &form->fields[i];
+        if (field->disabled || !field->name[0]) continue;
+        bool submit = !strcmp(field->type, "submit");
+        bool successful = !strcmp(field->type, "text") || !strcmp(field->type, "search") ||
+                          !strcmp(field->type, "url") || !strcmp(field->type, "hidden") ||
+                          (submit && i == submit_field_index);
+        if (!successful) continue;
+
+        char encoded_name[sizeof(field->name) * 3 + 1];
+        char encoded_value[sizeof(field->value) * 3 + 1];
+        if (!form_urlencode(field->name, encoded_name, sizeof(encoded_name)) ||
+            !form_urlencode(field->value, encoded_value, sizeof(encoded_value))) return 0;
+
+        size_t current_len = strlen(out);
+        char separator[2] = {0, 0};
+        if (first_parameter) {
+            if (!current_len || (out[current_len - 1] != '?' && out[current_len - 1] != '&'))
+                separator[0] = has_query ? '&' : '?';
+        } else if (current_len && out[current_len - 1] != '?' && out[current_len - 1] != '&') {
+            separator[0] = '&';
+        }
+        if (!append_url_part(out, out_cap, separator) ||
+            !append_url_part(out, out_cap, encoded_name) ||
+            !append_url_part(out, out_cap, "=") ||
+            !append_url_part(out, out_cap, encoded_value)) return 0;
+        first_parameter = false;
+        has_query = true;
+    }
+    return 1;
+}
+
+static int build_post_form_request(const page_t *page, int form_index,
+                                   int submit_field_index,
+                                   char *url, size_t url_cap,
+                                   char *body, size_t body_cap) {
+    if (!page || form_index < 0 || form_index >= page->form_count ||
+        !url_cap || !body_cap) return 0;
+
+    const form_t *form = &page->forms[form_index];
+    const char *method = form->method[0] ? form->method : "get";
+    const char *enctype = form->enctype[0]
+        ? form->enctype
+        : "application/x-www-form-urlencoded";
+
+    if (strcasecmp(method, "post")) return -1;
+    if (strcasecmp(enctype, "application/x-www-form-urlencoded")) return -2;
+
+    if (form->action[0]) resolve_url(page->base, form->action, url, url_cap);
+    else { strncpy(url, page->base, url_cap); url[url_cap - 1] = 0; }
+
+    char *hash = strchr(url, '#');
+    if (hash) *hash = 0;
+
+    body[0] = 0;
+    bool first_parameter = true;
+
+    for (int i = 0; i < form->field_count; i++) {
+        const form_field_t *field = &form->fields[i];
+        if (field->disabled || !field->name[0]) continue;
+
+        bool submit = !strcmp(field->type, "submit");
+        bool successful = !strcmp(field->type, "text") ||
+                          !strcmp(field->type, "search") ||
+                          !strcmp(field->type, "url") ||
+                          !strcmp(field->type, "hidden") ||
+                          (submit && i == submit_field_index);
+        if (!successful) continue;
+
+        char encoded_name[sizeof(field->name) * 3 + 1];
+        char encoded_value[sizeof(field->value) * 3 + 1];
+        if (!form_urlencode(field->name, encoded_name, sizeof(encoded_name)) ||
+            !form_urlencode(field->value, encoded_value, sizeof(encoded_value)))
+            return 0;
+
+        if (!first_parameter && !append_url_part(body, body_cap, "&")) return 0;
+        if (!append_url_part(body, body_cap, encoded_name) ||
+            !append_url_part(body, body_cap, "=") ||
+            !append_url_part(body, body_cap, encoded_value))
+            return 0;
+
+        first_parameter = false;
+    }
+
+    return 1;
+}
+
+typedef enum {
+    ACTIVATE_NONE,
+    ACTIVATE_NAVIGATE,
+    ACTIVATE_EDIT_FIELD,
+    ACTIVATE_POST,
+    ACTIVATE_FORM_UNSUPPORTED,
+    ACTIVATE_URL_TOO_LONG
+} activate_result_t;
+
+static activate_result_t activate_page_action(
+    page_t *page, int action_index, char *navigation_url, size_t navigation_cap,
+    int *edit_form, int *edit_field, char *edit_buf, size_t edit_cap,
+    size_t *edit_cursor, char *post_body, size_t post_body_cap) {
+    if (!page || action_index < 0 || action_index >= page->action_count)
+        return ACTIVATE_NONE;
+
+    const page_action_t *action = &page->actions[action_index];
+        if (action->type == ACTION_LINK) {
+    if (action->link_index < 0 || action->link_index >= page->link_count)
+        return ACTIVATE_NONE;
+
+    const char *href = page->links[action->link_index].href;
+
+    printf("[mini_browser] activating link %d -> %s\n",
+       action_index + 1,
+       href);
+
+           printf("[mini_browser] activating link %d -> %s\n",
+           action_index + 1,
+           href);
+
+    /* Google search-result redirect wrapper:
+     *   http(s)://www.google.com/url?q=https://example.com/&amp;sa=...
+     * Navigate directly to the q= destination.
+     */
+    const char *google_http  = "http://www.google.com/url?q=";
+    const char *google_https = "https://www.google.com/url?q=";
+    const char *dest = NULL;
+
+    if (!strncmp(href, google_http, strlen(google_http)))
+        dest = href + strlen(google_http);
+    else if (!strncmp(href, google_https, strlen(google_https)))
+        dest = href + strlen(google_https);
+
+    if (dest) {
+        size_t len = strlen(dest);
+
+        const char *end = strstr(dest, "&amp;");
+        if (!end)
+            end = strchr(dest, '&');
+
+        if (end)
+            len = (size_t)(end - dest);
+
+        if (len >= navigation_cap)
+            len = navigation_cap - 1;
+
+        memcpy(navigation_url, dest, len);
+        navigation_url[len] = 0;
+
+        printf("[mini_browser] Google direct -> %s\n", navigation_url);
+} else {
+    strncpy(navigation_url, href, navigation_cap);
+    navigation_url[navigation_cap - 1] = 0;
+
+    /*
+     * Google search links contain HTML-escaped query separators:
+     *   &amp;
+     * Decode these only for Google /search URLs before navigation.
+     */
+    if (!strncmp(navigation_url, "http://www.google.com/search?", 29) ||
+        !strncmp(navigation_url, "https://www.google.com/search?", 30)) {
+        char *p;
+
+        while ((p = strstr(navigation_url, "&amp;")) != NULL) {
+            *p = '&';
+            memmove(p + 1, p + 5, strlen(p + 5) + 1);
+        }
+
+        printf("[mini_browser] Google search URL -> %s\n", navigation_url);
+    }
+}
+
+return ACTIVATE_NAVIGATE;
+
+
+
+ 
+    }
+
+    if (action->form_index < 0 || action->form_index >= page->form_count)
+        return ACTIVATE_NONE;
+    form_t *form = &page->forms[action->form_index];
+    if (action->field_index < 0 || action->field_index >= form->field_count)
+        return ACTIVATE_NONE;
+
+    if (action->type == ACTION_FORM_FIELD) {
+        form_field_t *field = &form->fields[action->field_index];
+        strncpy(edit_buf, field->value, edit_cap);
+        edit_buf[edit_cap - 1] = 0;
+        *edit_cursor = strlen(edit_buf);
+        *edit_form = action->form_index;
+        *edit_field = action->field_index;
+        return ACTIVATE_EDIT_FIELD;
+    }
+
+    if (action->type == ACTION_FORM_SUBMIT) {
+        const char *method = form->method[0] ? form->method : "get";
+
+        if (!strcasecmp(method, "post")) {
+            int result = build_post_form_request(page, action->form_index,
+                                                 action->field_index,
+                                                 navigation_url, navigation_cap,
+                                                 post_body, post_body_cap);
+            if (result == -2) return ACTIVATE_FORM_UNSUPPORTED;
+            if (result < 0) return ACTIVATE_FORM_UNSUPPORTED;
+            if (!result) return ACTIVATE_URL_TOO_LONG;
+            return ACTIVATE_POST;
+        }
+
+        int result = build_get_form_url(page, action->form_index,
+                                        action->field_index,
+                                        navigation_url, navigation_cap);
+        if (result < 0) return ACTIVATE_FORM_UNSUPPORTED;
+        if (!result) return ACTIVATE_URL_TOO_LONG;
+        return ACTIVATE_NAVIGATE;
+    }
+    return ACTIVATE_NONE;
+}
+
+static void free_page(page_t *page) {
+    if (!page) return;
+    free(page->text);
+    free(page->text_template);
+    free(page);
+}
+
+/* ---------- UTF-8 decoder forward declaration ---------- */
+static unsigned utf8_next(const char *s, size_t len, size_t *i);
+
+/* ---------- wrap text to columns ---------- */
+
+
+static int wrap_glyph_width(unsigned cp) {
+    if (cp == TEXT_BOLD_ON || cp == TEXT_BOLD_OFF)
+        return 0;
+
+    if (cp >= 32 && cp <= 126)
+        return CH_W;
+
+    if (cp >= 0x80 && cp <= 0x10FFFF)
+        return UNICODE_GLYPH_W + 1;
+
+    return 0;
+}
+
+static int wrap_token_width(const char *s, size_t start, size_t end) {
+    int width = 0;
+    size_t i = start;
+
+    while (i < end) {
+        unsigned cp = utf8_next(s, end, &i);
+        if (cp == 0)
+            break;
+        width += wrap_glyph_width(cp);
+    }
+
+    return width;
+}
+
+static char *wrap_text(const char *in, int max_cols) {
+    if (!in) return NULL;
+
+    size_t n = strlen(in);
+
+    /*
+     * Word-aware wrapping can replace a space with a newline and can also
+     * add newlines inside an overlong token. 2*n + 8 remains a generous
+     * upper bound while keeping the allocation small on the badge.
+     */
+    char *out = (char*)malloc(n * 2 + 8);
+    if (!out) return NULL;
+
+    /*
+     * Keep the existing caller interface, but make every decision in pixels
+     * using exactly the same advances as draw_text().
+     */
+    const int max_px = max_cols > 0 ? max_cols * CH_W : 0;
+    const int space_w = CH_W;
+
+    size_t i = 0;
+    size_t o = 0;
+    int line_px = 0;
+    int blank_run = 0;
+    bool pending_space = false;
+
+    while (i < n) {
+        size_t cp_start = i;
+        unsigned cp = utf8_next(in, n, &i);
+
+        if (cp == 0)
+            break;
+
+        if (cp == '\r')
+            continue;
+
+        /* Treat NBSP as the same break opportunity as an ordinary space. */
+        if (cp == ' ' || cp == 0xA0) {
+            if (line_px > 0)
+                pending_space = true;
+            continue;
+        }
+
+        if (cp == '\n') {
+            pending_space = false;
+
+            if (line_px == 0) {
+                if (blank_run)
+                    continue;
+                blank_run = 1;
+            } else {
+                blank_run = 0;
+            }
+
+            out[o++] = '\n';
+            line_px = 0;
+            continue;
+        }
+
+        /*
+         * Find one complete word/token. Formatting markers are part of the
+         * token but have zero width. Space, NBSP, CR and LF end the token.
+         */
+        size_t token_start = cp_start;
+        size_t token_end = i;
+        size_t scan = i;
+
+        while (scan < n) {
+            size_t next_start = scan;
+            unsigned next_cp = utf8_next(in, n, &scan);
+
+            if (next_cp == 0 || next_cp == ' ' || next_cp == 0xA0 ||
+                next_cp == '\r' || next_cp == '\n') {
+                scan = next_start;
+                break;
+            }
+
+            token_end = scan;
+        }
+
+        int token_px = wrap_token_width(in, token_start, token_end);
+
+        /*
+         * Prefer moving the whole word to the next line. This is the key
+         * Phase 1.5 behavior: "bookmarks" stays intact instead of becoming
+         * "bookmar" / "ks" merely because the remaining pixels are short.
+         */
+        if (pending_space && line_px > 0) {
+            if (max_px > 0 && line_px + space_w + token_px > max_px) {
+                out[o++] = '\n';
+                line_px = 0;
+            } else {
+                out[o++] = ' ';
+                line_px += space_w;
+            }
+        }
+        pending_space = false;
+
+        /*
+         * Emit the token UTF-8 codepoint by codepoint. Normally the whole
+         * token fits because of the decision above. If a single token is
+         * wider than the line (long URL, CJK without spaces, etc.), fall
+         * back to UTF-8-safe glyph wrapping rather than overflowing.
+         */
+        size_t t = token_start;
+        while (t < token_end) {
+            size_t glyph_start = t;
+            unsigned glyph = utf8_next(in, token_end, &t);
+            size_t glyph_bytes = t - glyph_start;
+
+            if (glyph == 0)
+                break;
+
+            int glyph_w = wrap_glyph_width(glyph);
+
+            if (max_px > 0 && glyph_w > 0 && line_px > 0 &&
+                line_px + glyph_w > max_px) {
+                out[o++] = '\n';
+                line_px = 0;
+            }
+
+            memcpy(out + o, in + glyph_start, glyph_bytes);
+            o += glyph_bytes;
+            line_px += glyph_w;
+            blank_run = 0;
+        }
+
+        i = token_end;
+    }
+
+    out[o] = 0;
+    return out;
+}
+
+
+/* ---------- Mini Browser 2.5 Phase 4: bounded session cookies ---------- */
+
+typedef struct {
+    bool used;
+    bool secure;
+    bool host_only;
+    unsigned long age;
+    char name[COOKIE_NAME_MAX + 1];
+    char value[COOKIE_VALUE_MAX + 1];
+    char domain[COOKIE_DOMAIN_MAX + 1];
+    char path[COOKIE_PATH_MAX + 1];
+} mb_cookie_t;
+
+/*
+ * IMPORTANT: these are static-storage objects, not automatic locals.
+ * Phase 4 attempt #1 used several large automatic buffers in the curl/header
+ * call chain and overflowed the BadgeVMS application task stack.
+ */
+static mb_cookie_t g_cookie_jar[MAX_COOKIES];
+static unsigned long g_cookie_age = 1;
+static char g_cookie_request_url[URL_MAX];
+static char g_cookie_header_value[COOKIE_HEADER_MAX];
+static char g_cookie_header_line[COOKIE_HEADER_MAX + 16];
+static char g_cookie_set_line[COOKIE_SET_MAX];
+static char g_cookie_host[COOKIE_DOMAIN_MAX + 1];
+static char g_cookie_req_path[COOKIE_PATH_MAX + 1];
+static char g_cookie_tmp_domain[COOKIE_DOMAIN_MAX + 1];
+static char g_cookie_tmp_path[COOKIE_PATH_MAX + 1];
+static char g_cookie_tmp_name[COOKIE_NAME_MAX + 1];
+static char g_cookie_tmp_value[COOKIE_VALUE_MAX + 1];
+
+static void cookie_copy_trim(char *dst, size_t cap,
+                             const char *src, size_t n,
+                             bool lower) {
+    if (!dst || cap == 0) return;
+    while (n && isspace((unsigned char)*src)) { src++; n--; }
+    while (n && isspace((unsigned char)src[n - 1])) n--;
+    if (n >= cap) n = cap - 1;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)src[i];
+        dst[i] = lower ? (char)tolower(c) : (char)c;
+    }
+    dst[n] = 0;
+}
+
+static bool cookie_url_parts(const char *url, bool *is_secure) {
+    const char *p;
+    bool secure = false;
+
+    if (!url) return false;
+    if (!strncasecmp(url, "https://", 8)) {
+        p = url + 8;
+        secure = true;
+    } else if (!strncasecmp(url, "http://", 7)) {
+        p = url + 7;
+    } else {
+        return false;
+    }
+
+    const char *authority_end = p;
+    while (*authority_end && *authority_end != '/' &&
+           *authority_end != '?' && *authority_end != '#')
+        authority_end++;
+
+    const char *host_start = p;
+    const char *host_end = authority_end;
+    const char *at = NULL;
+    for (const char *q = p; q < authority_end; q++)
+        if (*q == '@') at = q;
+    if (at) host_start = at + 1;
+
+    if (host_start < host_end && *host_start == '[') {
+        const char *rb = NULL;
+        for (const char *q = host_start + 1; q < host_end; q++)
+            if (*q == ']') { rb = q; break; }
+        if (rb) {
+            host_start++;
+            host_end = rb;
+        }
+    } else {
+        for (const char *q = host_start; q < authority_end; q++)
+            if (*q == ':') { host_end = q; break; }
+    }
+
+    if (host_end <= host_start) return false;
+    cookie_copy_trim(g_cookie_host, sizeof(g_cookie_host),
+                     host_start, (size_t)(host_end - host_start), true);
+
+    if (*authority_end == '/') {
+        const char *end = authority_end;
+        while (*end && *end != '?' && *end != '#') end++;
+        cookie_copy_trim(g_cookie_req_path, sizeof(g_cookie_req_path),
+                         authority_end, (size_t)(end - authority_end), false);
+    } else {
+        strcpy(g_cookie_req_path, "/");
+    }
+
+    if (!g_cookie_req_path[0]) strcpy(g_cookie_req_path, "/");
+    if (is_secure) *is_secure = secure;
+    return true;
+}
+
+static bool cookie_domain_match(const char *host, const char *domain) {
+    size_t hl, dl;
+    if (!host || !domain || !*host || !*domain) return false;
+    if (!strcasecmp(host, domain)) return true;
+    hl = strlen(host);
+    dl = strlen(domain);
+    return hl > dl && host[hl - dl - 1] == '.' &&
+           !strcasecmp(host + hl - dl, domain);
+}
+
+static bool cookie_path_match(const char *request_path, const char *cookie_path) {
+    size_t n;
+    if (!request_path || !*request_path) request_path = "/";
+    if (!cookie_path || !*cookie_path) cookie_path = "/";
+    n = strlen(cookie_path);
+    if (strncmp(request_path, cookie_path, n)) return false;
+    if (!request_path[n]) return true;
+    if (cookie_path[n - 1] == '/') return true;
+    return request_path[n] == '/';
+}
+
+static void cookie_default_path(void) {
+    const char *last = strrchr(g_cookie_req_path, '/');
+    if (!last || last == g_cookie_req_path) {
+        strcpy(g_cookie_tmp_path, "/");
+        return;
+    }
+    cookie_copy_trim(g_cookie_tmp_path, sizeof(g_cookie_tmp_path),
+                     g_cookie_req_path,
+                     (size_t)(last - g_cookie_req_path), false);
+}
+
+static int cookie_count(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_COOKIES; i++)
+        if (g_cookie_jar[i].used) n++;
+    return n;
+}
+
+static int cookie_find(const char *name, const char *domain, const char *path) {
+    for (int i = 0; i < MAX_COOKIES; i++) {
+        mb_cookie_t *c = &g_cookie_jar[i];
+        if (c->used &&
+            !strcmp(c->name, name) &&
+            !strcasecmp(c->domain, domain) &&
+            !strcmp(c->path, path))
+            return i;
+    }
+    return -1;
+}
+
+static int cookie_store_slot(const char *name,
+                             const char *domain,
+                             const char *path) {
+    int existing = cookie_find(name, domain, path);
+    if (existing >= 0) return existing;
+
+    for (int i = 0; i < MAX_COOKIES; i++)
+        if (!g_cookie_jar[i].used) return i;
+
+    int oldest = 0;
+    for (int i = 1; i < MAX_COOKIES; i++)
+        if (g_cookie_jar[i].age < g_cookie_jar[oldest].age)
+            oldest = i;
+    return oldest;
+}
+
+static void cookie_store_header(const char *value) {
+    bool request_secure = false;
+    bool secure = false;
+    bool host_only = true;
+    bool remove = false;
+
+    if (!value || !cookie_url_parts(g_cookie_request_url, &request_secure))
+        return;
+
+    size_t n = strlen(value);
+    if (n >= sizeof(g_cookie_set_line)) n = sizeof(g_cookie_set_line) - 1;
+    memcpy(g_cookie_set_line, value, n);
+    g_cookie_set_line[n] = 0;
+    while (n && (g_cookie_set_line[n - 1] == '\r' ||
+                 g_cookie_set_line[n - 1] == '\n'))
+        g_cookie_set_line[--n] = 0;
+
+    char *semi = strchr(g_cookie_set_line, ';');
+    char *pair_end = semi ? semi : g_cookie_set_line + strlen(g_cookie_set_line);
+    char *eq = memchr(g_cookie_set_line, '=', (size_t)(pair_end - g_cookie_set_line));
+    if (!eq) return;
+
+    cookie_copy_trim(g_cookie_tmp_name, sizeof(g_cookie_tmp_name),
+                     g_cookie_set_line, (size_t)(eq - g_cookie_set_line), false);
+    cookie_copy_trim(g_cookie_tmp_value, sizeof(g_cookie_tmp_value),
+                     eq + 1, (size_t)(pair_end - eq - 1), false);
+    if (!g_cookie_tmp_name[0]) return;
+
+    strncpy(g_cookie_tmp_domain, g_cookie_host, sizeof(g_cookie_tmp_domain));
+    g_cookie_tmp_domain[sizeof(g_cookie_tmp_domain) - 1] = 0;
+    cookie_default_path();
+
+    for (char *a = semi ? semi + 1 : NULL; a && *a; ) {
+        while (*a == ';' || isspace((unsigned char)*a)) a++;
+        if (!*a) break;
+
+        char *next = strchr(a, ';');
+        char *end = next ? next : a + strlen(a);
+        char *aeq = memchr(a, '=', (size_t)(end - a));
+
+        if (aeq) {
+            *aeq = 0;
+            char *av = aeq + 1;
+            while (*a && isspace((unsigned char)*a)) a++;
+            char *an_end = a + strlen(a);
+            while (an_end > a && isspace((unsigned char)an_end[-1])) *--an_end = 0;
+            while (av < end && isspace((unsigned char)*av)) av++;
+            while (end > av && isspace((unsigned char)end[-1])) end--;
+            *end = 0;
+
+            if (!strcasecmp(a, "domain") && *av) {
+                while (*av == '.') av++;
+                cookie_copy_trim(g_cookie_tmp_domain, sizeof(g_cookie_tmp_domain),
+                                 av, strlen(av), true);
+                if (!cookie_domain_match(g_cookie_host, g_cookie_tmp_domain))
+                    return;
+                host_only = false;
+            } else if (!strcasecmp(a, "path") && *av == '/') {
+                cookie_copy_trim(g_cookie_tmp_path, sizeof(g_cookie_tmp_path),
+                                 av, strlen(av), false);
+            } else if (!strcasecmp(a, "max-age")) {
+                char *ep = NULL;
+                long age = strtol(av, &ep, 10);
+                if (ep != av && age <= 0) remove = true;
+            }
+        } else {
+            char saved = *end;
+            *end = 0;
+            while (*a && isspace((unsigned char)*a)) a++;
+            char *an_end = a + strlen(a);
+            while (an_end > a && isspace((unsigned char)an_end[-1])) *--an_end = 0;
+            if (!strcasecmp(a, "secure")) secure = true;
+            *end = saved;
+        }
+
+        a = next ? next + 1 : NULL;
+    }
+
+    int slot = cookie_find(g_cookie_tmp_name,
+                           g_cookie_tmp_domain,
+                           g_cookie_tmp_path);
+
+    if (remove) {
+        if (slot >= 0)
+            memset(&g_cookie_jar[slot], 0, sizeof(g_cookie_jar[slot]));
+        printf("[mini_browser] cookie delete: %s count=%d\n",
+               g_cookie_tmp_name, cookie_count());
+        return;
+    }
+
+    slot = cookie_store_slot(g_cookie_tmp_name,
+                             g_cookie_tmp_domain,
+                             g_cookie_tmp_path);
+    mb_cookie_t *c = &g_cookie_jar[slot];
+    memset(c, 0, sizeof(*c));
+    c->used = true;
+    c->secure = secure;
+    c->host_only = host_only;
+    c->age = g_cookie_age++;
+    strncpy(c->name, g_cookie_tmp_name, sizeof(c->name) - 1);
+    strncpy(c->value, g_cookie_tmp_value, sizeof(c->value) - 1);
+    strncpy(c->domain, g_cookie_tmp_domain, sizeof(c->domain) - 1);
+    strncpy(c->path, g_cookie_tmp_path, sizeof(c->path) - 1);
+
+    printf("[mini_browser] cookie store: %s=%s domain=%s path=%s secure=%d count=%d\n",
+           c->name, c->value, c->domain, c->path,
+           c->secure ? 1 : 0, cookie_count());
+}
+
+static bool cookie_make_request_header(const char *url) {
+    bool request_secure = false;
+    size_t used = 0;
+    bool any = false;
+
+    g_cookie_header_value[0] = 0;
+    if (!cookie_url_parts(url, &request_secure)) return false;
+
+    for (int i = 0; i < MAX_COOKIES; i++) {
+        mb_cookie_t *c = &g_cookie_jar[i];
+        if (!c->used) continue;
+        if (c->secure && !request_secure) continue;
+
+        bool domain_ok = c->host_only
+            ? !strcasecmp(g_cookie_host, c->domain)
+            : cookie_domain_match(g_cookie_host, c->domain);
+        if (!domain_ok || !cookie_path_match(g_cookie_req_path, c->path))
+            continue;
+
+        size_t need = strlen(c->name) + strlen(c->value) + 1 + (any ? 2 : 0);
+        if (used + need + 1 > sizeof(g_cookie_header_value))
+            break;
+
+        if (any) {
+            memcpy(g_cookie_header_value + used, "; ", 2);
+            used += 2;
+        }
+        size_t x = strlen(c->name);
+        memcpy(g_cookie_header_value + used, c->name, x);
+        used += x;
+        g_cookie_header_value[used++] = '=';
+        x = strlen(c->value);
+        memcpy(g_cookie_header_value + used, c->value, x);
+        used += x;
+        g_cookie_header_value[used] = 0;
+        any = true;
+    }
+
+    return any;
+}
+
+static size_t cookie_header_cb(char *buffer, size_t size,
+                               size_t nitems, void *userdata) {
+    (void)userdata;
+    size_t n = size * nitems;
+    static const char prefix[] = "Set-Cookie:";
+    const size_t plen = sizeof(prefix) - 1;
+
+    if (buffer && n >= plen && !strncasecmp(buffer, prefix, plen)) {
+        size_t vlen = n - plen;
+        if (vlen >= sizeof(g_cookie_set_line))
+            vlen = sizeof(g_cookie_set_line) - 1;
+        memcpy(g_cookie_set_line, buffer + plen, vlen);
+        g_cookie_set_line[vlen] = 0;
+        cookie_store_header(g_cookie_set_line);
+    }
+    return n;
+}
+
+
+/* ---------- curl fetch (tolerant to trimmed-down libcurl) ---------- */
+/* ---------- v1.2: proper HTTP status/error handling ---------- */
+
+static int fetch_url(const char *url, const char *post_body, mem_t *m, long *http_status) {
+    if (!url || !m) return -1;
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return -2;
+
+    m->buf = NULL;
+    m->len = 0;
+
+    if (http_status) {
+        *http_status = 0;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+
+    if (post_body) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(post_body));
+    }
+
+#ifdef CURLOPT_BUFFERSIZE
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L);
+#endif
+#ifdef CURLOPT_MAX_RECV_SPEED_LARGE
+    curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, 32768L);
+#endif
+#ifdef CURLOPT_FOLLOWLOCATION
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+#endif
+#ifdef CURLOPT_MAXREDIRS
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+#endif
+#if defined(CURLOPT_HTTP_VERSION) && defined(CURL_HTTP_VERSION_1_1)
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+#endif
+#ifdef CURLOPT_CONNECTTIMEOUT
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+#endif
+#ifdef CURLOPT_TIMEOUT
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 35L);
+#endif
+#ifdef CURLOPT_LOW_SPEED_LIMIT
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 10L);
+#endif
+#ifdef CURLOPT_LOW_SPEED_TIME
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 20L);
+#endif
+
+    /*
+     * Explicit request headers.
+     *
+     * Accept-Encoding is deliberately "identity" because this tiny browser
+     * does not need compressed transfer encodings.
+     */
+    struct curl_slist *hdrs = NULL;
+
+    hdrs = curl_slist_append(hdrs,
+        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
+        "Gecko/20100101 "
+        "(compatible; MiniBrowser/" MINI_BROWSER_VERSION "; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+
+    hdrs = curl_slist_append(hdrs,
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+
+    hdrs = curl_slist_append(hdrs,
+        "Accept-Language: en-US,en;q=0.5");
+
+    hdrs = curl_slist_append(hdrs,
+        "Accept-Encoding: identity");
+
+    if (post_body) {
+        hdrs = curl_slist_append(hdrs,
+            "Content-Type: application/x-www-form-urlencoded");
+    }
+
+    if (cookie_make_request_header(url)) {
+        snprintf(g_cookie_header_line, sizeof(g_cookie_header_line),
+                 "Cookie: %s", g_cookie_header_value);
+        hdrs = curl_slist_append(hdrs, g_cookie_header_line);
+        printf("[mini_browser] cookie send: %s\n", g_cookie_header_value);
+    }
+
+    if (hdrs) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+    }
+
+    strncpy(g_cookie_request_url, url, sizeof(g_cookie_request_url) - 1);
+    g_cookie_request_url[sizeof(g_cookie_request_url) - 1] = 0;
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, cookie_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL);
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    /*
+     * Even when the HTTP server returns 404/500, curl itself can still
+     * return CURLE_OK. Therefore keep the HTTP status separately.
+     */
+    if (http_status) {
+        long code = 0;
+        if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code) == CURLE_OK) {
+            *http_status = code;
+        }
+    }
+
+    /*
+     * CURLOPT_HTTPHEADER does not take ownership of the curl_slist,
+     * so we must release it ourselves after curl_easy_perform().
+     */
+    if (hdrs) {
+        curl_slist_free_all(hdrs);
+        hdrs = NULL;
+    }
+
+    curl_easy_cleanup(curl);
+
+    return (res == CURLE_OK) ? 0 : (int)res;
+}
+
+
+/* ---------- tiny text renderer ---------- */
+
+
+#define UNICODE_FONT_FILE "APPS:[mini_browser]unifont_cjk.bin"
+
+#define UNICODE_CACHE_SIZE 128
+
+typedef struct {
+    uint32_t codepoint;
+    unsigned char bitmap[UNICODE_GLYPH_BYTES];
+    bool valid;
+} unicode_cache_entry_t;
+
+static FILE *g_unicode_font = NULL;
+static unicode_cache_entry_t g_unicode_cache[UNICODE_CACHE_SIZE];
+
+/*
+ * Direct-indexed ranges are loaded from unifont_cjk.bin at runtime.
+ *
+ * MBCJ v1 file format:
+ *
+ *   bytes 0..3   "MBCJ"
+ *   uint32 LE    format version (1)
+ *   uint32 LE    range count
+ *
+ * followed by range_count records:
+ *
+ *   uint32 LE    first code point
+ *   uint32 LE    last code point
+ *   uint32 LE    glyph-data offset
+ *
+ * Every code-point slot in a range occupies exactly 32 bytes (16x16,
+ * one bit per pixel). An all-zero slot means that GNU Unifont did not
+ * provide a usable 8x16 or 16x16 glyph for that code point.
+ *
+ * Loading the table from the file rather than compiling offsets into
+ * Mini Browser makes the external font independently replaceable. This
+ * is especially useful for the much broader Unicode coverage in 2.4.
+ */
+typedef struct {
+    uint32_t start;
+    uint32_t end;
+    uint32_t offset;
+} unicode_font_range_t;
+
+#define UNICODE_FONT_FORMAT_VERSION 1U
+#define UNICODE_MAX_RANGES 128U
+
+static unicode_font_range_t g_unicode_ranges[UNICODE_MAX_RANGES];
+static uint32_t g_unicode_range_count = 0;
+
+static uint32_t unicode_read_le32(const unsigned char *p) {
+    return
+        (uint32_t)p[0] |
+        ((uint32_t)p[1] << 8) |
+        ((uint32_t)p[2] << 16) |
+        ((uint32_t)p[3] << 24);
+}
+
+static int unicode_font_open(void) {
+    if (g_unicode_font) {
+        return 1;
+    }
+
+    g_unicode_font = fopen(UNICODE_FONT_FILE, "rb");
+
+    if (!g_unicode_font) {
+        printf("Mini Browser: FAILED to open Unicode font: %s\n",
+               UNICODE_FONT_FILE);
+        return 0;
+    }
+
+    unsigned char header[12];
+
+    if (fread(header, 1, sizeof(header), g_unicode_font) != sizeof(header)) {
+        printf("Mini Browser: Unicode font header read failed\n");
+        fclose(g_unicode_font);
+        g_unicode_font = NULL;
+        return 0;
+    }
+
+    if (memcmp(header, "MBCJ", 4) != 0) {
+        printf("Mini Browser: invalid Unicode font magic\n");
+        fclose(g_unicode_font);
+        g_unicode_font = NULL;
+        return 0;
+    }
+
+    uint32_t version = unicode_read_le32(header + 4);
+    uint32_t range_count = unicode_read_le32(header + 8);
+
+    if (version != UNICODE_FONT_FORMAT_VERSION) {
+        printf("Mini Browser: unsupported Unicode font format %lu\n",
+               (unsigned long)version);
+        fclose(g_unicode_font);
+        g_unicode_font = NULL;
+        return 0;
+    }
+
+    if (range_count == 0 || range_count > UNICODE_MAX_RANGES) {
+        printf("Mini Browser: invalid Unicode range count %lu\n",
+               (unsigned long)range_count);
+        fclose(g_unicode_font);
+        g_unicode_font = NULL;
+        return 0;
+    }
+
+    uint32_t previous_end = 0;
+    uint32_t table_end = 12U + range_count * 12U;
+
+    for (uint32_t i = 0; i < range_count; i++) {
+        unsigned char record[12];
+
+        if (fread(record, 1, sizeof(record), g_unicode_font)
+            != sizeof(record)) {
+            printf("Mini Browser: Unicode range table read failed\n");
+            fclose(g_unicode_font);
+            g_unicode_font = NULL;
+            g_unicode_range_count = 0;
+            return 0;
+        }
+
+        unicode_font_range_t *range = &g_unicode_ranges[i];
+
+        range->start = unicode_read_le32(record + 0);
+        range->end = unicode_read_le32(record + 4);
+        range->offset = unicode_read_le32(record + 8);
+
+        if (range->start > range->end ||
+            range->offset < table_end ||
+            (i > 0 && range->start <= previous_end)) {
+            printf("Mini Browser: invalid Unicode range record %lu\n",
+                   (unsigned long)i);
+            fclose(g_unicode_font);
+            g_unicode_font = NULL;
+            g_unicode_range_count = 0;
+            return 0;
+        }
+
+        previous_end = range->end;
+    }
+
+    g_unicode_range_count = range_count;
+
+    printf("Mini Browser: Unicode font opened: %s (%lu ranges)\n",
+           UNICODE_FONT_FILE,
+           (unsigned long)g_unicode_range_count);
+
+    return 1;
+}
+
+
+static int unicode_font_offset(unsigned cp, long *offset) {
+    if (!unicode_font_open()) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < g_unicode_range_count; i++) {
+        const unicode_font_range_t *range = &g_unicode_ranges[i];
+
+        if (cp >= range->start && cp <= range->end) {
+            *offset =
+                (long)range->offset +
+                (long)(cp - range->start) * UNICODE_GLYPH_BYTES;
+
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int load_unicode_glyph(unsigned cp,
+                              unsigned char bitmap[UNICODE_GLYPH_BYTES]) {
+    /*
+     * Small direct-mapped RAM cache.
+     *
+     * Rendering the same screen repeatedly therefore normally requires
+     * no filesystem access after the glyph has first been encountered.
+     */
+    unsigned cache_index = cp % UNICODE_CACHE_SIZE;
+    unicode_cache_entry_t *cached = &g_unicode_cache[cache_index];
+
+    if (cached->valid && cached->codepoint == cp) {
+        memcpy(bitmap, cached->bitmap, UNICODE_GLYPH_BYTES);
+        return 1;
+    }
+
+    long offset;
+
+    if (!unicode_font_offset(cp, &offset)) {
+        return 0;
+    }
+
+    if (fseek(g_unicode_font, offset, SEEK_SET) != 0) {
+        return 0;
+    }
+
+    if (fread(bitmap, 1, UNICODE_GLYPH_BYTES, g_unicode_font)
+        != UNICODE_GLYPH_BYTES) {
+        return 0;
+    }
+
+    /*
+     * An all-zero slot means that the font does not contain this glyph.
+     */
+    bool empty = true;
+
+    for (int i = 0; i < UNICODE_GLYPH_BYTES; i++) {
+        if (bitmap[i] != 0) {
+            empty = false;
+            break;
+        }
+    }
+
+    if (empty) {
+        return 0;
+    }
+
+    cached->codepoint = cp;
+    memcpy(cached->bitmap, bitmap, UNICODE_GLYPH_BYTES);
+    cached->valid = true;
+
+    return 1;
+}
+
+
+static unsigned utf8_next(const char *s, size_t len, size_t *i) {
+    if (*i >= len) return 0;
+
+    const unsigned char *p = (const unsigned char *)s;
+    unsigned char c = p[*i];
+
+    if (c < 0x80) {
+        (*i)++;
+        return c;
+    }
+
+    if ((c & 0xE0) == 0xC0 && *i + 1 < len) {
+        unsigned char c1 = p[*i + 1];
+
+        if ((c1 & 0xC0) == 0x80) {
+            unsigned cp =
+                ((unsigned)(c & 0x1F) << 6) |
+                (unsigned)(c1 & 0x3F);
+
+            if (cp >= 0x80) {
+                *i += 2;
+                return cp;
+            }
+        }
+    }
+
+    if ((c & 0xF0) == 0xE0 && *i + 2 < len) {
+        unsigned char c1 = p[*i + 1];
+        unsigned char c2 = p[*i + 2];
+
+        if ((c1 & 0xC0) == 0x80 &&
+            (c2 & 0xC0) == 0x80) {
+
+            unsigned cp =
+                ((unsigned)(c & 0x0F) << 12) |
+                ((unsigned)(c1 & 0x3F) << 6) |
+                (unsigned)(c2 & 0x3F);
+
+            if (cp >= 0x800 &&
+                !(cp >= 0xD800 && cp <= 0xDFFF)) {
+                *i += 3;
+                return cp;
+            }
+        }
+    }
+
+    if ((c & 0xF8) == 0xF0 && *i + 3 < len) {
+        unsigned char c1 = p[*i + 1];
+        unsigned char c2 = p[*i + 2];
+        unsigned char c3 = p[*i + 3];
+
+        if ((c1 & 0xC0) == 0x80 &&
+            (c2 & 0xC0) == 0x80 &&
+            (c3 & 0xC0) == 0x80) {
+
+            unsigned cp =
+                ((unsigned)(c & 0x07) << 18) |
+                ((unsigned)(c1 & 0x3F) << 12) |
+                ((unsigned)(c2 & 0x3F) << 6) |
+                (unsigned)(c3 & 0x3F);
+
+            if (cp >= 0x10000 && cp <= 0x10FFFF) {
+                *i += 4;
+                return cp;
+            }
+        }
+    }
+
+    (*i)++;
+    return 0xFFFD;
+}
+
+
+
+/* DEBUG NEW */
+
+static int utf8_sequence_length(const unsigned char *p, size_t remaining) {
+    if (!remaining) return 0;
+
+    if (p[0] < 0x80)
+        return 1;
+
+    if ((p[0] & 0xE0) == 0xC0) {
+        if (remaining < 2) return 0;
+        if ((p[1] & 0xC0) != 0x80) return 0;
+
+        unsigned cp =
+            ((unsigned)(p[0] & 0x1F) << 6) |
+            (unsigned)(p[1] & 0x3F);
+
+        return cp >= 0x80 ? 2 : 0;
+    }
+
+    if ((p[0] & 0xF0) == 0xE0) {
+        if (remaining < 3) return 0;
+        if ((p[1] & 0xC0) != 0x80 ||
+            (p[2] & 0xC0) != 0x80)
+            return 0;
+
+        unsigned cp =
+            ((unsigned)(p[0] & 0x0F) << 12) |
+            ((unsigned)(p[1] & 0x3F) << 6) |
+            (unsigned)(p[2] & 0x3F);
+
+        if (cp < 0x800)
+            return 0;
+
+        if (cp >= 0xD800 && cp <= 0xDFFF)
+            return 0;
+
+        return 3;
+    }
+
+    if ((p[0] & 0xF8) == 0xF0) {
+        if (remaining < 4) return 0;
+        if ((p[1] & 0xC0) != 0x80 ||
+            (p[2] & 0xC0) != 0x80 ||
+            (p[3] & 0xC0) != 0x80)
+            return 0;
+
+        unsigned cp =
+            ((unsigned)(p[0] & 0x07) << 18) |
+            ((unsigned)(p[1] & 0x3F) << 12) |
+            ((unsigned)(p[2] & 0x3F) << 6) |
+            (unsigned)(p[3] & 0x3F);
+
+        return (cp >= 0x10000 && cp <= 0x10FFFF) ? 4 : 0;
+    }
+
+    return 0;
+}
+
+static void debug_utf8(const char *label, const char *s) {
+    if (!s) {
+        printf("[UTF8] %s: NULL\n", label);
+        return;
+    }
+
+    size_t len = strlen(s);
+    size_t i = 0;
+    unsigned errors = 0;
+
+    while (i < len) {
+        int seq =
+            utf8_sequence_length(
+                (const unsigned char *)s + i,
+                len - i);
+
+        if (seq > 0) {
+            i += (size_t)seq;
+            continue;
+        }
+
+        printf("[UTF8] %s INVALID byte %u = %02X  context:",
+               label,
+               (unsigned)i,
+               (unsigned char)s[i]);
+
+        size_t from = i > 8 ? i - 8 : 0;
+        size_t to = i + 12;
+        if (to > len) to = len;
+
+        for (size_t j = from; j < to; j++) {
+            printf(" %02X", (unsigned char)s[j]);
+        }
+
+        printf("\n");
+
+        errors++;
+        i++;
+    }
+
+    printf("[UTF8] %s: %u bytes, %u invalid byte(s)\n",
+           label,
+           (unsigned)len,
+           errors);
+}
+
+
+
+static void draw_char(SDL_Renderer *r, int x, int y, char c) {
+    if (!r) return;
+    if ((unsigned char)c < 32 || (unsigned char)c > 127) c = '?';
+    const unsigned char *cols = font5x7[(unsigned char)c - 32];
+    for (int col = 0; col < FONT_W_COLS; col++) {
+        unsigned char bits = cols[col];
+        for (int row = 0; row < FONT_H_ROWS; row++) {
+            if (bits & (1u << row)) {
+                SDL_FRect px = { (float)(x + col*FONT_SCALE), (float)(y + row*FONT_SCALE),
+                                 (float)FONT_SCALE, (float)FONT_SCALE };
+                SDL_RenderFillRect(r, &px);
+            }
+        }
+    }
+}
+
+
+
+static void draw_unicode_char(SDL_Renderer *r, int x, int y, unsigned cp) {
+    unsigned char bitmap[UNICODE_GLYPH_BYTES];
+
+    if (!load_unicode_glyph(cp, bitmap)) {
+        /*
+         * Missing Unicode glyph.
+         * Draw a simple 8x8 box so missing characters remain visible.
+         */
+        static const unsigned char box[8] = {
+            0x7E,
+            0x42,
+            0x5A,
+            0x5A,
+            0x5A,
+            0x42,
+            0x7E,
+            0x00
+        };
+
+        for (int row = 0; row < 8; row++) {
+            for (int col = 0; col < 8; col++) {
+                if (box[row] & (1u << (7 - col))) {
+                    SDL_FRect px = {
+                        (float)(x + col * FONT_SCALE),
+                        (float)(y + row * FONT_SCALE),
+                        (float)FONT_SCALE,
+                        (float)FONT_SCALE
+                    };
+                    SDL_RenderFillRect(r, &px);
+                }
+            }
+        }
+
+        return;
+    }
+
+    /*
+     * GNU Unifont CJK glyphs are 16x16 monochrome bitmaps.
+     * Each row consists of two bytes, most-significant bit first.
+     */
+    for (int row = 0; row < UNICODE_GLYPH_H; row++) {
+        uint16_t bits =
+            ((uint16_t)bitmap[row * 2] << 8) |
+            (uint16_t)bitmap[row * 2 + 1];
+
+        for (int col = 0; col < UNICODE_GLYPH_W; col++) {
+            if (bits & ((uint16_t)1 << (15 - col))) {
+                SDL_FRect px = {
+                    (float)(x + col),
+                    (float)(y + row),
+                    1.0f,
+                    1.0f
+                };
+
+                SDL_RenderFillRect(r, &px);
+            }
+        }
+    }
+}
+
+
+
+
+typedef struct {
+    unsigned cp;
+    bool bold;
+    unsigned char dir;
+} visual_glyph_t;
+
+#define BIDI_LINE_MAX 256
+#define DIR_NEUTRAL 0
+#define DIR_LTR     1
+#define DIR_RTL     2
+
+typedef struct {
+    uint32_t base;
+    uint32_t isolated;
+    uint32_t final;
+    uint32_t initial;
+    uint32_t medial;
+} arabic_shape_t;
+
+/*
+ * Arabic presentation-form mappings used by the compact Phase 2 shaper.
+ * A zero form means that joining form does not exist for that character.
+ * The table covers the standard Arabic alphabet plus common Persian/Urdu
+ * letters for which Unicode provides one-code-point presentation forms.
+ */
+static const arabic_shape_t g_arabic_shapes[] = {
+    {0x0621,0xFE80,0,0,0},{0x0622,0xFE81,0xFE82,0,0},
+    {0x0623,0xFE83,0xFE84,0,0},{0x0624,0xFE85,0xFE86,0,0},
+    {0x0625,0xFE87,0xFE88,0,0},{0x0626,0xFE89,0xFE8A,0xFE8B,0xFE8C},
+    {0x0627,0xFE8D,0xFE8E,0,0},{0x0628,0xFE8F,0xFE90,0xFE91,0xFE92},
+    {0x0629,0xFE93,0xFE94,0,0},{0x062A,0xFE95,0xFE96,0xFE97,0xFE98},
+    {0x062B,0xFE99,0xFE9A,0xFE9B,0xFE9C},{0x062C,0xFE9D,0xFE9E,0xFE9F,0xFEA0},
+    {0x062D,0xFEA1,0xFEA2,0xFEA3,0xFEA4},{0x062E,0xFEA5,0xFEA6,0xFEA7,0xFEA8},
+    {0x062F,0xFEA9,0xFEAA,0,0},{0x0630,0xFEAB,0xFEAC,0,0},
+    {0x0631,0xFEAD,0xFEAE,0,0},{0x0632,0xFEAF,0xFEB0,0,0},
+    {0x0633,0xFEB1,0xFEB2,0xFEB3,0xFEB4},{0x0634,0xFEB5,0xFEB6,0xFEB7,0xFEB8},
+    {0x0635,0xFEB9,0xFEBA,0xFEBB,0xFEBC},{0x0636,0xFEBD,0xFEBE,0xFEBF,0xFEC0},
+    {0x0637,0xFEC1,0xFEC2,0xFEC3,0xFEC4},{0x0638,0xFEC5,0xFEC6,0xFEC7,0xFEC8},
+    {0x0639,0xFEC9,0xFECA,0xFECB,0xFECC},{0x063A,0xFECD,0xFECE,0xFECF,0xFED0},
+    {0x0641,0xFED1,0xFED2,0xFED3,0xFED4},{0x0642,0xFED5,0xFED6,0xFED7,0xFED8},
+    {0x0643,0xFED9,0xFEDA,0xFEDB,0xFEDC},{0x0644,0xFEDD,0xFEDE,0xFEDF,0xFEE0},
+    {0x0645,0xFEE1,0xFEE2,0xFEE3,0xFEE4},{0x0646,0xFEE5,0xFEE6,0xFEE7,0xFEE8},
+    {0x0647,0xFEE9,0xFEEA,0xFEEB,0xFEEC},{0x0648,0xFEED,0xFEEE,0,0},
+    {0x0649,0xFEEF,0xFEF0,0xFBE8,0xFBE9},{0x064A,0xFEF1,0xFEF2,0xFEF3,0xFEF4},
+    {0x0671,0xFB50,0xFB51,0,0},{0x0677,0xFBDD,0,0,0},
+    {0x0679,0xFB66,0xFB67,0xFB68,0xFB69},{0x067A,0xFB5E,0xFB5F,0xFB60,0xFB61},
+    {0x067B,0xFB52,0xFB53,0xFB54,0xFB55},{0x067E,0xFB56,0xFB57,0xFB58,0xFB59},
+    {0x067F,0xFB62,0xFB63,0xFB64,0xFB65},{0x0680,0xFB5A,0xFB5B,0xFB5C,0xFB5D},
+    {0x0683,0xFB76,0xFB77,0xFB78,0xFB79},{0x0684,0xFB72,0xFB73,0xFB74,0xFB75},
+    {0x0686,0xFB7A,0xFB7B,0xFB7C,0xFB7D},{0x0687,0xFB7E,0xFB7F,0xFB80,0xFB81},
+    {0x0688,0xFB88,0xFB89,0,0},{0x068C,0xFB84,0xFB85,0,0},
+    {0x068D,0xFB82,0xFB83,0,0},{0x068E,0xFB86,0xFB87,0,0},
+    {0x0691,0xFB8C,0xFB8D,0,0},{0x0698,0xFB8A,0xFB8B,0,0},
+    {0x06A4,0xFB6A,0xFB6B,0xFB6C,0xFB6D},{0x06A6,0xFB6E,0xFB6F,0xFB70,0xFB71},
+    {0x06A9,0xFB8E,0xFB8F,0xFB90,0xFB91},{0x06AD,0xFBD3,0xFBD4,0xFBD5,0xFBD6},
+    {0x06AF,0xFB92,0xFB93,0xFB94,0xFB95},{0x06B1,0xFB9A,0xFB9B,0xFB9C,0xFB9D},
+    {0x06B3,0xFB96,0xFB97,0xFB98,0xFB99},{0x06BA,0xFB9E,0xFB9F,0,0},
+    {0x06BB,0xFBA0,0xFBA1,0xFBA2,0xFBA3},{0x06BE,0xFBAA,0xFBAB,0xFBAC,0xFBAD},
+    {0x06C0,0xFBA4,0xFBA5,0,0},{0x06C1,0xFBA6,0xFBA7,0xFBA8,0xFBA9},
+    {0x06C5,0xFBE0,0xFBE1,0,0},{0x06C6,0xFBD9,0xFBDA,0,0},
+    {0x06C7,0xFBD7,0xFBD8,0,0},{0x06C8,0xFBDB,0xFBDC,0,0},
+    {0x06C9,0xFBE2,0xFBE3,0,0},{0x06CB,0xFBDE,0xFBDF,0,0},
+    {0x06CC,0xFBFC,0xFBFD,0xFBFE,0xFBFF},{0x06D0,0xFBE4,0xFBE5,0xFBE6,0xFBE7},
+    {0x06D2,0xFBAE,0xFBAF,0,0},{0x06D3,0xFBB0,0xFBB1,0,0}
+};
+
+static const arabic_shape_t *arabic_shape_info(unsigned cp) {
+    for (size_t i = 0; i < sizeof(g_arabic_shapes) / sizeof(g_arabic_shapes[0]); i++) {
+        if (g_arabic_shapes[i].base == cp)
+            return &g_arabic_shapes[i];
+    }
+    return NULL;
+}
+
+static bool arabic_transparent(unsigned cp) {
+    return (cp >= 0x0610 && cp <= 0x061A) ||
+           (cp >= 0x064B && cp <= 0x065F) ||
+           cp == 0x0670 ||
+           (cp >= 0x06D6 && cp <= 0x06ED);
+}
+
+static void arabic_shape_line(visual_glyph_t *g, int count) {
+    unsigned original[BIDI_LINE_MAX];
+
+    for (int i = 0; i < count; i++)
+        original[i] = g[i].cp;
+
+    for (int i = 0; i < count; i++) {
+        const arabic_shape_t *cur = arabic_shape_info(original[i]);
+        if (!cur)
+            continue;
+
+        int p = i - 1;
+        while (p >= 0 && arabic_transparent(original[p]))
+            p--;
+
+        int n = i + 1;
+        while (n < count && arabic_transparent(original[n]))
+            n++;
+
+        const arabic_shape_t *prev = p >= 0 ? arabic_shape_info(original[p]) : NULL;
+        const arabic_shape_t *next = n < count ? arabic_shape_info(original[n]) : NULL;
+
+        bool join_prev = prev && prev->initial && cur->final;
+        bool join_next = next && cur->initial && next->final;
+
+        if (join_prev && join_next && cur->medial)
+            g[i].cp = cur->medial;
+        else if (join_prev && cur->final)
+            g[i].cp = cur->final;
+        else if (join_next && cur->initial)
+            g[i].cp = cur->initial;
+        else if (cur->isolated)
+            g[i].cp = cur->isolated;
+    }
+}
+
+static unsigned char bidi_dir(unsigned cp) {
+    /* European and Arabic-Indic numbers stay left-to-right as number runs. */
+    if ((cp >= '0' && cp <= '9') ||
+        (cp >= 0x0660 && cp <= 0x0669) ||
+        (cp >= 0x06F0 && cp <= 0x06F9))
+        return DIR_LTR;
+
+    if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z'))
+        return DIR_LTR;
+
+    if ((cp >= 0x0590 && cp <= 0x05FF) ||
+        (cp >= 0x0600 && cp <= 0x08FF) ||
+        (cp >= 0xFB1D && cp <= 0xFDFF) ||
+        (cp >= 0xFE70 && cp <= 0xFEFF))
+        return DIR_RTL;
+
+    if ((cp >= 0x00C0 && cp <= 0x02AF) ||
+        (cp >= 0x0370 && cp <= 0x058F) ||
+        (cp >= 0x0900 && cp <= 0x1FFF) ||
+        (cp >= 0x2C00 && cp <= 0xD7FF))
+        return DIR_LTR;
+
+    return DIR_NEUTRAL;
+}
+
+static int visual_glyph_width(unsigned cp) {
+    return wrap_glyph_width(cp);
+}
+
+static void reverse_glyphs(visual_glyph_t *g, int a, int b) {
+    while (a < b) {
+        visual_glyph_t t = g[a];
+        g[a] = g[b];
+        g[b] = t;
+        a++;
+        b--;
+    }
+}
+
+/*
+ * Compact embedded bidi pass. It handles the common browser cases we need:
+ * RTL paragraph detection, Hebrew/Arabic runs, mixed LTR text and numbers,
+ * and neutral punctuation/spaces. It is intentionally bounded and is not a
+ * complete implementation of every Unicode Bidirectional Algorithm rule.
+ */
+static int bidi_visualize_line(visual_glyph_t *g, int count, bool *base_rtl) {
+    if (count <= 0) {
+        *base_rtl = false;
+        return count;
+    }
+
+    unsigned char base = DIR_LTR;
+    for (int i = 0; i < count; i++) {
+        unsigned char d = bidi_dir(g[i].cp);
+        if (d != DIR_NEUTRAL) {
+            base = d;
+            break;
+        }
+    }
+    *base_rtl = (base == DIR_RTL);
+
+    for (int i = 0; i < count; i++)
+        g[i].dir = bidi_dir(g[i].cp);
+
+    /* Resolve neutral characters from their neighbors, otherwise paragraph base. */
+    for (int i = 0; i < count; i++) {
+        if (g[i].dir != DIR_NEUTRAL)
+            continue;
+
+        unsigned char left = DIR_NEUTRAL;
+        unsigned char right = DIR_NEUTRAL;
+
+        for (int p = i - 1; p >= 0; p--) {
+            if (g[p].dir != DIR_NEUTRAL) {
+                left = g[p].dir;
+                break;
+            }
+        }
+        for (int n = i + 1; n < count; n++) {
+            if (g[n].dir != DIR_NEUTRAL) {
+                right = g[n].dir;
+                break;
+            }
+        }
+
+        g[i].dir = (left != DIR_NEUTRAL && left == right) ? left : base;
+    }
+
+    visual_glyph_t tmp[BIDI_LINE_MAX];
+    int out = 0;
+
+    if (base == DIR_LTR) {
+        int i = 0;
+        while (i < count) {
+            int j = i + 1;
+            while (j < count && g[j].dir == g[i].dir)
+                j++;
+
+            if (g[i].dir == DIR_RTL) {
+                for (int k = j - 1; k >= i; k--)
+                    tmp[out++] = g[k];
+            } else {
+                for (int k = i; k < j; k++)
+                    tmp[out++] = g[k];
+            }
+            i = j;
+        }
+    } else {
+        int j = count;
+        while (j > 0) {
+            int i = j - 1;
+            while (i > 0 && g[i - 1].dir == g[j - 1].dir)
+                i--;
+
+            if (g[i].dir == DIR_RTL) {
+                for (int k = j - 1; k >= i; k--)
+                    tmp[out++] = g[k];
+            } else {
+                for (int k = i; k < j; k++)
+                    tmp[out++] = g[k];
+            }
+            j = i;
+        }
+    }
+
+    memcpy(g, tmp, (size_t)out * sizeof(g[0]));
+    return out;
+}
+
+static void draw_visual_line(SDL_Renderer *r, int x, int y,
+                             visual_glyph_t *g, int count, int max_w) {
+    if (count <= 0)
+        return;
+
+    arabic_shape_line(g, count);
+
+    bool base_rtl = false;
+    count = bidi_visualize_line(g, count, &base_rtl);
+
+    int line_w = 0;
+    for (int i = 0; i < count; i++)
+        line_w += visual_glyph_width(g[i].cp);
+
+    int cx = x;
+    if (base_rtl && line_w < max_w)
+        cx = x + max_w - line_w;
+
+    int cy = y;
+
+    for (int i = 0; i < count; i++) {
+        unsigned cp = g[i].cp;
+        if (cp == 0xA0)
+            cp = ' ';
+
+        int char_w = visual_glyph_width(cp);
+        if (char_w <= 0)
+            continue;
+
+        if (cx + char_w > x + max_w) {
+            cx = x;
+            cy += (CH_H + LINE_SPACING);
+        }
+
+        if (cp >= 32 && cp <= 126) {
+            draw_char(r, cx, cy, (char)cp);
+            if (g[i].bold)
+                draw_char(r, cx + 1, cy, (char)cp);
+        } else if (cp >= 0x80 && cp <= 0x10FFFF) {
+            draw_unicode_char(r, cx, cy, cp);
+            if (g[i].bold)
+                draw_unicode_char(r, cx + 1, cy, cp);
+        }
+
+        cx += char_w;
+    }
+}
+
+static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
+    if (!r || !s) return;
+
+    size_t i = 0;
+    size_t L = strlen(s);
+    int cy = y;
+    int bold_depth = 0;
+
+    while (i <= L) {
+        visual_glyph_t line[BIDI_LINE_MAX];
+        int count = 0;
+        bool saw_newline = false;
+
+        while (i < L) {
+            unsigned cp = utf8_next(s, L, &i);
+            if (cp == 0)
+                break;
+
+            if (cp == TEXT_BOLD_ON) {
+                bold_depth++;
+                continue;
+            }
+            if (cp == TEXT_BOLD_OFF) {
+                if (bold_depth > 0)
+                    bold_depth--;
+                continue;
+            }
+            if (cp == '\n') {
+                saw_newline = true;
+                break;
+            }
+
+            if (count < BIDI_LINE_MAX) {
+                line[count].cp = cp;
+                line[count].bold = bold_depth > 0;
+                line[count].dir = DIR_NEUTRAL;
+                count++;
+            }
+        }
+
+        draw_visual_line(r, x, cy, line, count, max_w);
+
+        if (saw_newline) {
+            cy += (CH_H + LINE_SPACING);
+            continue;
+        }
+        break;
+    }
+}
+
+
+
+/* ---------- logo (cyan square + yellow magnifying glass) ---------- */
+static void draw_filled_circle_i(SDL_Renderer *r, int cx, int cy, int R) {
+    int x = 0, y = R;
+    int d = 1 - R;
+    while (y >= x) {
+        int x0 = cx - x, x1 = cx + x;
+        int y0 = cy - y, y1 = cy + y;
+        int y0r = cy - x, y1r = cy + x;
+
+        SDL_FRect s1 = { (float)x0, (float)y0, (float)(x1 - x0 + 1), 1.0f };
+        SDL_FRect s2 = { (float)x0, (float)y1, (float)(x1 - x0 + 1), 1.0f };
+        SDL_FRect s3 = { (float)(cx - y), (float)y0r, (float)(2*y + 1), 1.0f };
+        SDL_FRect s4 = { (float)(cx - y), (float)y1r, (float)(2*y + 1), 1.0f };
+        SDL_RenderFillRect(r, &s1);
+        SDL_RenderFillRect(r, &s2);
+        SDL_RenderFillRect(r, &s3);
+        SDL_RenderFillRect(r, &s4);
+
+        x++;
+        if (d < 0) d += 2*x + 1;
+        else { y--; d += 2*(x - y) + 1; }
+    }
+}
+static void draw_logo(SDL_Renderer *r) {
+    if (!r) return;
+    /* Cyan square background at (ICON_LEFT, ICON_TOP), ICON_SIZE x ICON_SIZE */
+    SDL_SetRenderDrawColor(r, 0, 180, 180, 255);
+    SDL_FRect bg = { (float)ICON_LEFT, (float)ICON_TOP, (float)ICON_SIZE, (float)ICON_SIZE };
+    SDL_RenderFillRect(r, &bg);
+
+    /* Yellow magnifying glass: circle + short handle */
+    int cx = ICON_LEFT + ICON_SIZE/2;   /* center within square */
+    int cy = ICON_TOP  + ICON_SIZE/2;
+    int R  = 6;
+
+    SDL_SetRenderDrawColor(r, 255, 255, 0, 255);   /* yellow circle */
+    draw_filled_circle_i(r, cx, cy, R);
+
+    /* 2px thick handle going down-right */
+    SDL_SetRenderDrawColor(r, 255, 255, 0, 255);   /* yellow handle */
+    SDL_FRect handle = { (float)(cx + R - 1), (float)(cy + R - 1), 6.0f, 2.0f };
+    SDL_RenderFillRect(r, &handle);
+}
+
+/* --- draw URL bar text, clipped from the LEFT, starting at URL_TEXT_X --- */
+static void draw_bar(SDL_Renderer *r, const char *text) {
+    int max_cols = (VIEW_W - URL_TEXT_X - PAD_LR) / CH_W;
+    if (max_cols < 1) max_cols = 1;
+
+    size_t n = strlen(text);
+    char tmp[URL_MAX + 32];
+    if ((int)n > max_cols) {
+        const char *start = text + (n - (size_t)max_cols + 3);
+        snprintf(tmp, sizeof tmp, "...%s", start);
+        draw_text(r, URL_TEXT_X, 4, tmp, VIEW_W - URL_TEXT_X - PAD_LR);
+    } else {
+        draw_text(r, URL_TEXT_X, 4, text, VIEW_W - URL_TEXT_X - PAD_LR);
+    }
+}
+
+/* ---------- UI ---------- */
+static void draw_ui(SDL_Renderer *r, const char *bar_text) {
+    if (!r) return;
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+    SDL_RenderClear(r);
+
+    SDL_FRect top = (SDL_FRect){0, 0, VIEW_W, URLBAR_H};
+    SDL_SetRenderDrawColor(r, 30, 30, 30, 255);
+    SDL_RenderFillRect(r, &top);
+
+    /* logo first so text draws alongside it */
+    draw_logo(r);
+
+    SDL_SetRenderDrawColor(r, 220, 220, 220, 255);
+    draw_bar(r, bar_text);
+
+    SDL_FRect mid = (SDL_FRect){0, URLBAR_H + 1, VIEW_W, 2};
+    SDL_SetRenderDrawColor(r, 60, 60, 60, 255);
+    SDL_RenderFillRect(r, &mid);
+}
+
+static int is_printable_ascii(const char *text) {
+    if (!text || !*text) return 0;
+    unsigned char c = (unsigned char)text[0];
+    return (c >= 32 && c <= 126);
+}
+
+/* ---------- bookmarks ---------- */
+#define BOOKMARK_MAX 32
+
+typedef struct {
+    char url[URL_MAX];
+    char title[128];
+} bookmark_t;
+
+static bookmark_t g_bookmarks[BOOKMARK_MAX];
+static int g_bookmark_count = 0;
+
+static int bookmark_find(const char *url) {
+    if (!url || !*url) return -1;
+
+    for (int i = 0; i < g_bookmark_count; i++) {
+        if (strncmp(g_bookmarks[i].url, url, URL_MAX) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static int bookmark_add(const char *url, const char *title) {
+    if (!url || !*url) return 0;
+
+    /* Already bookmarked. */
+    if (bookmark_find(url) >= 0) return 0;
+
+    if (g_bookmark_count >= BOOKMARK_MAX) return 0;
+
+    bookmark_t *bm = &g_bookmarks[g_bookmark_count];
+
+    strncpy(bm->url, url, URL_MAX);
+    bm->url[URL_MAX - 1] = 0;
+
+    if (title && *title) {
+        strncpy(bm->title, title, sizeof(bm->title));
+        bm->title[sizeof(bm->title) - 1] = 0;
+    } else {
+        strncpy(bm->title, url, sizeof(bm->title));
+        bm->title[sizeof(bm->title) - 1] = 0;
+    }
+
+    g_bookmark_count++;
+
+    printf("[mini_browser] bookmark added: %s\n", bm->url);
+
+    return 1;
+}
+
+static int bookmark_remove(const char *url) {
+    int idx = bookmark_find(url);
+    if (idx < 0) return 0;
+
+    if (idx < g_bookmark_count - 1) {
+        memmove(&g_bookmarks[idx],
+                &g_bookmarks[idx + 1],
+                sizeof(g_bookmarks[0]) *
+                    (size_t)(g_bookmark_count - idx - 1));
+    }
+
+    g_bookmark_count--;
+
+    printf("[mini_browser] bookmark removed: %s\n", url);
+
+    return 1;
+}
+static int bookmark_toggle(const char *url, const char *title) {
+    if (bookmark_find(url) >= 0) {
+        bookmark_remove(url);
+        return 0;
+    }
+
+    bookmark_add(url, title);
+    return 1;
+}
+
+/* ---------- persistent bookmarks ---------- */
+#define BOOKMARK_FILE "APPS:[mini_browser]bookmarks.txt"
+
+static void bookmark_save(void) {
+    /*
+     * BadgeVMS currently has a truncation issue with fopen(..., "w"),
+     * so follow the same pattern used by the WHY2025 name badge:
+     * remove the old file before creating the new one.
+     */
+    remove(BOOKMARK_FILE);
+
+    FILE *file = fopen(BOOKMARK_FILE, "w");
+    if (!file) {
+        printf("[mini_browser] failed to save bookmarks to %s\n",
+               BOOKMARK_FILE);
+        return;
+    }
+
+    for (int i = 0; i < g_bookmark_count; i++) {
+        fprintf(file, "%s\n", g_bookmarks[i].url);
+        fprintf(file, "%s\n", g_bookmarks[i].title);
+    }
+
+    fclose(file);
+
+    printf("[mini_browser] saved %d bookmarks to %s\n",
+           g_bookmark_count,
+           BOOKMARK_FILE);
+}
+
+static void bookmark_load(void) {
+    FILE *file = fopen(BOOKMARK_FILE, "r");
+
+    if (!file) {
+        printf("[mini_browser] no saved bookmarks at %s\n",
+               BOOKMARK_FILE);
+        return;
+    }
+
+    g_bookmark_count = 0;
+
+    char url[URL_MAX];
+    char title[128];
+
+    while (g_bookmark_count < BOOKMARK_MAX) {
+        if (!fgets(url, sizeof(url), file)) {
+            break;
+        }
+
+        if (!fgets(title, sizeof(title), file)) {
+            break;
+        }
+
+        size_t len = strlen(url);
+        while (len > 0 &&
+               (url[len - 1] == '\n' || url[len - 1] == '\r')) {
+            url[--len] = 0;
+        }
+
+        len = strlen(title);
+        while (len > 0 &&
+               (title[len - 1] == '\n' || title[len - 1] == '\r')) {
+            title[--len] = 0;
+        }
+
+        if (!url[0]) {
+            continue;
+        }
+
+        bookmark_add(url, title);
+    }
+
+    fclose(file);
+
+    printf("[mini_browser] loaded %d bookmarks from %s\n",
+           g_bookmark_count,
+           BOOKMARK_FILE);
+}
+
+static page_t *bookmarks_to_page(void) {
+
+
+
+    page_t *pg = (page_t*)calloc(1, sizeof(page_t));
+    if (!pg) return NULL;
+
+    strncpy(pg->base, "bookmarks:", URL_MAX);
+    pg->base[URL_MAX - 1] = 0;
+
+    strncpy(pg->title, "Bookmarks", sizeof(pg->title));
+    pg->title[sizeof(pg->title) - 1] = 0;
+
+    size_t cap = 256 + (size_t)g_bookmark_count * 512;
+    char *text = (char*)malloc(cap);
+
+    if (!text) {
+        free(pg);
+        return NULL;
+    }
+
+    size_t used = 0;
+
+    int n = snprintf(text, cap,
+                     "= BOOKMARKS =\n\n");
+
+    if (n > 0) used = (size_t)n;
+
+    if (g_bookmark_count == 0) {
+        snprintf(text + used, cap - used,
+                 "No bookmarks yet.\n\n"
+                 "Press WHY+F on a web page to add one.");
+
+        pg->text = text;
+        return pg;
+    }
+
+    for (int i = 0;
+         i < g_bookmark_count && i < MAX_LINKS;
+         i++) {
+
+        bookmark_t *bm = &g_bookmarks[i];
+
+        pg->links[pg->link_count] = (link_t){0};
+
+        strncpy(pg->links[pg->link_count].href,
+                bm->url,
+                URL_MAX);
+
+        pg->links[pg->link_count].href[URL_MAX - 1] = 0;
+        int link_index = pg->link_count++;
+        add_action(pg, ACTION_LINK, link_index, -1, -1);
+
+        n = snprintf(text + used,
+                     cap - used,
+                     "[%d] %s\n    %s\n\n",
+                     i + 1,
+                     bm->title,
+                     bm->url);
+
+        if (n < 0) break;
+
+        if ((size_t)n >= cap - used) {
+            used = cap - 1;
+            break;
+        }
+
+        used += (size_t)n;
+    }
+
+    text[cap - 1] = 0;
+    pg->text = text;
+
+    return pg;
+}
+
+/* ---------- history with Back/Forward navigation ---------- */
+#define HISTORY_MAX 32
+static char g_hist[HISTORY_MAX][URL_MAX];
+static int  g_hist_len = 0;
+static int  g_hist_pos = -1;  /* -1 = nothing, 0..len-1 = current entry index */
+
+/*
+ * INVARIANT: g_hist_pos is the zero-based index of the currently displayed
+ * history entry. g_hist_len is the total number of entries.
+ *
+ * Example: HOME -> A -> B -> C
+ * g_hist[0] = HOME, g_hist[1] = A, g_hist[2] = B, g_hist[3] = C
+ * g_hist_len = 4, g_hist_pos = 3 (pointing at C)
+ */
+
+static void history_push(const char *u) {
+    if (!u || !*u) return;
+    
+    /* Case A: duplicate of current entry - do nothing */
+    if (g_hist_pos >= 0 && strncmp(g_hist[g_hist_pos], u, URL_MAX) == 0) {
+        return;
+    }
+    
+    /* Case B: user was in forward state, truncate forward branch */
+    if (g_hist_pos < g_hist_len - 1) {
+        g_hist_len = g_hist_pos + 1;
+    }
+    
+    /* Case C/D: append new entry */
+    if (g_hist_len < HISTORY_MAX) {
+        /* Normal append */
+        strncpy(g_hist[g_hist_len], u, URL_MAX);
+        g_hist[g_hist_len][URL_MAX-1] = 0;
+        g_hist_pos = g_hist_len;
+        g_hist_len++;
+    } else {
+        /* Full: shift down, append at end */
+        memmove(g_hist, g_hist + 1, sizeof(g_hist[0]) * (HISTORY_MAX - 1));
+        strncpy(g_hist[HISTORY_MAX - 1], u, URL_MAX);
+        g_hist[HISTORY_MAX - 1][URL_MAX - 1] = 0;
+        if (g_hist_pos > 0) g_hist_pos--;
+        g_hist_pos = HISTORY_MAX - 1;
+        g_hist_len = HISTORY_MAX;
+    }
+}
+
+static int history_back(char *out) {
+    if (g_hist_pos <= 0) return 0;  /* Can't go back from first entry */
+    g_hist_pos--;
+    strncpy(out, g_hist[g_hist_pos], URL_MAX);
+    out[URL_MAX - 1] = 0;
+    return 1;
+}
+
+static int history_forward(char *out) {
+    if (g_hist_pos < 0 || g_hist_pos + 1 >= g_hist_len) return 0;
+    g_hist_pos++;
+    strncpy(out, g_hist[g_hist_pos], URL_MAX);
+    out[URL_MAX - 1] = 0;
+    return 1;
+}
+
+
+/* ---------- Serial screenshot streaming ---------- */
+
+/*
+ * WHY+S requests a screenshot.
+ *
+ * The renderer is read back in small horizontal stripes so we never need
+ * another full-screen framebuffer allocation. Each stripe is converted to
+ * RGB24, RLE-compressed, then transported over the shared serial console.
+ *
+ * The console is not a lossless bulk-data channel: unrelated firmware tasks
+ * also write log messages to it. To make screenshot delivery resilient, each
+ * data record carries its own CRC32 and every group of four data records gets
+ * one XOR parity record. The Mac can therefore reconstruct any one missing or
+ * damaged record per group. A final CRC32 still validates the whole compressed
+ * screenshot before PNG creation.
+ *
+ * Wire format (FEC1):
+ *
+ *   IMG BEGIN <width> <height> RGB24 RLE5FEC1 <chunk-size> <group-size>
+ *   IMG D <sequence> <length> <crc32> <base64-data>
+ *   IMG P <group> <crc32> <base64-parity>
+ *   ...
+ *   IMG END <compressed-bytes> <crc32> <data-chunks>
+ *
+ * Data chunks are padded with zeroes only for parity calculation. The length
+ * field is the actual number of compressed bytes in that data chunk.
+ */
+
+#define SCREENSHOT_STRIPE_H      8
+#define IMG_RAW_CHUNK           48
+#define IMG_FEC_GROUP            4
+#define SCREENSHOT_PACE_MS       8
+
+typedef struct {
+    unsigned char raw[IMG_RAW_CHUNK];
+    size_t used;
+    unsigned sequence;
+    unsigned long compressed_bytes;
+    unsigned crc;
+
+    unsigned char parity[IMG_RAW_CHUNK];
+    unsigned parity_count;
+    unsigned parity_group;
+} screenshot_stream_t;
+
+static unsigned screenshot_crc32_update(unsigned crc,
+                                        const unsigned char *data,
+                                        size_t len) {
+    while (len--) {
+        crc ^= *data++;
+
+        for (int bit = 0; bit < 8; bit++) {
+            unsigned mask = (unsigned)-(int)(crc & 1U);
+            crc = (crc >> 1) ^ (0xEDB88320U & mask);
+        }
+    }
+
+    return crc;
+}
+
+static unsigned screenshot_crc32(const unsigned char *data, size_t len) {
+    unsigned crc = 0xFFFFFFFFU;
+    crc = screenshot_crc32_update(crc, data, len);
+    return crc ^ 0xFFFFFFFFU;
+}
+
+static size_t screenshot_base64_encode(char *out,
+                                       size_t out_size,
+                                       const unsigned char *data,
+                                       size_t len) {
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+    size_t needed = 4U * ((len + 2U) / 3U);
+
+    if (!out || out_size < needed + 1U) {
+        return 0;
+    }
+
+    size_t i = 0;
+    size_t o = 0;
+
+    while (i + 3U <= len) {
+        unsigned a = data[i++];
+        unsigned b = data[i++];
+        unsigned c = data[i++];
+
+        out[o++] = table[(a >> 2) & 0x3F];
+        out[o++] = table[((a & 0x03) << 4) | ((b >> 4) & 0x0F)];
+        out[o++] = table[((b & 0x0F) << 2) | ((c >> 6) & 0x03)];
+        out[o++] = table[c & 0x3F];
+    }
+
+    size_t remaining = len - i;
+
+    if (remaining == 1U) {
+        unsigned a = data[i];
+
+        out[o++] = table[(a >> 2) & 0x3F];
+        out[o++] = table[(a & 0x03) << 4];
+        out[o++] = '=';
+        out[o++] = '=';
+    } else if (remaining == 2U) {
+        unsigned a = data[i];
+        unsigned b = data[i + 1U];
+
+        out[o++] = table[(a >> 2) & 0x3F];
+        out[o++] = table[((a & 0x03) << 4) | ((b >> 4) & 0x0F)];
+        out[o++] = table[(b & 0x0F) << 2];
+        out[o++] = '=';
+    }
+
+    out[o] = '\0';
+    return o;
+}
+
+static void screenshot_transport_pause(void) {
+#if defined(ESP_PLATFORM)
+    vTaskDelay(pdMS_TO_TICKS(SCREENSHOT_PACE_MS));
+#else
+    SDL_Delay(SCREENSHOT_PACE_MS);
+#endif
+}
+
+static bool screenshot_send_parity(screenshot_stream_t *stream) {
+    if (!stream || stream->parity_count == 0) {
+        return true;
+    }
+
+    char encoded[(IMG_RAW_CHUNK * 4 / 3) + 8];
+    size_t encoded_len = screenshot_base64_encode(
+        encoded,
+        sizeof(encoded),
+        stream->parity,
+        IMG_RAW_CHUNK
+    );
+
+    if (encoded_len == 0) {
+        printf("IMG ERROR parity-base64-buffer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    unsigned crc = screenshot_crc32(stream->parity, IMG_RAW_CHUNK);
+
+    printf("IMG P %06u %08X %s\n",
+           stream->parity_group,
+           crc,
+           encoded);
+    fflush(stdout);
+    screenshot_transport_pause();
+
+    memset(stream->parity, 0, sizeof(stream->parity));
+    stream->parity_count = 0;
+    stream->parity_group++;
+    return true;
+}
+
+static bool screenshot_stream_flush(screenshot_stream_t *stream) {
+    if (!stream || stream->used == 0) {
+        return true;
+    }
+
+    char encoded[(IMG_RAW_CHUNK * 4 / 3) + 8];
+    size_t encoded_len = screenshot_base64_encode(
+        encoded,
+        sizeof(encoded),
+        stream->raw,
+        stream->used
+    );
+
+    if (encoded_len == 0) {
+        printf("IMG ERROR data-base64-buffer\n");
+        fflush(stdout);
+        stream->used = 0;
+        return false;
+    }
+
+    unsigned chunk_crc = screenshot_crc32(stream->raw, stream->used);
+
+    printf("IMG D %06u %02u %08X %s\n",
+           stream->sequence,
+           (unsigned)stream->used,
+           chunk_crc,
+           encoded);
+    fflush(stdout);
+    screenshot_transport_pause();
+
+    for (size_t i = 0; i < stream->used; i++) {
+        stream->parity[i] ^= stream->raw[i];
+    }
+
+    stream->sequence++;
+    stream->parity_count++;
+    stream->used = 0;
+
+    if (stream->parity_count == IMG_FEC_GROUP) {
+        return screenshot_send_parity(stream);
+    }
+
+    return true;
+}
+
+static bool screenshot_stream_bytes(screenshot_stream_t *stream,
+                                    const unsigned char *data,
+                                    size_t len) {
+    if (!stream || !data) {
+        return false;
+    }
+
+    stream->crc = screenshot_crc32_update(stream->crc, data, len);
+    stream->compressed_bytes += (unsigned long)len;
+
+    while (len > 0) {
+        size_t room = IMG_RAW_CHUNK - stream->used;
+        size_t take = len < room ? len : room;
+
+        memcpy(stream->raw + stream->used, data, take);
+        stream->used += take;
+        data += take;
+        len -= take;
+
+        if (stream->used == IMG_RAW_CHUNK) {
+            if (!screenshot_stream_flush(stream)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool screenshot_emit_run(screenshot_stream_t *stream,
+                                unsigned count,
+                                unsigned char r,
+                                unsigned char g,
+                                unsigned char b) {
+    unsigned char record[5];
+
+    record[0] = (unsigned char)(count & 0xFFU);
+    record[1] = (unsigned char)((count >> 8) & 0xFFU);
+    record[2] = r;
+    record[3] = g;
+    record[4] = b;
+
+    return screenshot_stream_bytes(stream, record, sizeof(record));
+}
+
+static bool screenshot_stream_capture_region(SDL_Renderer *renderer,
+                                             screenshot_stream_t *stream,
+                                             int capture_height) {
+    if (!renderer || !stream || capture_height <= 0 || capture_height > VIEW_H) {
+        return false;
+    }
+
+    for (int top = 0; top < capture_height; top += SCREENSHOT_STRIPE_H) {
+        int stripe_h = SCREENSHOT_STRIPE_H;
+
+        if (top + stripe_h > capture_height) {
+            stripe_h = capture_height - top;
+        }
+
+        SDL_Rect rect = { 0, top, VIEW_W, stripe_h };
+        SDL_Surface *captured = SDL_RenderReadPixels(renderer, &rect);
+
+        if (!captured) {
+            printf("IMG ERROR read-pixels y=%d error=%s\n",
+                   top, SDL_GetError());
+            fflush(stdout);
+            return false;
+        }
+
+        SDL_Surface *rgb = SDL_ConvertSurface(
+            captured,
+            SDL_PIXELFORMAT_RGB24
+        );
+        SDL_DestroySurface(captured);
+
+        if (!rgb) {
+            printf("IMG ERROR convert-rgb24 y=%d error=%s\n",
+                   top, SDL_GetError());
+            fflush(stdout);
+            return false;
+        }
+
+        bool have_run = false;
+        unsigned run_count = 0;
+        unsigned char run_r = 0;
+        unsigned char run_g = 0;
+        unsigned char run_b = 0;
+        bool ok = true;
+
+        for (int y = 0; y < rgb->h && ok; y++) {
+            const unsigned char *row =
+                (const unsigned char *)rgb->pixels +
+                (size_t)y * (size_t)rgb->pitch;
+
+            for (int x = 0; x < rgb->w; x++) {
+                const unsigned char *pixel = row + (size_t)x * 3U;
+                unsigned char r = pixel[0];
+                unsigned char g = pixel[1];
+                unsigned char b = pixel[2];
+
+                if (have_run &&
+                    r == run_r &&
+                    g == run_g &&
+                    b == run_b &&
+                    run_count < 65535U) {
+                    run_count++;
+                    continue;
+                }
+
+                if (have_run &&
+                    !screenshot_emit_run(stream, run_count,
+                                         run_r, run_g, run_b)) {
+                    ok = false;
+                    break;
+                }
+
+                have_run = true;
+                run_count = 1;
+                run_r = r;
+                run_g = g;
+                run_b = b;
+            }
+        }
+
+        if (ok && have_run) {
+            ok = screenshot_emit_run(stream, run_count,
+                                     run_r, run_g, run_b);
+        }
+
+        SDL_DestroySurface(rgb);
+
+        if (!ok) {
+            return false;
+        }
+
+        YIELD_NET();
+    }
+
+    return true;
+}
+
+static bool screenshot_stream_begin(screenshot_stream_t *stream,
+                                    int width,
+                                    int height) {
+    if (!stream || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    memset(stream, 0, sizeof(*stream));
+    stream->crc = 0xFFFFFFFFU;
+
+    printf("IMG BEGIN %d %d RGB24 RLE5FEC1 %d %d\n",
+           width, height, IMG_RAW_CHUNK, IMG_FEC_GROUP);
+    fflush(stdout);
+    screenshot_transport_pause();
+    return true;
+}
+
+static bool screenshot_stream_finish(screenshot_stream_t *stream) {
+    if (!stream) {
+        return false;
+    }
+
+    if (!screenshot_stream_flush(stream)) {
+        return false;
+    }
+
+    if (!screenshot_send_parity(stream)) {
+        return false;
+    }
+
+    unsigned final_crc = stream->crc ^ 0xFFFFFFFFU;
+
+    /* Repeat END so one damaged terminator does not force a timeout. */
+    for (int repeat = 0; repeat < 2; repeat++) {
+        printf("IMG END %lu %08X %u\n",
+               stream->compressed_bytes,
+               final_crc,
+               stream->sequence);
+        fflush(stdout);
+        screenshot_transport_pause();
+    }
+
+    return true;
+}
+
+static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
+    if (!renderer) {
+        printf("IMG ERROR no-renderer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    screenshot_stream_t stream;
+
+    if (!screenshot_stream_begin(&stream, VIEW_W, VIEW_H)) {
+        return false;
+    }
+
+    if (!screenshot_stream_capture_region(renderer, &stream, VIEW_H)) {
+        return false;
+    }
+
+    return screenshot_stream_finish(&stream);
+}
+
+static int screenshot_wrapped_line_count(const char *content_wrapped) {
+    if (!content_wrapped || !*content_wrapped) {
+        return 0;
+    }
+
+    int lines = 0;
+    const char *p = content_wrapped;
+
+    while (p && *p) {
+        lines++;
+        const char *nl = strchr(p, '\n');
+        p = nl ? nl + 1 : NULL;
+    }
+
+    return lines;
+}
+
+static int screenshot_full_page_height(const char *content_wrapped) {
+    int lines = screenshot_wrapped_line_count(content_wrapped);
+    int line_step = CH_H + LINE_SPACING;
+    int height = PAD_TOP + PAD_BOTTOM;
+
+    if (lines > 0) {
+        height += lines * line_step;
+    }
+
+    if (height < VIEW_H) {
+        height = VIEW_H;
+    }
+
+    return height;
+}
+
+static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
+                                              const char *bar_text,
+                                              const char *content_wrapped,
+                                              int slice_top,
+                                              int slice_height) {
+    if (!renderer || slice_top < 0 || slice_height <= 0) {
+        return;
+    }
+
+    if (slice_top == 0) {
+        /* The browser chrome belongs only at the top of the long image. */
+        draw_ui(renderer, bar_text);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+    }
+
+    if (!content_wrapped || !*content_wrapped) {
+        return;
+    }
+
+    const int line_step = CH_H + LINE_SPACING;
+    const int slice_bottom = slice_top + slice_height;
+    const char *p = content_wrapped;
+    int line_index = 0;
+
+    while (p && *p) {
+        const char *nl = strchr(p, '\n');
+        int len = nl ? (int)(nl - p) : (int)strlen(p);
+        int logical_y = PAD_TOP + line_index * line_step;
+
+        if (logical_y + CH_H > slice_top && logical_y < slice_bottom) {
+            char tmp[1024];
+            if (len > (int)sizeof(tmp) - 1) {
+                len = (int)sizeof(tmp) - 1;
+            }
+
+            memcpy(tmp, p, (size_t)len);
+            tmp[len] = 0;
+
+            SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+            draw_text(renderer,
+                      PAD_LR,
+                      logical_y - slice_top,
+                      tmp,
+                      VIEW_W - 2 * PAD_LR);
+        }
+
+        line_index++;
+        p = nl ? nl + 1 : NULL;
+    }
+}
+
+static bool screenshot_stream_full_page(SDL_Renderer *renderer,
+                                        const char *bar_text,
+                                        const char *content_wrapped) {
+    if (!renderer) {
+        printf("IMG ERROR no-renderer\n");
+        fflush(stdout);
+        return false;
+    }
+
+    int full_height = screenshot_full_page_height(content_wrapped);
+    screenshot_stream_t stream;
+
+    printf("[mini_browser] full-page screenshot height=%d\n", full_height);
+    fflush(stdout);
+
+    if (!screenshot_stream_begin(&stream, VIEW_W, full_height)) {
+        return false;
+    }
+
+    for (int slice_top = 0; slice_top < full_height; slice_top += VIEW_H) {
+        int slice_height = VIEW_H;
+
+        if (slice_top + slice_height > full_height) {
+            slice_height = full_height - slice_top;
+        }
+
+        screenshot_render_full_page_slice(renderer,
+                                          bar_text,
+                                          content_wrapped,
+                                          slice_top,
+                                          slice_height);
+
+        if (!screenshot_stream_capture_region(renderer,
+                                              &stream,
+                                              slice_height)) {
+            return false;
+        }
+
+        YIELD_NET();
+    }
+
+    return screenshot_stream_finish(&stream);
+}
+
+/* ---------- main ---------- */
+int main(void) {
+    printf("[mini_browser] enter main\n");
+
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        printf("[mini_browser] SDL_Init failed: %s\n", SDL_GetError());
+        return 0;
+    }
+
+    SDL_Window *win = SDL_CreateWindow("mini_browser", VIEW_W, VIEW_H, 0);
+    if (!win) {
+        printf("[mini_browser] CreateWindow failed: %s\n", SDL_GetError());
+        SDL_Quit();
+        return 0;
+    }
+    SDL_Renderer *ren = SDL_CreateRenderer(win, NULL);
+    if (!ren) {
+        printf("[mini_browser] CreateRenderer failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(win);
+        SDL_Quit();
+        return 0;
+    }
+
+    wifi_connect();
+    curl_global_init(0);
+
+    /* Load persistent bookmarks from BadgeVMS storage. */
+    bookmark_load();
+
+    char url_buf[URL_MAX] = HOME_URL;
+
+
+    char barline[URL_MAX + 64];
+    char *content_wrapped = NULL;
+    page_t *page = NULL;
+    int  scroll_lines = 0;
+    int  need_fetch = 1;
+    int  sel_action = -1;
+    bool pending_post = false;
+    char post_body[POST_BODY_MAX] = "";
+    long last_http_status = 0;
+    bool url_editing = false;
+    size_t url_cursor = 0;
+    bool form_editing = false;
+    int form_edit_form = -1;
+    int form_edit_field = -1;
+    char form_edit_buf[FORM_VALUE_MAX] = "";
+    size_t form_edit_cursor = 0;
+
+    /* URL to return to when leaving the bookmarks page with WHY+B. */
+    char bookmark_return_url[URL_MAX] = "";
+    bool viewing_bookmarks = false;
+
+    /* Temporary message shown in the top bar. */
+    char status_message[64] = "";
+    Uint64 status_message_until = 0;
+
+    /* Hold-to-scroll state for UP/DOWN arrow keys */
+    bool scroll_up_held = false;
+    bool scroll_down_held = false;
+    Uint64 scroll_repeat_at = 0;
+
+    /* Numbered link navigation state */
+    char link_number_buf[8] = "";
+    int link_number_len = 0;
+    bool link_number_mode = false;
+
+    /* History navigation flag - true when restoring from Back/Forward */
+    bool history_navigation = false;
+
+#if defined(ESP_PLATFORM)
+    esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
+    esp_log_level_set("HTTP_CLIENT",     ESP_LOG_ERROR);
+    esp_log_level_set("transport_base",  ESP_LOG_ERROR);
+#endif
+
+    bool accel_down = false;        /* WHY key held */
+    bool inhibit_text_once = false; /* swallow TEXT_INPUT after commands */
+    bool screenshot_pending = false;      /* WHY+S: visible 716x716 frame */
+    bool full_screenshot_pending = false; /* WHY+Z: complete rendered page */
+
+    const int max_cols = (VIEW_W - 2*PAD_LR) / CH_W;
+    const int lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
+
+    SDL_StartTextInput(win);
+
+    snprintf(barline, sizeof(barline), "%s", url_buf);
+    draw_ui(ren, barline);
+    SDL_RenderPresent(ren);
+
+    int running = 1;
+    while (running) {
+
+                if (need_fetch) {
+            url_editing = false;
+            url_cursor = 0;
+            form_editing = false;
+            form_edit_form = -1;
+            form_edit_field = -1;
+            link_number_mode = false;
+            link_number_len = 0;
+            link_number_buf[0] = '\0';
+            trim_inplace(url_buf);
+                if (!url_buf[0]) { need_fetch = 0; }
+            else {
+                if (!has_scheme(url_buf) && !(url_buf[0]=='/' && url_buf[1]=='/')) {
+                    normalize_typed_url(url_buf);
+                }
+                if (url_buf[0]=='/' && url_buf[1]=='/') {
+                    char sch[16]; scheme_from_url(page ? page->base : "https://example.org", sch, sizeof sch);
+                    char tmp[URL_MAX]; snprintf(tmp, sizeof tmp, "%s:%s", sch, url_buf);
+                    strncpy(url_buf, tmp, URL_MAX); url_buf[URL_MAX-1]=0;
+                }
+                if (is_http_scheme(url_buf)) {
+                    /* record in history just before fetching (unless reloading) */
+                    if (!history_navigation) {
+                        history_push(url_buf);
+                    }
+                    history_navigation = false;
+
+                    /*
+                     * User-facing fetch state.  Keep HTTP status codes out of the
+                     * normal title bar; detailed HTTP errors are rendered in the
+                     * page itself.
+                     */
+                    snprintf(barline, sizeof(barline), "Loading...");
+                    draw_ui(ren, barline);
+                    SDL_RenderPresent(ren);
+
+                    /* start edit v1.2 */
+                    mem_t m = {0};
+                    long http_status = 0;
+
+                    if (pending_post) {
+                        printf("[mini_browser] POST %s body=%s\n",
+                               url_buf, post_body);
+                    }
+
+                    int rc = fetch_url(url_buf,
+                                       pending_post ? post_body : NULL,
+                                       &m, &http_status);
+
+                    pending_post = false;
+                    post_body[0] = 0;
+                    last_http_status = http_status;
+
+                    if (rc != 0) {
+                        printf("[mini_browser] fetch error %d URL='%s'\n",
+                               rc, url_buf);
+
+                        if (page) {
+                            free_page(page);
+                            page = NULL;
+                        }
+
+                        free(content_wrapped);
+                        content_wrapped = NULL;
+
+                        char error_text[512];
+                        const char *curl_error = curl_easy_strerror((CURLcode)rc);
+
+                        snprintf(error_text, sizeof(error_text),
+                                 "CONNECTION FAILED\n\n"
+                                 "Could not load:\n%s\n\n"
+                                 "Reason:\n%s\n\n"
+                                 "Press WHY+R to retry, WHY+B to go back, WHY+H for homepage",
+                                 url_buf,
+                                 curl_error ? curl_error : "Unknown network error");
+
+                        content_wrapped = wrap_text(error_text, max_cols);
+                        scroll_lines = 0;
+                        sel_action = -1;
+
+                    } else if (http_status >= 400) {
+                        printf("[mini_browser] HTTP %ld URL='%s'\n",
+                               http_status, url_buf);
+
+                        if (page) {
+                            free_page(page);
+                            page = NULL;
+                        }
+
+                        free(content_wrapped);
+                        content_wrapped = NULL;
+
+                        char error_text[512];
+                        snprintf(error_text, sizeof(error_text),
+                                 "HTTP ERROR %ld\n\n"
+                                 "The server returned HTTP status %ld.\n\n"
+                                 "URL:\n%s\n\n"
+                                 "Press WHY+B to go back or WHY+R to retry.",
+                                 http_status,
+                                 http_status,
+                                 url_buf);
+
+                        content_wrapped = wrap_text(error_text, max_cols);
+                        scroll_lines = 0;
+                        sel_action = -1;
+
+			} else {
+    			debug_utf8("CURL", m.buf ? m.buf : "");
+
+    			page_t *pg = html_to_page(m.buf ? m.buf : "", url_buf);
+
+                        if (!pg) {
+                            if (page) {
+                                free_page(page);
+                                page = NULL;
+                            }
+
+                            free(content_wrapped);
+                            content_wrapped = NULL;
+
+                            char error_text[256];
+                            snprintf(error_text, sizeof(error_text),
+                                     "PARSE ERROR\n\n"
+                                     "The page was downloaded but could not "
+                                     "be converted to text.");
+
+                            content_wrapped = wrap_text(error_text, max_cols);
+                            scroll_lines = 0;
+                            sel_action = -1;
+
+                            
+			} else {
+   			 debug_utf8("PAGE TEXT", pg->text);
+
+    			char *wrapped = wrap_text(pg->text, max_cols);
+
+    			debug_utf8("WRAPPED", wrapped);
+
+    			free(content_wrapped);
+                            content_wrapped = wrapped;
+
+                            free_page(page);
+
+                            page = pg;
+                            scroll_lines = 0;
+                            sel_action = -1;
+
+                            snprintf(status_message,
+                                     sizeof(status_message),
+                                     "Loaded");
+                            status_message_until =
+                                SDL_GetTicks() + 1000;
+
+                            printf("[mini_browser] HTTP %ld, %u bytes, %d links from %s\n",
+                                   http_status,
+                                   (unsigned)m.len,
+                                   page->link_count,
+                                   url_buf);
+
+                            /*
+                             * Deterministic parser diagnostic.  Besides being
+                             * useful while debugging, the 2.5 regression suite
+                             * uses this to verify that HTML entities in <title>
+                             * were decoded into page->title.
+                             */
+                            printf("[mini_browser] page title: %s\n",
+                                   page->title[0] ? page->title : "(none)");
+                            printf("[mini_browser] parser: links=%d actions=%d forms=%d\n",
+                                   page->link_count,
+                                   page->action_count,
+                                   page->form_count);
+                            printf("[mini_browser] cookies: count=%d\n",
+                                   cookie_count());
+
+                            if (wrapped) {
+                                printf("\n--- CONTENT START ---\n%s\n--- CONTENT END ---\n",
+                                       wrapped);
+                            }
+                        }
+                    }
+
+                    free(m.buf);
+                    /* End edit v1.2 */
+
+                }
+            }
+            need_fetch = 0;
+        }
+
+/* Compose bar text */
+        if ((screenshot_pending || full_screenshot_pending) &&
+            page && page->title[0]) {
+
+            /*
+             * Screenshots should always contain the clean page title, even if
+             * a transient "Loaded" or bookmark status is still active.
+             */
+            snprintf(barline, sizeof(barline), "%s",
+                     page->title);
+
+        } else if (status_message[0] &&
+                   SDL_GetTicks() < status_message_until) {
+
+            snprintf(barline, sizeof(barline),
+                     "%s",
+                     status_message);
+
+        } else if (form_editing && page &&
+                   form_edit_form >= 0 && form_edit_form < page->form_count &&
+                   form_edit_field >= 0 &&
+                   form_edit_field < page->forms[form_edit_form].field_count) {
+            const char *name = page->forms[form_edit_form].fields[form_edit_field].name;
+            snprintf(barline, sizeof(barline), "%s: %.*s|%s",
+                     name, (int)form_edit_cursor, form_edit_buf,
+                     form_edit_buf + form_edit_cursor);
+
+        } else if (link_number_mode && link_number_len > 0) {
+            snprintf(barline, sizeof(barline),
+                      "%s",
+                      link_number_buf);
+
+        } else if (url_editing) {
+            size_t curlen = strlen(url_buf);
+
+            if (url_cursor > curlen) {
+                url_cursor = curlen;
+            }
+
+
+            snprintf(barline, sizeof(barline),
+                     "%.*s|%s",
+                     (int)url_cursor,
+                     url_buf,
+                     url_buf + url_cursor);
+
+        } else if (page && sel_action >= 0 && sel_action < page->action_count) {
+            const page_action_t *action = &page->actions[sel_action];
+            if (action->type == ACTION_LINK && action->link_index >= 0 &&
+                action->link_index < page->link_count) {
+                snprintf(barline, sizeof(barline), "[%d/%d]  %s",
+                         sel_action + 1, page->action_count,
+                         page->links[action->link_index].href);
+            } else {
+                snprintf(barline, sizeof(barline), "[%d/%d]",
+                         sel_action + 1, page->action_count);
+            }
+
+        } else if (page && page->title[0]) {
+            /*
+             * Normal idle state: show the page title, not HTTP 200.
+             * HTTP failures are already shown as readable page content.
+             */
+            snprintf(barline, sizeof(barline), "%s",
+                     page->title);
+
+        } else {
+            snprintf(barline, sizeof(barline), "%s", url_buf);
+        }
+
+        /* Draw UI + visible text slice */
+        draw_ui(ren, barline);
+        if (content_wrapped) {
+            int y = PAD_TOP;
+            const char *p = content_wrapped;
+            for (int s = 0; s < scroll_lines && p && *p; ) { if (*p++ == '\n') s++; }
+            SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
+            int drawn = 0;
+            while (p && *p && drawn < lines_per_page) {
+                const char *nl = strchr(p, '\n');
+                int len = nl ? (int)(nl - p) : (int)strlen(p);
+                char tmp[1024];
+                if (len > (int)sizeof(tmp)-1) len = (int)sizeof(tmp)-1;
+                memcpy(tmp, p, len); tmp[len] = 0;
+                draw_text(ren, PAD_LR, y, tmp, VIEW_W - 2*PAD_LR);
+                y += (CH_H + LINE_SPACING);
+                drawn++;
+                p = nl ? nl + 1 : NULL;
+            }
+        }
+        if (full_screenshot_pending) {
+            screenshot_stream_full_page(ren, barline, content_wrapped);
+            full_screenshot_pending = false;
+
+            /*
+             * Full-page capture reuses the 716x716 renderer as a scratch
+             * surface. Do not present its final slice on the badge; the next
+             * loop iteration redraws the user's unchanged viewport.
+             */
+            continue;
+        }
+
+        if (screenshot_pending) {
+            screenshot_stream_renderer(ren);
+            screenshot_pending = false;
+        }
+
+        SDL_RenderPresent(ren);
+
+        /* Events */
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_EVENT_QUIT) { running = 0; break; }
+
+            if (ev.type == SDL_EVENT_TEXT_INPUT) {
+                if (inhibit_text_once) {
+                    inhibit_text_once = false;
+                    continue;
+                }
+
+                const char *t = ev.text.text;
+
+                if (form_editing && is_printable_ascii(t)) {
+                    size_t edit_len = strlen(form_edit_buf);
+                    if (form_edit_cursor > edit_len) form_edit_cursor = edit_len;
+                    if (edit_len < sizeof(form_edit_buf) - 1) {
+                        memmove(&form_edit_buf[form_edit_cursor + 1],
+                                &form_edit_buf[form_edit_cursor],
+                                edit_len - form_edit_cursor + 1);
+                        form_edit_buf[form_edit_cursor++] = t[0];
+                    }
+                } else if (url_editing && is_printable_ascii(t)) {
+                    size_t curlen = strlen(url_buf);
+
+                    if (url_cursor > curlen) {
+                        url_cursor = curlen;
+                    }
+
+                    if (curlen < URL_MAX - 1) {
+                        memmove(&url_buf[url_cursor + 1],
+                                &url_buf[url_cursor],
+                                curlen - url_cursor + 1);
+
+                        url_buf[url_cursor] = t[0];
+                        url_cursor++;
+                        sel_action = -1;
+                    }
+                } else if (page && page->action_count > 0 &&
+                           t[0] >= '0' && t[0] <= '9') {
+                    if (!link_number_mode) {
+                        link_number_mode = true;
+                        link_number_len = 0;
+                        link_number_buf[0] = '\0';
+                    }
+                    if (link_number_len < (int)sizeof(link_number_buf) - 1) {
+                        link_number_buf[link_number_len++] = t[0];
+                        link_number_buf[link_number_len] = '\0';
+                    }
+                }
+            }
+            
+            if (ev.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Scancode sc = ev.key.scancode;
+
+                /* Track accelerator press/release */
+                if (sc == SC_ACCELERATOR) {
+                    accel_down = true;
+                    inhibit_text_once = true;
+                    continue;
+                }
+
+                /* Special one-shot keys -> direct navigate */
+                if (sc == SC_SPECIAL_124) {  strncpy(url_buf, SPECIAL_URL_124, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_125) {  strncpy(url_buf, SPECIAL_URL_125, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_126) {  strncpy(url_buf, SPECIAL_URL_126, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_127) {  strncpy(url_buf, SPECIAL_URL_127, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_128) {  strncpy(url_buf, SPECIAL_URL_128, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+                if (sc == SC_SPECIAL_129) {  strncpy(url_buf, SPECIAL_URL_129, URL_MAX); url_buf[URL_MAX-1]=0; need_fetch=1; sel_action=-1; inhibit_text_once=true; continue; }
+
+                 
+                /* Accelerator combos (E,C,H,R,F,M,B,Q) */       
+                 if (accel_down) {
+                    switch (sc) {
+                        case SDL_SCANCODE_E:
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
+                            strncpy(url_buf, "https://", URL_MAX);
+                            url_buf[URL_MAX-1] = 0;
+                            url_cursor = strlen(url_buf);
+                            sel_action = -1;
+                            url_editing = true;
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                            inhibit_text_once = true;
+                            break;
+                        case SDL_SCANCODE_C:
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
+                            url_cursor = strlen(url_buf);
+                            sel_action = -1;
+                            url_editing = true;
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                            inhibit_text_once = true;
+                            break;
+
+                        case SDL_SCANCODE_H:
+                            
+                            strncpy(url_buf, HOME_URL, URL_MAX);
+                            url_buf[URL_MAX-1] = 0;
+                            need_fetch = 1;
+                            sel_action = -1;
+                            inhibit_text_once = true;
+                            break;
+                        case SDL_SCANCODE_R:
+                            history_navigation = true;
+                            need_fetch = 1;
+                            inhibit_text_once = true;
+                            break;
+
+                        case SDL_SCANCODE_M: { /* SHOW BOOKMARKS */
+                            /*
+                             * Remember the page we were viewing. If WHY+M is
+                             * pressed again while already in bookmarks, keep
+                             * the original return URL.
+                             */
+                            if (!viewing_bookmarks &&
+                                is_http_scheme(url_buf)) {
+
+                                strncpy(bookmark_return_url,
+                                        url_buf,
+                                        URL_MAX);
+
+                                bookmark_return_url[URL_MAX - 1] = 0;
+                            }
+
+                            page_t *pg = bookmarks_to_page();
+
+                            if (pg) {
+                                char *wrapped = wrap_text(pg->text, max_cols);
+
+                                free(content_wrapped);
+                                content_wrapped = wrapped;
+
+                                if (page) {
+                                    free_page(page);
+                                }
+
+                                page = pg;
+
+                                strncpy(url_buf, "bookmarks:", URL_MAX);
+                                url_buf[URL_MAX - 1] = 0;
+
+                                last_http_status = 0;
+                                scroll_lines = 0;
+                                sel_action = -1;
+                                url_editing = false;
+                                viewing_bookmarks = true;
+
+                                printf("[mini_browser] opened bookmarks: %d entries\n",
+                                       g_bookmark_count);
+                            }
+
+                            inhibit_text_once = true;
+                            break;
+                        }
+
+                       
+                        case SDL_SCANCODE_F: { /* BOOKMARK current page */
+                            const char *title =
+                                (page && page->title[0])
+                                    ? page->title
+                                    : url_buf;
+
+                            int added = bookmark_toggle(url_buf, title);
+
+                            bookmark_save();
+
+                            snprintf(status_message,
+                                     sizeof(status_message),
+                                     "%s",
+                                     added
+                                         ? "BOOKMARK ADDED"
+                                         : "BOOKMARK REMOVED");
+
+                            status_message_until =
+                                SDL_GetTicks() + 1500;
+
+                            printf("[mini_browser] %s bookmark: %s\n",
+                                   added ? "added" : "removed",
+                                   url_buf);
+
+                            inhibit_text_once = true;
+                            break;
+                        }
+ 
+                        case SDL_SCANCODE_B: { /* BACK */
+                            if (viewing_bookmarks &&
+                                bookmark_return_url[0]) {
+
+                                strncpy(url_buf,
+                                        bookmark_return_url,
+                                        URL_MAX);
+
+                                url_buf[URL_MAX - 1] = 0;
+                                bookmark_return_url[0] = 0;
+
+                                viewing_bookmarks = false;
+                                history_navigation = true;
+                                need_fetch = 1;
+                                sel_action = -1;
+
+                            } else {
+                                char prev[URL_MAX];
+
+                                if (history_back(prev)) {
+                                    strncpy(url_buf, prev, URL_MAX);
+                                    url_buf[URL_MAX-1] = 0;
+                                    history_navigation = true;
+                                    need_fetch = 1;
+                                    sel_action = -1;
+                                }
+                            }
+
+                            inhibit_text_once = true;
+                            break;
+                        }
+
+                        case SDL_SCANCODE_G: { /* FORWARD */
+                            char next_url[URL_MAX];
+                            if (history_forward(next_url)) {
+                                strncpy(url_buf, next_url, URL_MAX);
+                                url_buf[URL_MAX-1] = 0;
+                                history_navigation = true;
+                                need_fetch = 1;
+                                sel_action = -1;
+                            }
+                            inhibit_text_once = true;
+                            break;
+                        }
+
+                        case SDL_SCANCODE_S:
+                            screenshot_pending = true;
+                            inhibit_text_once = true;
+                            printf("[mini_browser] screenshot requested; clean frame queued\n");
+                            break;
+
+                        case SDL_SCANCODE_Z:
+                            full_screenshot_pending = true;
+                            inhibit_text_once = true;
+                            printf("[mini_browser] full-page screenshot requested; clean page queued\n");
+                            break;
+
+                        case SDL_SCANCODE_Q:
+                            running = 0;
+                            inhibit_text_once = true;
+                            break;
+                        default:
+                            break;
+                    }
+                    continue;
+                }
+
+                /* Normal keys (no accelerator) */
+                switch (sc) {
+                    /* URL actions */
+
+                    case SDL_SCANCODE_RETURN:
+                    case SDL_SCANCODE_KP_ENTER:
+                        if (form_editing) {
+                            if (page && form_edit_form >= 0 &&
+                                form_edit_form < page->form_count &&
+                                form_edit_field >= 0 &&
+                                form_edit_field < page->forms[form_edit_form].field_count) {
+                                form_field_t *field =
+                                    &page->forms[form_edit_form].fields[form_edit_field];
+                                strncpy(field->value, form_edit_buf, sizeof(field->value));
+                                field->value[sizeof(field->value) - 1] = 0;
+                                if (refresh_page_text(page)) {
+                                    char *wrapped = wrap_text(page->text, max_cols);
+                                    if (wrapped) {
+                                        free(content_wrapped);
+                                        content_wrapped = wrapped;
+                                    }
+                                }
+                            }
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
+                        } else if (url_editing) {
+                            url_editing = false;
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                            need_fetch = 1;
+                        } else if (page && (link_number_mode || sel_action >= 0)) {
+                            int action_index = sel_action;
+                            if (link_number_mode) {
+                                int action_number = atoi(link_number_buf);
+                                action_index = action_number - 1;
+                            }
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                            activate_result_t result = activate_page_action(
+                                page, action_index, url_buf, sizeof(url_buf),
+                                &form_edit_form, &form_edit_field,
+                                form_edit_buf, sizeof(form_edit_buf),
+                                &form_edit_cursor,
+                                post_body, sizeof(post_body));
+                            if (result == ACTIVATE_EDIT_FIELD) {
+                                form_editing = true;
+                                url_editing = false;
+                            } else if (result == ACTIVATE_NAVIGATE) {
+                                pending_post = false;
+                                post_body[0] = 0;
+                                viewing_bookmarks = false;
+                                bookmark_return_url[0] = 0;
+                                history_navigation = false;
+                                need_fetch = 1;
+                            } else if (result == ACTIVATE_POST) {
+                                pending_post = true;
+                                viewing_bookmarks = false;
+                                bookmark_return_url[0] = 0;
+                                history_navigation = false;
+                                need_fetch = 1;
+                            } else if (result == ACTIVATE_FORM_UNSUPPORTED) {
+                                snprintf(status_message, sizeof(status_message),
+                                         "FORM METHOD/ENCODING NOT SUPPORTED");
+                                status_message_until = SDL_GetTicks() + 2000;
+                            } else if (result == ACTIVATE_URL_TOO_LONG) {
+                                snprintf(status_message, sizeof(status_message),
+                                         "FORM URL TOO LONG");
+                                status_message_until = SDL_GetTicks() + 2000;
+                            }
+                        } else {
+                            need_fetch = 1;
+                        }
+                        break;
+                    case SDL_SCANCODE_BACKSPACE:
+                        if (form_editing) {
+                            size_t edit_len = strlen(form_edit_buf);
+                            if (form_edit_cursor > edit_len) form_edit_cursor = edit_len;
+                            if (form_edit_cursor > 0) {
+                                memmove(&form_edit_buf[form_edit_cursor - 1],
+                                        &form_edit_buf[form_edit_cursor],
+                                        edit_len - form_edit_cursor + 1);
+                                form_edit_cursor--;
+                            }
+                        } else if (url_editing) {
+                            size_t curlen = strlen(url_buf);
+
+                            if (url_cursor > curlen) {
+                                url_cursor = curlen;
+                            }
+
+                            if (url_cursor > 0) {
+                                memmove(&url_buf[url_cursor - 1],
+                                        &url_buf[url_cursor],
+                                        curlen - url_cursor + 1);
+
+                                url_cursor--;
+                            }
+
+                            sel_action = -1;
+                        } else if (link_number_mode && link_number_len > 0) {
+                            link_number_len--;
+                            link_number_buf[link_number_len] = '\0';
+                        }
+                        break;
+
+                    case SDL_SCANCODE_DELETE:
+                        if (form_editing) {
+                            size_t edit_len = strlen(form_edit_buf);
+                            if (form_edit_cursor > edit_len) form_edit_cursor = edit_len;
+                            if (form_edit_cursor < edit_len) {
+                                memmove(&form_edit_buf[form_edit_cursor],
+                                        &form_edit_buf[form_edit_cursor + 1],
+                                        edit_len - form_edit_cursor);
+                            }
+                        } else if (url_editing) {
+                            size_t curlen = strlen(url_buf);
+
+                            if (url_cursor > curlen) {
+                                url_cursor = curlen;
+                            }
+
+                            if (url_cursor < curlen) {
+                                memmove(&url_buf[url_cursor],
+                                        &url_buf[url_cursor + 1],
+                                        curlen - url_cursor);
+                            }
+
+                            sel_action = -1;
+                        } else if (link_number_mode && link_number_len > 0) {
+                            link_number_len--;
+                            link_number_buf[link_number_len] = '\0';
+                        }
+                        break;
+
+                    case SDL_SCANCODE_LEFT:
+                        if (form_editing) {
+                            if (form_edit_cursor > 0) form_edit_cursor--;
+                        } else if (url_editing) {
+                            if (url_cursor > 0) {
+                                url_cursor--;
+                            }
+                        }
+                        break;
+
+                    case SDL_SCANCODE_RIGHT:
+                        if (form_editing) {
+                            if (form_edit_cursor < strlen(form_edit_buf))
+                                form_edit_cursor++;
+                        } else if (url_editing) {
+                            size_t curlen = strlen(url_buf);
+
+                            if (url_cursor < curlen) {
+                                url_cursor++;
+                            }
+                        }
+                        break;
+
+                    case SDL_SCANCODE_END:
+                        if (form_editing) {
+                            form_edit_cursor = strlen(form_edit_buf);
+                        } else if (url_editing) {
+                            url_cursor = strlen(url_buf);
+                        }
+                        break;
+
+                    /* Numbered link navigation: digits handled via TEXT_INPUT */
+
+                    /* Scrolling */
+                    
+                    case SDL_SCANCODE_DOWN:
+                        if (!url_editing && !form_editing) {
+                            if (!scroll_down_held) {
+                                scroll_down_held = true;
+                                scroll_up_held = false;
+                                scroll_lines++;
+                                scroll_repeat_at = SDL_GetTicks() + SCROLL_REPEAT_DELAY_MS;
+                            }
+                        }
+                        break;
+                    case SDL_SCANCODE_J:
+                        if (!url_editing && !form_editing) scroll_lines++;
+                        break;
+                    case SDL_SCANCODE_UP:
+                        if (!url_editing && !form_editing) {
+                            if (!scroll_up_held) {
+                                scroll_up_held = true;
+                                scroll_down_held = false;
+                                if (scroll_lines > 0) scroll_lines--;
+                                scroll_repeat_at = SDL_GetTicks() + SCROLL_REPEAT_DELAY_MS;
+                            }
+                        }
+                        break;
+                    case SDL_SCANCODE_K:
+                        if (!url_editing && !form_editing && scroll_lines > 0)
+                            scroll_lines--;
+                        break;
+                    case SDL_SCANCODE_HOME:
+                        if (form_editing) {
+                            form_edit_cursor = 0;
+                        } else if (url_editing) {
+                            url_cursor = 0;
+                        } else {
+                            scroll_lines = 0;
+                        }
+                        break;
+                    case SDL_SCANCODE_PAGEDOWN: {
+                        if (!url_editing && !form_editing) {
+                            int lpp = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
+                            scroll_lines += lpp > 2 ? lpp - 2 : 1;
+                        }
+                        break;
+                    }
+                    case SDL_SCANCODE_PAGEUP:
+                        if (!url_editing && !form_editing) {
+                            if (scroll_lines >= 5) scroll_lines -= 5; else scroll_lines = 0;
+                        }
+                        break;
+
+                    /* Link navigation */
+case SDL_SCANCODE_TAB: {
+    bool shift = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
+    if (!form_editing && !url_editing && page && page->action_count > 0) {
+        if (sel_action < 0) {
+            /* First time we tab (Tab or Shift+Tab): start at the first link */
+            sel_action = 0;
+        } else if (shift) {
+            /* Move backward, wrapping to last if we're at the start */
+            sel_action = (sel_action == 0) ? (page->action_count - 1) : (sel_action - 1);
+        } else {
+            /* Move forward with wraparound */
+            sel_action = (sel_action + 1) % page->action_count;
+        }
+    }
+    break;
+}
+                    case SDL_SCANCODE_ESCAPE:
+                        if (form_editing) {
+                            form_editing = false;
+                            form_edit_form = -1;
+                            form_edit_field = -1;
+                        } else if (link_number_mode) {
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                        } else {
+                            running = 0;
+                        }
+                        break;
+                    /* Digit keys: handled via TEXT_INPUT, just break here */
+                    case SDL_SCANCODE_1:
+                    case SDL_SCANCODE_2:
+                    case SDL_SCANCODE_3:
+                    case SDL_SCANCODE_4:
+                    case SDL_SCANCODE_5:
+                    case SDL_SCANCODE_6:
+                    case SDL_SCANCODE_7:
+                    case SDL_SCANCODE_8:
+                    case SDL_SCANCODE_9:
+                    case SDL_SCANCODE_0:
+                        break;
+                    default:
+                        if (link_number_mode) {
+                            link_number_mode = false;
+                            link_number_len = 0;
+                            link_number_buf[0] = '\0';
+                        }
+                        break;
+                }
+            } /* KEY_DOWN */
+
+            if (ev.type == SDL_EVENT_KEY_UP) {
+                if (ev.key.scancode == SC_ACCELERATOR) {
+                    accel_down = false;
+                    inhibit_text_once = false;
+                } else if (ev.key.scancode == SDL_SCANCODE_UP) {
+                    scroll_up_held = false;
+                } else if (ev.key.scancode == SDL_SCANCODE_DOWN) {
+                    scroll_down_held = false;
+                }
+            }
+        } /* while events */
+
+        /* Timed scroll repeat for held arrow keys */
+        if (!url_editing && !form_editing) {
+            Uint64 now = SDL_GetTicks();
+            if (scroll_down_held && now >= scroll_repeat_at) {
+                scroll_lines++;
+                scroll_repeat_at = now + SCROLL_REPEAT_INTERVAL_MS;
+            } else if (scroll_up_held && now >= scroll_repeat_at) {
+                if (scroll_lines > 0) scroll_lines--;
+                scroll_repeat_at = now + SCROLL_REPEAT_INTERVAL_MS;
+            }
+        }
+
+        SDL_Delay(10);
+    }
+
+    SDL_StopTextInput(win);
+    free_page(page);
+    free(content_wrapped);
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    SDL_Quit();
+    curl_global_cleanup();
+    printf("[mini_browser] exit main\n");
+    return 0;
+}

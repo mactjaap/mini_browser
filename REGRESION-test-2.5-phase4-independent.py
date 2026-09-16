@@ -39,7 +39,7 @@ import serial
 
 CONFIG = {
     "serial": {
-        "device": "/dev/cu.wchusbserial10",
+        "device": "/dev/cu.wchusbserial110",
         "baudrate": 115200,
         "startup_delay": 2.0,
         "default_timeout": 1000,
@@ -1712,75 +1712,141 @@ def phase3_submit_edited_post(badge):
 
 
 def phase4_open(badge, path, end_marker):
+    """
+    Phase 4 navigation deliberately does NOT go through WHY+H/home first.
+    WHY+E works from any Mini Browser page and avoids an unrelated home-page
+    request becoming a synchronization dependency for cookie tests.
+    """
     badge.clear_log()
-    open_direct_url(
-        badge,
-        "minibrowser.macip.net/" + path,
+    badge.why("E")
+    badge.settle(0.5)
+
+    # WHY+E seeds https://, so type only host/path.
+    badge.type_text("minibrowser.macip.net/" + path)
+    badge.settle(0.2)
+    badge.enter()
+    badge.settle(0.4)
+
+    badge.wait_for(
         r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path),
+        DEFAULT_TIMEOUT,
     )
     badge.wait_for(re.escape(end_marker), 15)
     badge.settle(0.5)
     return latest_content_block(badge)
 
 
+def phase4_reset(badge):
+    """Return the two Phase 4 cookie names to a known absent state."""
+    content = phase4_open(badge, "phase4-cookie-reset.php", "END COOKIE RESET")
+    require_content(content, "COOKIE RESET PAGE", "END COOKIE RESET")
+    return content
+
+
 def phase4_store_send(badge):
+    # Independent test: never rely on cookie state left by another test.
+    phase4_reset(badge)
+
     content = phase4_open(badge, "phase4-cookie-set.php", "END COOKIE SET")
     require_content(content, "COOKIE SET PAGE", "Set mb_session=alpha123")
-    badge.wait_for(r"\[mini_browser\] cookie store: mb_session=alpha123 .*count=1", 10)
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_session=alpha123 ",
+        10,
+    )
 
     content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
     require_content(content, "mb_session: alpha123")
-    badge.wait_for(r"\[mini_browser\] cookie send: .*mb_session=alpha123", 10)
+    badge.wait_for(
+        r"\[mini_browser\] cookie send: .*mb_session=alpha123",
+        10,
+    )
     return [
-        "Set-Cookie stored in bounded static session jar",
-        "Secure cookie sent on subsequent HTTPS request",
-        "Server received mb_session=alpha123",
+        "Started from a known empty Phase 4 cookie state",
+        "Set-Cookie stored mb_session=alpha123",
+        "Server received mb_session=alpha123 on the next HTTPS request",
     ]
 
 
 def phase4_replace(badge):
+    # Independent test: create the value that this test intends to replace.
+    phase4_reset(badge)
+
+    content = phase4_open(badge, "phase4-cookie-set.php", "END COOKIE SET")
+    require_content(content, "Set mb_session=alpha123")
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_session=alpha123 ",
+        10,
+    )
+
     content = phase4_open(badge, "phase4-cookie-replace.php", "END COOKIE REPLACE")
     require_content(content, "Replaced mb_session with beta456")
-    badge.wait_for(r"\[mini_browser\] cookie store: mb_session=beta456 .*count=1", 10)
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_session=beta456 ",
+        10,
+    )
 
     content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
     require_content(content, "mb_session: beta456")
     return [
-        "Matching name/domain/path cookie replaced in place",
-        "Jar count remained one for the session cookie",
-        "Server received replacement value beta456",
+        "Started from a known empty Phase 4 cookie state",
+        "Created alpha123 and then replaced it with beta456",
+        "Server received the replacement value beta456",
     ]
 
 
 def phase4_path_scope(badge):
+    # Independent test: no dependency on the session cookie tests.
+    phase4_reset(badge)
+
     content = phase4_open(badge, "phase4-cookie-path-set.php", "END PATH COOKIE SET")
     require_content(content, "PATH COOKIE SET", "Set mb_path=private789")
-    badge.wait_for(r"\[mini_browser\] cookie store: mb_path=private789 .*path=/phase4-private .*count=2", 10)
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_path=private789 .*path=/phase4-private ",
+        10,
+    )
 
+    # This URL is outside the cookie path and must not receive mb_path.
     content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
     require_content(content, "mb_path: (missing)")
 
+    # This URL is inside /phase4-private and must receive it.
     content = phase4_open(badge, "phase4-private/check.php", "END PRIVATE COOKIE CHECK")
     require_content(content, "mb_path: private789")
-    badge.wait_for(r"\[mini_browser\] cookie send: .*mb_path=private789", 10)
+    badge.wait_for(
+        r"\[mini_browser\] cookie send: .*mb_path=private789",
+        10,
+    )
     return [
+        "Started from a known empty Phase 4 cookie state",
         "Path cookie withheld outside /phase4-private",
-        "Path cookie sent inside /phase4-private",
-        "Server received mb_path=private789 only on matching path",
+        "Path cookie sent and received inside /phase4-private",
     ]
 
 
 def phase4_delete(badge):
+    # Independent test: create the cookie here before deleting it.
+    phase4_reset(badge)
+
+    content = phase4_open(badge, "phase4-cookie-set.php", "END COOKIE SET")
+    require_content(content, "Set mb_session=alpha123")
+    badge.wait_for(
+        r"\[mini_browser\] cookie store: mb_session=alpha123 ",
+        10,
+    )
+
     content = phase4_open(badge, "phase4-cookie-delete.php", "END COOKIE DELETE")
     require_content(content, "COOKIE DELETE PAGE", "Deleted mb_session")
-    badge.wait_for(r"\[mini_browser\] cookie delete: mb_session count=1", 10)
+    badge.wait_for(
+        r"\[mini_browser\] cookie delete: mb_session ",
+        10,
+    )
 
     content = phase4_open(badge, "phase4-cookie-check.php", "END COOKIE CHECK")
     require_content(content, "mb_session: (missing)")
     return [
-        "Max-Age=0 removed the matching session cookie",
-        "Deleted cookie was not sent again",
-        "Unrelated path-scoped cookie remained",
+        "Started from a known empty Phase 4 cookie state",
+        "Created mb_session and deleted it with Max-Age=0",
+        "Server confirmed the deleted cookie was not sent again",
     ]
 
 

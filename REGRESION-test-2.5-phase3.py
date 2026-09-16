@@ -1560,6 +1560,151 @@ def command_setup(badge, setup):
     )
 
 
+
+def phase3_open_form(badge):
+    return phase2_open(badge, "phase3-post-form.html")
+
+
+def phase3_post_parser(badge):
+    content = phase3_open_form(badge)
+    joined = require_content(
+        content,
+        "POST FORM START",
+        "WHY2025",
+        "Hello Mini Browser!",
+        "Send POST",
+        "POST FORM END",
+    )
+
+    actions = numbered_actions(content)
+    labels = [normalize_control_text(a["label"]) for a in actions]
+
+    for wanted in ("user: WHY2025", "message: Hello Mini Browser!", "send post"):
+        if not any(wanted in label for label in labels):
+            raise RuntimeError(f"Expected POST form action missing: {wanted}")
+
+    links, actions_count, forms = phase2_parser_counts(badge)
+    if (links, actions_count, forms) != (0, 3, 1):
+        raise RuntimeError(
+            f"Expected parser counts 0/3/1, got "
+            f"{links}/{actions_count}/{forms}"
+        )
+
+    return [
+        "method=post form parsed successfully",
+        "Two editable fields plus submit produced three actions",
+        "Hidden field retained without becoming an action",
+    ]
+
+
+def phase3_submit_default_post(badge):
+    phase3_open_form(badge)
+    badge.clear_log()
+
+    # [1] user, [2] message, [3] Send POST
+    badge.type_text("3")
+    badge.enter()
+
+    expected_body = (
+        "user=WHY2025"
+        "&message=Hello+Mini+Browser%21"
+        "&token=A%26B%3D100%25"
+        "&submit=Send"
+    )
+
+    badge.wait_for(
+        r"\[mini_browser\] POST .*phase3-post\.php body="
+        + re.escape(expected_body),
+        15,
+    )
+    badge.wait_for(
+        r"HTTP 200.*phase3-post\.php",
+        DEFAULT_TIMEOUT,
+    )
+    badge.wait_for(r"POST RESULT END", 15)
+    badge.settle(0.5)
+
+    content = latest_content_block(badge)
+    joined = require_content(
+        content,
+        "POST RESULT START",
+        "METHOD: POST",
+        "CONTENT-TYPE: application/x-www-form-urlencoded",
+        "user: WHY2025",
+        "message: Hello Mini Browser!",
+        "token: A&B=100%",
+        "submit: Send",
+        "POST RESULT END",
+    )
+
+    if "RAW: " + expected_body not in joined:
+        raise RuntimeError("Server did not receive the exact expected POST body")
+
+    return [
+        "Server received HTTP POST",
+        "Content-Type was application/x-www-form-urlencoded",
+        "Spaces/special characters were form-urlencoded correctly",
+        "Hidden field and activated submit button were included",
+        "Exact raw POST body verified by server response",
+    ]
+
+
+def phase3_submit_edited_post(badge):
+    phase3_open_form(badge)
+    badge.clear_log()
+
+    # Edit action [2]: message.
+    badge.type_text("2")
+    badge.enter()
+    badge.settle(0.3)
+
+    # Existing value is exactly: Hello Mini Browser! (19 chars).
+    for _ in range(len("Hello Mini Browser!")):
+        badge.backspace()
+    badge.type_text("POST works & yes")
+    badge.enter()
+    badge.settle(0.3)
+
+    # Submit action [3].
+    badge.type_text("3")
+    badge.enter()
+
+    expected_body = (
+        "user=WHY2025"
+        "&message=POST+works+%26+yes"
+        "&token=A%26B%3D100%25"
+        "&submit=Send"
+    )
+
+    badge.wait_for(
+        r"\[mini_browser\] POST .*phase3-post\.php body="
+        + re.escape(expected_body),
+        15,
+    )
+    badge.wait_for(r"POST RESULT END", DEFAULT_TIMEOUT)
+    badge.settle(0.5)
+
+    content = latest_content_block(badge)
+    joined = require_content(
+        content,
+        "METHOD: POST",
+        "message: POST works & yes",
+        "token: A&B=100%",
+        "submit: Send",
+        "POST RESULT END",
+    )
+
+    if "RAW: " + expected_body not in joined:
+        raise RuntimeError("Edited value was not encoded in exact POST body")
+
+    return [
+        "Editable POST field changed before submission",
+        "Edited value reached server intact",
+        "Ampersand encoded as %26 in raw request body",
+    ]
+
+
+
 def show_final_result_page(badge, passed):
     """Leave Mini Browser displaying a clear PASS / NOT PASS result page."""
     filename = (
@@ -1820,6 +1965,22 @@ def main():
             )
             number += 1
 
+        # Mini Browser 2.5 Phase 3: bounded application/x-www-form-urlencoded POST.
+        phase3_cases = [
+            ("Phase 3: parse POST form", lambda: phase3_post_parser(badge)),
+            ("Phase 3: submit default POST form", lambda: phase3_submit_default_post(badge)),
+            ("Phase 3: submit edited POST form", lambda: phase3_submit_edited_post(badge)),
+        ]
+
+        for description, test_func in phase3_cases:
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
         # Configured sites.
         for site in CONFIG["sites"]:
             def site_test(site=site):
@@ -1910,17 +2071,20 @@ def main():
             )
             number += 1
 
-        print_summary(results)
-
         all_passed = all(
             result["passed"]
             for result in results
         )
 
+        # Leave the badge on its visual PASS / NOT PASS result page first.
         show_final_result_page(
             badge,
             all_passed,
         )
+
+        # Keep the full human-readable console result as the final output.
+        # Nothing from the badge is printed after this summary.
+        print_summary(results)
 
         return 0 if all_passed else 1
 

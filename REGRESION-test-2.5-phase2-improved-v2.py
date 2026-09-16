@@ -1910,17 +1910,20 @@ def main():
             )
             number += 1
 
-        print_summary(results)
-
         all_passed = all(
             result["passed"]
             for result in results
         )
 
+        # Leave the badge on its visual PASS / NOT PASS result page first.
         show_final_result_page(
             badge,
             all_passed,
         )
+
+        # Keep the full human-readable console result as the final output.
+        # Nothing from the badge is printed after this summary.
+        print_summary(results)
 
         return 0 if all_passed else 1
 

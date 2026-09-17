@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 2.4 - Documentation</title>
-  <meta name="description" content="Documentation for Mini Browser 2.4 on the WHY2025 badge">
+  <title>Mini Browser 2.5 - Documentation</title>
+  <meta name="description" content="Documentation for Mini Browser 2.5 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 2.4</h1>
+<h1>Mini Browser 2.5</h1>
 
 <p>
 Mini Browser is a compact, interactive, text-oriented web browser for the WHY2025 badge,
@@ -15,9 +15,11 @@ written in C using SDL3 and libcurl.
 </p>
 
 <p>
-Version 2.4 combines links, GET forms, bookmarks and Back/Forward history with
-56,352-glyph Unicode rendering, word-aware UTF-8-safe pixel wrapping, RTL/Bidi
-rendering, contextual Arabic shaping, monochrome Plane-1 emoji and genuine bold text.
+Version 2.5 builds on the 2.4 Unicode and rendering foundation with a more robust
+HTML/entity parser, editable action-number input, bounded POST form submission, a
+bounded in-memory cookie jar and a WHY+I HTTP/TLS Inspector. It retains the
+56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering, contextual Arabic
+shaping, bookmarks, history and complete-page screenshots.
 </p>
 
 <p><a href="/">Back to Mini Browser home</a></p>
@@ -106,7 +108,7 @@ implemented. Variation-selector handling is limited.
 <h2>Simple HTML forms</h2>
 
 <p>
-Mini Browser supports simple GET forms. Supported input types include text, search,
+Mini Browser supports simple GET and POST forms. Supported input types include text, search,
 url, hidden and submit. Submit buttons made with the button element are also supported.
 </p>
 
@@ -121,14 +123,15 @@ to store it. Then type 2 and press Enter to submit.
 </p>
 
 <p>
-GET form data is URL encoded. Hidden fields are submitted, disabled fields are ignored,
-and an activated named submit button is included where appropriate. Up to 4 forms with
-up to 8 fields per form are supported.
+GET and POST form data is URL encoded as application/x-www-form-urlencoded. Hidden
+fields are submitted, disabled fields are ignored, and an activated named submit button
+is included where appropriate. POST request bodies are bounded to 2048 bytes. Up to 4
+forms with up to 8 fields per form are supported.
 </p>
 
 <p>
-POST forms are recognised but are not submitted. Textarea, select, checkboxes, radio
-buttons, file uploads and JavaScript-driven forms are not currently supported.
+Textarea, select, checkboxes, radio buttons, file uploads and JavaScript-driven forms
+are not currently supported.
 </p>
 
 <pre>
@@ -187,6 +190,7 @@ one-line scrolling.
   <li>WHY+M - bookmarks</li>
   <li>WHY+S - capture and transmit the visible 716x716 viewport</li>
   <li>WHY+Z - capture and transmit the complete rendered page</li>
+  <li>WHY+I - open HTTP/TLS Inspector / Page Information</li>
   <li>WHY+Q - quit</li>
 </ul>
 
@@ -396,6 +400,38 @@ badge_open_url.py requires the customized WHY2025 firmware described above.
 <pre>
 </pre>
 
+<h2>HTTP/TLS Inspector</h2>
+
+<p>
+Press WHY+I to open the HTTP/TLS Inspector for the current page. It shows bounded
+metadata retained from the actual request without making an extra HEAD request: page
+title and size, link/form/action counts, request method and URL, transport, cookies
+sent, HTTP status and Content-Type, cookie-jar usage and browser limits.
+</p>
+
+<p>
+The trimmed BadgeVMS libcurl exposes only a small set of CURLINFO fields. Connection
+address/port, negotiated HTTP version, certificate details and certificate-verification
+result are therefore reported as unavailable rather than guessed. Effective/final URL
+and redirect metadata are also reported as unavailable because they are not reliable in
+this environment. WHY+B or WHY+I returns to the page.
+</p>
+
+<pre>
+</pre>
+
+<h2>Cookies</h2>
+
+<p>
+Mini Browser 2.5 includes a bounded in-memory session cookie jar. It stores up to 12
+cookies, supports replacement, path scoping and deletion with Max-Age=0, and sends
+matching cookies on subsequent requests. Cookies are not persisted across browser
+restarts.
+</p>
+
+<pre>
+</pre>
+
 <h2>Bookmarks and history</h2>
 
 <p>
@@ -434,6 +470,8 @@ shown as readable browser pages.
   <li>editable form value - 127 characters</li>
   <li>bookmarks - 32</li>
   <li>history entries - 32</li>
+  <li>cookies - 12</li>
+  <li>POST request body - 2048 bytes</li>
 </ul>
 
 <pre>
@@ -442,8 +480,8 @@ shown as readable browser pages.
 <h2>Unsupported web features</h2>
 
 <p>
-Mini Browser does not implement JavaScript, CSS layout, images, audio/video, POST form
-submission, complex form controls, file uploads, a complete HTML5 DOM/parser, color
+Mini Browser does not implement JavaScript, CSS layout, images, audio/video, complex
+form controls, file uploads, a complete HTML5 DOM/parser, color
 emoji or complex emoji composition.
 </p>
 
@@ -486,7 +524,7 @@ redistributing the generated font asset.
 <p><a href="https://minibrowser.macip.net/">Mini Browser project home</a></p>
 
 <hr>
-<p><b>Mini Browser 2.4</b> - WHY2025 BadgeVMS</p>
+<p><b>Mini Browser 2.5</b> - WHY2025 BadgeVMS</p>
 <p><a href="/">Back to Mini Browser home</a></p>
 
 </body>

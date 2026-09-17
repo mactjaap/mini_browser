@@ -1,4 +1,4 @@
-# Mini Browser 2.4
+# Mini Browser 2.5
 
 ![Mini Browser logo Logo](Mini_Browser_Logo-small.jpg)
 
@@ -9,11 +9,12 @@ pages, converts them into readable text, extracts links and simple HTML
 forms, and provides a keyboard-driven browsing interface designed for
 the 720×720 WHY2025 badge display.
 
-Version **2.4** expands Unicode support to **56,352 usable glyphs across
-101 ranges**, adds word-aware UTF-8-safe pixel wrapping, RTL/Bidi
-rendering for Hebrew and Arabic, contextual Arabic shaping, and complete
-full-page screenshots, while retaining links, bookmarks, Back/Forward
-history, GET forms, monochrome emoji and genuine rendered bold text.
+Version **2.5** builds on the 2.4 Unicode and rendering foundation with a
+more robust HTML/entity parser, editable action-number input, bounded POST
+form submission, a bounded in-memory cookie jar, and a `WHY+I` HTTP/TLS
+Inspector. It retains the 56,352-glyph Unicode font, word-aware wrapping,
+RTL/Bidi rendering, contextual Arabic shaping, bookmarks, history and
+complete-page screenshots.
 
 Mini Browser deliberately does **not** try to be a modern graphical
 browser. There is no JavaScript engine, CSS layout engine, image
@@ -26,11 +27,13 @@ text-oriented and lightweight websites.
 -   Up to 64 KiB downloaded per page
 -   Up to 128 extracted links and 160 interactive actions
 -   Numbered navigation for links and form controls
+-   Editable action-number input with Backspace correction
 -   Back and Forward browsing history
 -   Persistent bookmarks
+-   Bounded in-memory session cookie jar
 -   Editable URL bar
 -   Hold Up/Down for fast scrolling
--   Simple GET form support
+-   Simple GET and POST form support
 -   UTF-8-safe text processing and word-aware wrapping
 -   Pixel-aware wrapping for mixed ASCII and Unicode text
 -   Whole-word wrapping where possible, with glyph-level fallback for
@@ -47,6 +50,7 @@ text-oriented and lightweight websites.
     transfer
 -   `WHY+Z` complete rendered-page screenshot capture without allocating
     a giant framebuffer
+-   `WHY+I` HTTP/TLS Inspector for request, response, page and resource information
 -   Standalone `badge_screenshot.py` receiver for macOS/Linux
 -   ASCII `*` markers for unordered lists, so list markers remain usable
     without the external Unicode font
@@ -124,7 +128,7 @@ limited.
 
 ## HTML forms
 
-Mini Browser supports simple interactive HTML GET forms.
+Mini Browser supports simple interactive HTML GET and POST forms.
 
 Supported form controls include:
 
@@ -139,15 +143,14 @@ Supported form controls include:
 Links and visible form controls share the same numbered action system.
 Type the action number and press Enter to activate it.
 
-GET submissions use URL encoding compatible with
+GET and POST submissions use URL encoding compatible with
 `application/x-www-form-urlencoded`. Hidden fields are included,
 disabled fields are ignored, and the activated named submit button is
-included where appropriate.
+included where appropriate. POST request bodies are bounded to 2048 bytes.
 
 Up to 4 forms with up to 8 stored fields per form are supported.
 
-POST forms are recognised but intentionally not submitted. Complex
-controls such as `textarea`, `select`, checkboxes, radio buttons, file
+Complex controls such as `textarea`, `select`, checkboxes, radio buttons, file
 uploads and JavaScript-driven forms are not currently supported.
 
 ## HTML rendering
@@ -199,6 +202,7 @@ The WHY2025 key acts as the browser accelerator:
   `WHY+M`    Open bookmarks
   `WHY+S`    Capture and transmit the visible viewport
   `WHY+Z`    Capture and transmit the complete rendered page
+  `WHY+I`    Open HTTP/TLS Inspector / Page Information
   `WHY+Q`    Quit
 
 ## Screenshots
@@ -379,6 +383,29 @@ On Linux the device will commonly be something such as `/dev/ttyUSB0` or
 Because URL entry and host-requested screenshots use the serial keyboard bridge,
 `badge_open_url.py` requires the customized WHY2025 firmware described above.
 
+## HTTP/TLS Inspector
+
+Press `WHY+I` to open the HTTP/TLS Inspector for the current page. It shows
+bounded metadata retained from the actual request, without making an extra
+HEAD request. Information includes page title and size, link/form/action
+counts, request method and URL, transport, cookies sent, HTTP status and
+Content-Type, plus the current cookie-jar usage and browser limits.
+
+The trimmed BadgeVMS libcurl exposes only a small set of `CURLINFO` fields.
+Connection address/port, negotiated HTTP version, certificate details and
+certificate-verification result are therefore reported as unavailable rather
+than guessed. Effective/final URL and redirect metadata are also reported as
+unavailable because they are not reliable in this environment.
+
+`WHY+B` or `WHY+I` returns to the page.
+
+## Cookies
+
+Mini Browser 2.5 includes a bounded in-memory session cookie jar. It stores up
+to 12 cookies, supports replacement, path scoping and deletion with
+`Max-Age=0`, and sends matching cookies on subsequent requests. Cookies are
+kept only in memory and are not persisted across browser restarts.
+
 ## Bookmarks and history
 
 Mini Browser stores up to 32 bookmarks and keeps up to 32 HTTP/HTTPS
@@ -386,7 +413,7 @@ history entries.
 
 `WHY+B` moves backward and `WHY+G` moves forward. Navigating to a new
 page after going Back truncates the old forward branch. Reloading does
-not create a duplicate history entry, and GET form submissions
+not create a duplicate history entry, and GET and POST form submissions
 participate in the same history.
 
 Bookmark data is stored at:
@@ -416,11 +443,13 @@ shown as readable browser pages.
   Editable form value      127 characters
   Bookmarks                            32
   History entries                      32
+  Cookies                              12
+  POST request body              2048 bytes
 
 ## What Mini Browser does not support
 
 Mini Browser does not currently provide JavaScript execution, CSS
-layout/styling, images, video/audio, POST form submission, file uploads,
+layout/styling, images, video/audio, file uploads,
 complex HTML form controls, a complete HTML5 DOM/parser, color emoji, or
 complex emoji composition.
 
@@ -497,10 +526,9 @@ Home page:
 
 ## Version
 
-**Mini Browser 2.4**
+**Mini Browser 2.5**
 
-Version 2.4 combines the stable interactive browser foundation with
-56,352-glyph Unicode coverage, word-aware pixel wrapping, RTL/Bidi
-rendering, contextual Arabic shaping, genuine bold HTML rendering, and
-both `WHY+S` viewport and `WHY+Z` complete-page screenshot capture over
-USB serial.
+Version 2.5 adds robust HTML/entity parsing, editable action-number input,
+bounded POST submission, a bounded in-memory cookie jar and the `WHY+I`
+HTTP/TLS Inspector to the 2.4 Unicode/rendering foundation. The final 2.5
+release passed all 49 automated regression tests on the WHY2025 badge.

@@ -1,5 +1,7 @@
 # Mini Browser 2.4
 
+![Mini Browser logo Logo](Mini_Browser_Logo-small.jpg)
+
 A compact, interactive, text-oriented web browser for the WHY2025 badge.
 
 Mini Browser is written in C using SDL3 and libcurl. It retrieves HTML

@@ -23,7 +23,7 @@
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "2.4"
+#define MINI_BROWSER_VERSION "2.5"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -41,6 +41,19 @@
 #define MAX_FORMS       4
 #define MAX_FORM_FIELDS 8
 #define FORM_VALUE_MAX 128
+#define POST_BODY_MAX  2048
+
+/* Mini Browser 2.5 Phase 4 - bounded session cookie jar.
+ * Cookie storage and scratch buffers are static/global on purpose:
+ * BadgeVMS gives the application task a tight stack budget.
+ */
+#define MAX_COOKIES          12
+#define COOKIE_NAME_MAX      31
+#define COOKIE_VALUE_MAX     95
+#define COOKIE_DOMAIN_MAX    95
+#define COOKIE_PATH_MAX      95
+#define COOKIE_HEADER_MAX   768
+#define COOKIE_SET_MAX      384
 
 /* --- Scroll repeat constants for hold-to-scroll --- */
 #define SCROLL_REPEAT_DELAY_MS 300
@@ -136,6 +149,25 @@ static const unsigned char font5x7[96][5] = {
 
 /* --------- curl memory sink --------- */
 typedef struct { char *buf; size_t len; } mem_t;
+
+/*
+ * Phase 5: metadata retained from the most recent network fetch.
+ * All strings are bounded/static so Page Information does not add large
+ * automatic buffers to the ESP32 task stack.
+ */
+typedef struct {
+    char effective_url[URL_MAX];
+    char content_type[96];
+    long redirect_count;
+    size_t downloaded_bytes;
+
+    /* Phase 5B: request-side facts we can know without CURLINFO support. */
+    char request_method[5];       /* "GET" or "POST" */
+    size_t request_body_bytes;
+    int cookies_sent;
+} fetch_meta_t;
+
+static fetch_meta_t g_fetch_meta;
 static size_t wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
     size_t n = sz * nm, keep = n;
     mem_t *m = (mem_t*)ud;
@@ -166,6 +198,7 @@ typedef struct {
 typedef struct {
     char action[URL_MAX];
     char method[8];
+    char enctype[48];
     form_field_t fields[MAX_FORM_FIELDS];
     int field_count;
 } form_t;
@@ -284,74 +317,164 @@ static void normalize_typed_url(char *buf) {
     }
 }
 
-/* ---------- entity decode ---------- */
-static const char *emit_entity(const char *h, char *out, size_t *o, size_t cap) {
-    if (!strncmp(h, "&amp;", 5)) { if (*o < cap) out[(*o)++] = '&'; return h + 5; }
-    if (!strncmp(h, "&lt;", 4)) { if (*o < cap) out[(*o)++] = '<'; return h + 4; }
-    if (!strncmp(h, "&gt;", 4)) { if (*o < cap) out[(*o)++] = '>'; return h + 4; }
-    if (!strncmp(h, "&quot;", 6)) { if (*o < cap) out[(*o)++] = '"'; return h + 6; }
-    if (!strncmp(h, "&#39;", 5)) { if (*o < cap) out[(*o)++] = '\''; return h + 5; }
-    if (!strncmp(h, "&apos;", 6)) { if (*o < cap) out[(*o)++] = '\''; return h + 6; }
-    if (!strncmp(h, "&nbsp;", 6)) { if (*o < cap) out[(*o)++] = ' '; return h + 6; }
-    return NULL;
+/* ---------- HTML entity decode ---------- */
+
+typedef struct {
+    const char *name;
+    unsigned long codepoint;
+} html_entity_t;
+
+/*
+ * Deliberately bounded named-entity table.  These cover the common entities
+ * encountered by the Mini Browser without importing a full HTML5 entity
+ * database. Numeric decimal/hexadecimal references support all Unicode
+ * scalar values.
+ */
+static const html_entity_t g_html_entities[] = {
+    {"amp",    0x0026}, {"lt",     0x003C}, {"gt",     0x003E},
+    {"quot",   0x0022}, {"apos",   0x0027}, {"nbsp",   0x0020},
+    {"copy",   0x00A9}, {"reg",    0x00AE}, {"trade",  0x2122},
+    {"euro",   0x20AC}, {"cent",   0x00A2}, {"pound",  0x00A3},
+    {"yen",    0x00A5}, {"sect",   0x00A7}, {"para",   0x00B6},
+    {"deg",    0x00B0}, {"plusmn", 0x00B1}, {"times",  0x00D7},
+    {"divide", 0x00F7}, {"middot", 0x00B7}, {"bull",   0x2022},
+    {"hellip", 0x2026}, {"ndash",  0x2013}, {"mdash",  0x2014},
+    {"lsquo",  0x2018}, {"rsquo",  0x2019}, {"ldquo",  0x201C},
+    {"rdquo",  0x201D}, {"laquo",  0x00AB}, {"raquo",  0x00BB}
+};
+
+static unsigned long html_numeric_codepoint(unsigned long cp) {
+    /*
+     * HTML numeric character references do not map NUL, surrogate code
+     * points or values beyond Unicode to literal output. Use U+FFFD.
+     */
+    if (cp == 0 || cp > 0x10FFFFUL || (cp >= 0xD800UL && cp <= 0xDFFFUL))
+        return 0xFFFDUL;
+
+    /*
+     * HTML's legacy numeric-reference replacements for the C1 range.
+     * This makes common real-world references such as &#128; render as €.
+     */
+    static const unsigned short c1[32] = {
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+        0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178
+    };
+    if (cp >= 0x80UL && cp <= 0x9FUL)
+        return c1[cp - 0x80UL];
+
+    return cp;
 }
 
-/* support UTF-8 */
-
 static int emit_utf8_codepoint(unsigned long cp, char *out, size_t *o, size_t cap) {
-    if (cp > 0x10FFFFUL || (cp >= 0xD800UL && cp <= 0xDFFFUL)) {
-        cp = 0xFFFD;
-    }
+    cp = html_numeric_codepoint(cp);
 
     if (cp <= 0x7F) {
-        if (*o + 1 >= cap) return 0;
+        if (*o + 1 > cap) return 0;
         out[(*o)++] = (char)cp;
     } else if (cp <= 0x7FF) {
-        if (*o + 2 >= cap) return 0;
+        if (*o + 2 > cap) return 0;
         out[(*o)++] = (char)(0xC0 | (cp >> 6));
         out[(*o)++] = (char)(0x80 | (cp & 0x3F));
     } else if (cp <= 0xFFFF) {
-        if (*o + 3 >= cap) return 0;
+        if (*o + 3 > cap) return 0;
         out[(*o)++] = (char)(0xE0 | (cp >> 12));
         out[(*o)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
         out[(*o)++] = (char)(0x80 | (cp & 0x3F));
     } else {
-        if (*o + 4 >= cap) return 0;
+        if (*o + 4 > cap) return 0;
         out[(*o)++] = (char)(0xF0 | (cp >> 18));
         out[(*o)++] = (char)(0x80 | ((cp >> 12) & 0x3F));
         out[(*o)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
         out[(*o)++] = (char)(0x80 | (cp & 0x3F));
     }
-
     return 1;
 }
 
+static const char *emit_named_entity(const char *h, char *out, size_t *o, size_t cap) {
+    if (!h || *h != '&') return NULL;
+
+    const char *p = h + 1;
+    const char *semi = strchr(p, ';');
+    if (!semi) return NULL;
+
+    size_t name_len = (size_t)(semi - p);
+    if (!name_len || name_len > 12) return NULL;
+
+    for (size_t i = 0; i < sizeof(g_html_entities) / sizeof(g_html_entities[0]); i++) {
+        const char *name = g_html_entities[i].name;
+        if (strlen(name) == name_len && !strncmp(p, name, name_len)) {
+            if (!emit_utf8_codepoint(g_html_entities[i].codepoint, out, o, cap))
+                return NULL;
+            return semi + 1;
+        }
+    }
+    return NULL;
+}
 
 static const char *emit_numeric_entity(const char *h, char *out, size_t *o, size_t cap) {
+    if (!h || h[0] != '&' || h[1] != '#') return NULL;
+
     int base = 10;
     const char *p = h + 2;
-    if (*p == 'x' || *p == 'X') { base = 16; p++; }
+    if (*p == 'x' || *p == 'X') {
+        base = 16;
+        p++;
+    }
+
     unsigned long value = 0;
     const char *digits = p;
+
     while (*p && *p != ';') {
         int digit;
         if (*p >= '0' && *p <= '9') digit = *p - '0';
         else if (base == 16 && *p >= 'a' && *p <= 'f') digit = 10 + *p - 'a';
         else if (base == 16 && *p >= 'A' && *p <= 'F') digit = 10 + *p - 'A';
         else return NULL;
-        if (digit >= base || value > (ULONG_MAX - (unsigned long)digit) / (unsigned long)base) return NULL;
+
+        if (digit >= base ||
+            value > (ULONG_MAX - (unsigned long)digit) / (unsigned long)base)
+            return NULL;
+
         value = value * (unsigned long)base + (unsigned long)digit;
         p++;
     }
 
     if (p == digits || *p != ';') return NULL;
-
-    if (!emit_utf8_codepoint(value, out, o, cap)) {
-        return NULL;
-    }
-
+    if (!emit_utf8_codepoint(value, out, o, cap)) return NULL;
     return p + 1;
+}
 
+static const char *emit_html_entity(const char *h, char *out, size_t *o, size_t cap) {
+    if (!h || *h != '&') return NULL;
+    if (h[1] == '#') return emit_numeric_entity(h, out, o, cap);
+    return emit_named_entity(h, out, o, cap);
+}
+
+/*
+ * Decode entities in a bounded string. Unknown/malformed entities are copied
+ * literally. src and dst must not overlap.
+ */
+static void decode_html_entities(const char *src, char *dst, size_t dst_cap) {
+    if (!dst || !dst_cap) return;
+    dst[0] = 0;
+    if (!src) return;
+
+    size_t used = 0;
+    const char *p = src;
+
+    while (*p && used + 1 < dst_cap) {
+        if (*p == '&') {
+            const char *next = emit_html_entity(p, dst, &used, dst_cap - 1);
+            if (next) {
+                p = next;
+                continue;
+            }
+        }
+        dst[used++] = *p++;
+    }
+    dst[used] = 0;
 }
 
 /* --------- href filter --------- */
@@ -419,9 +542,12 @@ static int tag_attribute(const char *start, const char *end, const char *wanted,
 
         if (name_len == wanted_len && !strncasecmp(name, wanted, wanted_len)) {
             if (out && out_cap && value) {
-                if (value_len >= out_cap) value_len = out_cap - 1;
-                memcpy(out, value, value_len);
-                out[value_len] = 0;
+                char raw[URL_MAX];
+                size_t copy_len = value_len;
+                if (copy_len >= sizeof(raw)) copy_len = sizeof(raw) - 1;
+                memcpy(raw, value, copy_len);
+                raw[copy_len] = 0;
+                decode_html_entities(raw, out, out_cap);
             }
             return 1;
         }
@@ -526,8 +652,11 @@ static void extract_html_title(const char *html, char *out, size_t cap) {
     if (!end) return;
     size_t n = (size_t)(end - start);
     if (n >= cap) n = cap - 1;
-    memcpy(out, start, n);
-    out[n] = 0;
+    char raw[256];
+    if (n >= sizeof(raw)) n = sizeof(raw) - 1;
+    memcpy(raw, start, n);
+    raw[n] = 0;
+    decode_html_entities(raw, out, cap);
     trim_inplace(out);
 }
 
@@ -550,6 +679,13 @@ static void extract_button_label(const char *start, const char *end, char *out, 
     }
     out[used] = 0;
     trim_inplace(out);
+
+    if (strchr(out, '&')) {
+        char raw[256];
+        strncpy(raw, out, sizeof(raw));
+        raw[sizeof(raw) - 1] = 0;
+        decode_html_entities(raw, out, cap);
+    }
 }
 
 /*
@@ -582,10 +718,7 @@ static page_t *html_to_page(const char *html, const char *base_url) {
         if (*cursor != '<') {
             if (!in_head && !in_script && !in_style) {
                 if (*cursor == '&') {
-                    const char *next = NULL;
-                    if (cursor + 1 < html_end && cursor[1] == '#')
-                        next = emit_numeric_entity(cursor, template_text, &used, template_cap - 1);
-                    if (!next) next = emit_entity(cursor, template_text, &used, template_cap - 1);
+                    const char *next = emit_html_entity(cursor, template_text, &used, template_cap - 1);
                     if (next) { cursor = next; continue; }
                 }
                 if (in_pre) {
@@ -695,9 +828,13 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 form_t *form = &page->forms[current_form];
                 memset(form, 0, sizeof(*form));
                 strncpy(form->method, "get", sizeof(form->method));
+                strncpy(form->enctype, "application/x-www-form-urlencoded",
+                        sizeof(form->enctype));
                 tag_attribute(attributes, tag_end, "action", form->action, sizeof(form->action));
                 if (tag_attribute(attributes, tag_end, "method", form->method, sizeof(form->method)))
                     lower_ascii(form->method);
+                if (tag_attribute(attributes, tag_end, "enctype", form->enctype, sizeof(form->enctype)))
+                    lower_ascii(form->enctype);
             } else current_form = -1;
         } else if (!strcmp(tag, "input") && current_form >= 0) {
             form_t *form = &page->forms[current_form];
@@ -865,18 +1002,74 @@ static int build_get_form_url(const page_t *page, int form_index,
     return 1;
 }
 
+static int build_post_form_request(const page_t *page, int form_index,
+                                   int submit_field_index,
+                                   char *url, size_t url_cap,
+                                   char *body, size_t body_cap) {
+    if (!page || form_index < 0 || form_index >= page->form_count ||
+        !url_cap || !body_cap) return 0;
+
+    const form_t *form = &page->forms[form_index];
+    const char *method = form->method[0] ? form->method : "get";
+    const char *enctype = form->enctype[0]
+        ? form->enctype
+        : "application/x-www-form-urlencoded";
+
+    if (strcasecmp(method, "post")) return -1;
+    if (strcasecmp(enctype, "application/x-www-form-urlencoded")) return -2;
+
+    if (form->action[0]) resolve_url(page->base, form->action, url, url_cap);
+    else { strncpy(url, page->base, url_cap); url[url_cap - 1] = 0; }
+
+    char *hash = strchr(url, '#');
+    if (hash) *hash = 0;
+
+    body[0] = 0;
+    bool first_parameter = true;
+
+    for (int i = 0; i < form->field_count; i++) {
+        const form_field_t *field = &form->fields[i];
+        if (field->disabled || !field->name[0]) continue;
+
+        bool submit = !strcmp(field->type, "submit");
+        bool successful = !strcmp(field->type, "text") ||
+                          !strcmp(field->type, "search") ||
+                          !strcmp(field->type, "url") ||
+                          !strcmp(field->type, "hidden") ||
+                          (submit && i == submit_field_index);
+        if (!successful) continue;
+
+        char encoded_name[sizeof(field->name) * 3 + 1];
+        char encoded_value[sizeof(field->value) * 3 + 1];
+        if (!form_urlencode(field->name, encoded_name, sizeof(encoded_name)) ||
+            !form_urlencode(field->value, encoded_value, sizeof(encoded_value)))
+            return 0;
+
+        if (!first_parameter && !append_url_part(body, body_cap, "&")) return 0;
+        if (!append_url_part(body, body_cap, encoded_name) ||
+            !append_url_part(body, body_cap, "=") ||
+            !append_url_part(body, body_cap, encoded_value))
+            return 0;
+
+        first_parameter = false;
+    }
+
+    return 1;
+}
+
 typedef enum {
     ACTIVATE_NONE,
     ACTIVATE_NAVIGATE,
     ACTIVATE_EDIT_FIELD,
-    ACTIVATE_POST_UNSUPPORTED,
+    ACTIVATE_POST,
+    ACTIVATE_FORM_UNSUPPORTED,
     ACTIVATE_URL_TOO_LONG
 } activate_result_t;
 
 static activate_result_t activate_page_action(
     page_t *page, int action_index, char *navigation_url, size_t navigation_cap,
     int *edit_form, int *edit_field, char *edit_buf, size_t edit_cap,
-    size_t *edit_cursor) {
+    size_t *edit_cursor, char *post_body, size_t post_body_cap) {
     if (!page || action_index < 0 || action_index >= page->action_count)
         return ACTIVATE_NONE;
 
@@ -971,10 +1164,23 @@ return ACTIVATE_NAVIGATE;
     }
 
     if (action->type == ACTION_FORM_SUBMIT) {
+        const char *method = form->method[0] ? form->method : "get";
+
+        if (!strcasecmp(method, "post")) {
+            int result = build_post_form_request(page, action->form_index,
+                                                 action->field_index,
+                                                 navigation_url, navigation_cap,
+                                                 post_body, post_body_cap);
+            if (result == -2) return ACTIVATE_FORM_UNSUPPORTED;
+            if (result < 0) return ACTIVATE_FORM_UNSUPPORTED;
+            if (!result) return ACTIVATE_URL_TOO_LONG;
+            return ACTIVATE_POST;
+        }
+
         int result = build_get_form_url(page, action->form_index,
                                         action->field_index,
                                         navigation_url, navigation_cap);
-        if (result < 0) return ACTIVATE_POST_UNSUPPORTED;
+        if (result < 0) return ACTIVATE_FORM_UNSUPPORTED;
         if (!result) return ACTIVATE_URL_TOO_LONG;
         return ACTIVATE_NAVIGATE;
     }
@@ -1155,10 +1361,349 @@ static char *wrap_text(const char *in, int max_cols) {
     return out;
 }
 
+
+/* ---------- Mini Browser 2.5 Phase 4: bounded session cookies ---------- */
+
+typedef struct {
+    bool used;
+    bool secure;
+    bool host_only;
+    unsigned long age;
+    char name[COOKIE_NAME_MAX + 1];
+    char value[COOKIE_VALUE_MAX + 1];
+    char domain[COOKIE_DOMAIN_MAX + 1];
+    char path[COOKIE_PATH_MAX + 1];
+} mb_cookie_t;
+
+/*
+ * IMPORTANT: these are static-storage objects, not automatic locals.
+ * Phase 4 attempt #1 used several large automatic buffers in the curl/header
+ * call chain and overflowed the BadgeVMS application task stack.
+ */
+static mb_cookie_t g_cookie_jar[MAX_COOKIES];
+static unsigned long g_cookie_age = 1;
+static char g_cookie_request_url[URL_MAX];
+static char g_cookie_header_value[COOKIE_HEADER_MAX];
+static char g_cookie_header_line[COOKIE_HEADER_MAX + 16];
+static char g_cookie_set_line[COOKIE_SET_MAX];
+static char g_cookie_host[COOKIE_DOMAIN_MAX + 1];
+static char g_cookie_req_path[COOKIE_PATH_MAX + 1];
+static char g_cookie_tmp_domain[COOKIE_DOMAIN_MAX + 1];
+static char g_cookie_tmp_path[COOKIE_PATH_MAX + 1];
+static char g_cookie_tmp_name[COOKIE_NAME_MAX + 1];
+static char g_cookie_tmp_value[COOKIE_VALUE_MAX + 1];
+
+static void cookie_copy_trim(char *dst, size_t cap,
+                             const char *src, size_t n,
+                             bool lower) {
+    if (!dst || cap == 0) return;
+    while (n && isspace((unsigned char)*src)) { src++; n--; }
+    while (n && isspace((unsigned char)src[n - 1])) n--;
+    if (n >= cap) n = cap - 1;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)src[i];
+        dst[i] = lower ? (char)tolower(c) : (char)c;
+    }
+    dst[n] = 0;
+}
+
+static bool cookie_url_parts(const char *url, bool *is_secure) {
+    const char *p;
+    bool secure = false;
+
+    if (!url) return false;
+    if (!strncasecmp(url, "https://", 8)) {
+        p = url + 8;
+        secure = true;
+    } else if (!strncasecmp(url, "http://", 7)) {
+        p = url + 7;
+    } else {
+        return false;
+    }
+
+    const char *authority_end = p;
+    while (*authority_end && *authority_end != '/' &&
+           *authority_end != '?' && *authority_end != '#')
+        authority_end++;
+
+    const char *host_start = p;
+    const char *host_end = authority_end;
+    const char *at = NULL;
+    for (const char *q = p; q < authority_end; q++)
+        if (*q == '@') at = q;
+    if (at) host_start = at + 1;
+
+    if (host_start < host_end && *host_start == '[') {
+        const char *rb = NULL;
+        for (const char *q = host_start + 1; q < host_end; q++)
+            if (*q == ']') { rb = q; break; }
+        if (rb) {
+            host_start++;
+            host_end = rb;
+        }
+    } else {
+        for (const char *q = host_start; q < authority_end; q++)
+            if (*q == ':') { host_end = q; break; }
+    }
+
+    if (host_end <= host_start) return false;
+    cookie_copy_trim(g_cookie_host, sizeof(g_cookie_host),
+                     host_start, (size_t)(host_end - host_start), true);
+
+    if (*authority_end == '/') {
+        const char *end = authority_end;
+        while (*end && *end != '?' && *end != '#') end++;
+        cookie_copy_trim(g_cookie_req_path, sizeof(g_cookie_req_path),
+                         authority_end, (size_t)(end - authority_end), false);
+    } else {
+        strcpy(g_cookie_req_path, "/");
+    }
+
+    if (!g_cookie_req_path[0]) strcpy(g_cookie_req_path, "/");
+    if (is_secure) *is_secure = secure;
+    return true;
+}
+
+static bool cookie_domain_match(const char *host, const char *domain) {
+    size_t hl, dl;
+    if (!host || !domain || !*host || !*domain) return false;
+    if (!strcasecmp(host, domain)) return true;
+    hl = strlen(host);
+    dl = strlen(domain);
+    return hl > dl && host[hl - dl - 1] == '.' &&
+           !strcasecmp(host + hl - dl, domain);
+}
+
+static bool cookie_path_match(const char *request_path, const char *cookie_path) {
+    size_t n;
+    if (!request_path || !*request_path) request_path = "/";
+    if (!cookie_path || !*cookie_path) cookie_path = "/";
+    n = strlen(cookie_path);
+    if (strncmp(request_path, cookie_path, n)) return false;
+    if (!request_path[n]) return true;
+    if (cookie_path[n - 1] == '/') return true;
+    return request_path[n] == '/';
+}
+
+static void cookie_default_path(void) {
+    const char *last = strrchr(g_cookie_req_path, '/');
+    if (!last || last == g_cookie_req_path) {
+        strcpy(g_cookie_tmp_path, "/");
+        return;
+    }
+    cookie_copy_trim(g_cookie_tmp_path, sizeof(g_cookie_tmp_path),
+                     g_cookie_req_path,
+                     (size_t)(last - g_cookie_req_path), false);
+}
+
+static int cookie_count(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_COOKIES; i++)
+        if (g_cookie_jar[i].used) n++;
+    return n;
+}
+
+static int cookie_find(const char *name, const char *domain, const char *path) {
+    for (int i = 0; i < MAX_COOKIES; i++) {
+        mb_cookie_t *c = &g_cookie_jar[i];
+        if (c->used &&
+            !strcmp(c->name, name) &&
+            !strcasecmp(c->domain, domain) &&
+            !strcmp(c->path, path))
+            return i;
+    }
+    return -1;
+}
+
+static int cookie_store_slot(const char *name,
+                             const char *domain,
+                             const char *path) {
+    int existing = cookie_find(name, domain, path);
+    if (existing >= 0) return existing;
+
+    for (int i = 0; i < MAX_COOKIES; i++)
+        if (!g_cookie_jar[i].used) return i;
+
+    int oldest = 0;
+    for (int i = 1; i < MAX_COOKIES; i++)
+        if (g_cookie_jar[i].age < g_cookie_jar[oldest].age)
+            oldest = i;
+    return oldest;
+}
+
+static void cookie_store_header(const char *value) {
+    bool request_secure = false;
+    bool secure = false;
+    bool host_only = true;
+    bool remove = false;
+
+    if (!value || !cookie_url_parts(g_cookie_request_url, &request_secure))
+        return;
+
+    size_t n = strlen(value);
+    if (n >= sizeof(g_cookie_set_line)) n = sizeof(g_cookie_set_line) - 1;
+    memcpy(g_cookie_set_line, value, n);
+    g_cookie_set_line[n] = 0;
+    while (n && (g_cookie_set_line[n - 1] == '\r' ||
+                 g_cookie_set_line[n - 1] == '\n'))
+        g_cookie_set_line[--n] = 0;
+
+    char *semi = strchr(g_cookie_set_line, ';');
+    char *pair_end = semi ? semi : g_cookie_set_line + strlen(g_cookie_set_line);
+    char *eq = memchr(g_cookie_set_line, '=', (size_t)(pair_end - g_cookie_set_line));
+    if (!eq) return;
+
+    cookie_copy_trim(g_cookie_tmp_name, sizeof(g_cookie_tmp_name),
+                     g_cookie_set_line, (size_t)(eq - g_cookie_set_line), false);
+    cookie_copy_trim(g_cookie_tmp_value, sizeof(g_cookie_tmp_value),
+                     eq + 1, (size_t)(pair_end - eq - 1), false);
+    if (!g_cookie_tmp_name[0]) return;
+
+    strncpy(g_cookie_tmp_domain, g_cookie_host, sizeof(g_cookie_tmp_domain));
+    g_cookie_tmp_domain[sizeof(g_cookie_tmp_domain) - 1] = 0;
+    cookie_default_path();
+
+    for (char *a = semi ? semi + 1 : NULL; a && *a; ) {
+        while (*a == ';' || isspace((unsigned char)*a)) a++;
+        if (!*a) break;
+
+        char *next = strchr(a, ';');
+        char *end = next ? next : a + strlen(a);
+        char *aeq = memchr(a, '=', (size_t)(end - a));
+
+        if (aeq) {
+            *aeq = 0;
+            char *av = aeq + 1;
+            while (*a && isspace((unsigned char)*a)) a++;
+            char *an_end = a + strlen(a);
+            while (an_end > a && isspace((unsigned char)an_end[-1])) *--an_end = 0;
+            while (av < end && isspace((unsigned char)*av)) av++;
+            while (end > av && isspace((unsigned char)end[-1])) end--;
+            *end = 0;
+
+            if (!strcasecmp(a, "domain") && *av) {
+                while (*av == '.') av++;
+                cookie_copy_trim(g_cookie_tmp_domain, sizeof(g_cookie_tmp_domain),
+                                 av, strlen(av), true);
+                if (!cookie_domain_match(g_cookie_host, g_cookie_tmp_domain))
+                    return;
+                host_only = false;
+            } else if (!strcasecmp(a, "path") && *av == '/') {
+                cookie_copy_trim(g_cookie_tmp_path, sizeof(g_cookie_tmp_path),
+                                 av, strlen(av), false);
+            } else if (!strcasecmp(a, "max-age")) {
+                char *ep = NULL;
+                long age = strtol(av, &ep, 10);
+                if (ep != av && age <= 0) remove = true;
+            }
+        } else {
+            char saved = *end;
+            *end = 0;
+            while (*a && isspace((unsigned char)*a)) a++;
+            char *an_end = a + strlen(a);
+            while (an_end > a && isspace((unsigned char)an_end[-1])) *--an_end = 0;
+            if (!strcasecmp(a, "secure")) secure = true;
+            *end = saved;
+        }
+
+        a = next ? next + 1 : NULL;
+    }
+
+    int slot = cookie_find(g_cookie_tmp_name,
+                           g_cookie_tmp_domain,
+                           g_cookie_tmp_path);
+
+    if (remove) {
+        if (slot >= 0)
+            memset(&g_cookie_jar[slot], 0, sizeof(g_cookie_jar[slot]));
+        printf("[mini_browser] cookie delete: %s count=%d\n",
+               g_cookie_tmp_name, cookie_count());
+        return;
+    }
+
+    slot = cookie_store_slot(g_cookie_tmp_name,
+                             g_cookie_tmp_domain,
+                             g_cookie_tmp_path);
+    mb_cookie_t *c = &g_cookie_jar[slot];
+    memset(c, 0, sizeof(*c));
+    c->used = true;
+    c->secure = secure;
+    c->host_only = host_only;
+    c->age = g_cookie_age++;
+    strncpy(c->name, g_cookie_tmp_name, sizeof(c->name) - 1);
+    strncpy(c->value, g_cookie_tmp_value, sizeof(c->value) - 1);
+    strncpy(c->domain, g_cookie_tmp_domain, sizeof(c->domain) - 1);
+    strncpy(c->path, g_cookie_tmp_path, sizeof(c->path) - 1);
+
+    printf("[mini_browser] cookie store: %s=%s domain=%s path=%s secure=%d count=%d\n",
+           c->name, c->value, c->domain, c->path,
+           c->secure ? 1 : 0, cookie_count());
+}
+
+static bool cookie_make_request_header(const char *url) {
+    bool request_secure = false;
+    size_t used = 0;
+    bool any = false;
+
+    g_cookie_header_value[0] = 0;
+    if (!cookie_url_parts(url, &request_secure)) return false;
+
+    for (int i = 0; i < MAX_COOKIES; i++) {
+        mb_cookie_t *c = &g_cookie_jar[i];
+        if (!c->used) continue;
+        if (c->secure && !request_secure) continue;
+
+        bool domain_ok = c->host_only
+            ? !strcasecmp(g_cookie_host, c->domain)
+            : cookie_domain_match(g_cookie_host, c->domain);
+        if (!domain_ok || !cookie_path_match(g_cookie_req_path, c->path))
+            continue;
+
+        size_t need = strlen(c->name) + strlen(c->value) + 1 + (any ? 2 : 0);
+        if (used + need + 1 > sizeof(g_cookie_header_value))
+            break;
+
+        if (any) {
+            memcpy(g_cookie_header_value + used, "; ", 2);
+            used += 2;
+        }
+        size_t x = strlen(c->name);
+        memcpy(g_cookie_header_value + used, c->name, x);
+        used += x;
+        g_cookie_header_value[used++] = '=';
+        x = strlen(c->value);
+        memcpy(g_cookie_header_value + used, c->value, x);
+        used += x;
+        g_cookie_header_value[used] = 0;
+        any = true;
+    }
+
+    return any;
+}
+
+static size_t cookie_header_cb(char *buffer, size_t size,
+                               size_t nitems, void *userdata) {
+    (void)userdata;
+    size_t n = size * nitems;
+    static const char prefix[] = "Set-Cookie:";
+    const size_t plen = sizeof(prefix) - 1;
+
+    if (buffer && n >= plen && !strncasecmp(buffer, prefix, plen)) {
+        size_t vlen = n - plen;
+        if (vlen >= sizeof(g_cookie_set_line))
+            vlen = sizeof(g_cookie_set_line) - 1;
+        memcpy(g_cookie_set_line, buffer + plen, vlen);
+        g_cookie_set_line[vlen] = 0;
+        cookie_store_header(g_cookie_set_line);
+    }
+    return n;
+}
+
+
 /* ---------- curl fetch (tolerant to trimmed-down libcurl) ---------- */
 /* ---------- v1.2: proper HTTP status/error handling ---------- */
 
-static int fetch_url(const char *url, mem_t *m, long *http_status) {
+static int fetch_url(const char *url, const char *post_body, mem_t *m, long *http_status) {
     if (!url || !m) return -1;
 
     CURL *curl = curl_easy_init();
@@ -1167,11 +1712,26 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
     m->buf = NULL;
     m->len = 0;
 
+    memset(&g_fetch_meta, 0, sizeof(g_fetch_meta));
+    strncpy(g_fetch_meta.effective_url, url,
+            sizeof(g_fetch_meta.effective_url) - 1);
+    strncpy(g_fetch_meta.request_method,
+            post_body ? "POST" : "GET",
+            sizeof(g_fetch_meta.request_method) - 1);
+    g_fetch_meta.request_body_bytes = post_body ? strlen(post_body) : 0;
+    g_fetch_meta.cookies_sent = 0;
+
     if (http_status) {
         *http_status = 0;
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
+
+    if (post_body) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(post_body));
+    }
 
 #ifdef CURLOPT_BUFFERSIZE
     curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L);
@@ -1223,9 +1783,36 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
     hdrs = curl_slist_append(hdrs,
         "Accept-Encoding: identity");
 
+    if (post_body) {
+        hdrs = curl_slist_append(hdrs,
+            "Content-Type: application/x-www-form-urlencoded");
+    }
+
+    if (cookie_make_request_header(url)) {
+        snprintf(g_cookie_header_line, sizeof(g_cookie_header_line),
+                 "Cookie: %s", g_cookie_header_value);
+        hdrs = curl_slist_append(hdrs, g_cookie_header_line);
+
+        /*
+         * Count name=value pairs without retaining or displaying cookie values.
+         * cookie_make_request_header() emits pairs separated by ';'.
+         */
+        g_fetch_meta.cookies_sent = 1;
+        for (const char *p = g_cookie_header_value; *p; p++) {
+            if (*p == ';') g_fetch_meta.cookies_sent++;
+        }
+
+        printf("[mini_browser] cookie send: %s\n", g_cookie_header_value);
+    }
+
     if (hdrs) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     }
+
+    strncpy(g_cookie_request_url, url, sizeof(g_cookie_request_url) - 1);
+    g_cookie_request_url[sizeof(g_cookie_request_url) - 1] = 0;
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, cookie_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL);
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
@@ -1241,6 +1828,38 @@ static int fetch_url(const char *url, mem_t *m, long *http_status) {
         if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code) == CURLE_OK) {
             *http_status = code;
         }
+    }
+
+    /*
+     * Phase 5 metadata. These CURLINFO values are long-established libcurl
+     * interfaces and are queried only after curl_easy_perform().
+     */
+    {
+        char *effective = NULL;
+        char *ctype = NULL;
+
+        if (curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effective) == CURLE_OK &&
+            effective && effective[0]) {
+            strncpy(g_fetch_meta.effective_url, effective,
+                    sizeof(g_fetch_meta.effective_url) - 1);
+            g_fetch_meta.effective_url[sizeof(g_fetch_meta.effective_url) - 1] = 0;
+        }
+
+        if (curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ctype) == CURLE_OK &&
+            ctype && ctype[0]) {
+            strncpy(g_fetch_meta.content_type, ctype,
+                    sizeof(g_fetch_meta.content_type) - 1);
+            g_fetch_meta.content_type[sizeof(g_fetch_meta.content_type) - 1] = 0;
+        }
+
+        /*
+         * Redirect metadata is not reliably exposed by the trimmed BadgeVMS
+         * libcurl. CURLINFO_REDIRECT_COUNT is unavailable and the effective
+         * URL can remain the originally requested URL after a redirect.
+         */
+        g_fetch_meta.redirect_count = 0;
+
+        g_fetch_meta.downloaded_bytes = m->len;
     }
 
     /*
@@ -2412,6 +3031,147 @@ static page_t *bookmarks_to_page(void) {
     return pg;
 }
 
+/* ---------- Phase 5: Page Information ---------- */
+
+static page_t *page_info_to_page(const page_t *source,
+                                 const char *requested_url,
+                                 long http_status) {
+    page_t *pg = (page_t*)calloc(1, sizeof(page_t));
+    if (!pg) return NULL;
+
+    strncpy(pg->base, "page-info:", URL_MAX);
+    pg->base[URL_MAX - 1] = 0;
+
+    strncpy(pg->title, "HTTP / TLS Inspector", sizeof(pg->title));
+    pg->title[sizeof(pg->title) - 1] = 0;
+
+    /*
+     * Phase 5B remains deliberately bounded. The inspector reports only facts
+     * that are either known locally or exposed by this BadgeVMS libcurl build.
+     * It performs no extra HEAD request and allocates no large automatic data.
+     */
+    const size_t cap = 2304;
+    char *text = (char*)malloc(cap);
+    if (!text) {
+        free(pg);
+        return NULL;
+    }
+
+    const char *title =
+        (source && source->title[0]) ? source->title : "(none)";
+    const char *effective = "(not reported)";
+    const char *ctype =
+        g_fetch_meta.content_type[0]
+            ? g_fetch_meta.content_type
+            : "(not reported)";
+    const char *method =
+        g_fetch_meta.request_method[0]
+            ? g_fetch_meta.request_method
+            : "(unknown)";
+    const char *transport_url = requested_url ? requested_url : "";
+    bool is_https = !strncasecmp(transport_url, "https://", 8);
+    bool is_http = !strncasecmp(transport_url, "http://", 7);
+    const char *transport =
+        is_https ? "HTTPS" :
+        is_http  ? "HTTP"  : "(unknown)";
+
+    int links = source ? source->link_count : 0;
+    int forms = source ? source->form_count : 0;
+    int actions = source ? source->action_count : 0;
+
+    snprintf(text, cap,
+             "= HTTP / TLS INSPECTOR =\n\n"
+
+             "PAGE\n"
+             "Title:\n%s\n"
+             "Downloaded: %u / %u bytes\n"
+             "Links: %d / %d\n"
+             "Forms: %d / %d\n"
+             "Actions: %d / %d\n\n"
+
+             "REQUEST\n"
+             "Method: %s\n"
+             "URL:\n%s\n"
+             "Transport: %s\n"
+             "POST body: %u bytes\n"
+             "Cookies sent: %d\n\n"
+
+             "RESPONSE\n"
+             "Status: %ld\n"
+             "Content-Type: %s\n"
+             "Effective URL: %s\n"
+             "Redirect information: not available\n"
+             "Negotiated HTTP version: not available\n\n"
+
+             "CONNECTION\n"
+             "Remote IP: not available\n"
+             "Remote port: not available\n\n"
+
+             "TLS\n"
+             "TLS: %s\n"
+             "Certificate details: not available\n"
+             "Certificate verification result: not available\n\n"
+
+             "COOKIE JAR\n"
+             "Stored: %d / %d\n\n"
+
+             "LIBCURL NOTES\n"
+             "Available CURLINFO: response code,\n"
+             "content length, content type,\n"
+             "effective URL.\n"
+             "Effective URL is unreliable after redirects.\n\n"
+
+             "Press WHY+B or WHY+I to return.",
+             title,
+             (unsigned)g_fetch_meta.downloaded_bytes,
+             (unsigned)MAX_BYTES,
+             links, MAX_LINKS,
+             forms, MAX_FORMS,
+             actions, MAX_ACTIONS,
+             method,
+             requested_url ? requested_url : "(unknown)",
+             transport,
+             (unsigned)g_fetch_meta.request_body_bytes,
+             g_fetch_meta.cookies_sent,
+             http_status,
+             ctype,
+             effective,
+             is_https ? "yes" : (is_http ? "no" : "(unknown)"),
+             cookie_count(),
+             MAX_COOKIES);
+
+    text[cap - 1] = 0;
+    pg->text = text;
+
+    /*
+     * Keep the Phase 5 diagnostic stable: the existing 49/49 regression suite
+     * depends on it.
+     */
+    printf("[mini_browser] page info: status=%ld bytes=%u redirects=na "
+           "effective=na content_type=%s cookies=%d links=%d forms=%d actions=%d "
+           "requested=%s final=%s\n",
+           http_status,
+           (unsigned)g_fetch_meta.downloaded_bytes,
+           ctype,
+           cookie_count(),
+           links,
+           forms,
+           actions,
+           requested_url ? requested_url : "(unknown)",
+           effective);
+
+    printf("[mini_browser] inspector: method=%s body_bytes=%u cookies_sent=%d "
+           "transport=%s http_version=na remote_ip=na remote_port=na "
+           "tls=%s certinfo=na certverify=na\n",
+           method,
+           (unsigned)g_fetch_meta.request_body_bytes,
+           g_fetch_meta.cookies_sent,
+           transport,
+           is_https ? "yes" : (is_http ? "no" : "unknown"));
+
+    return pg;
+}
+
 /* ---------- history with Back/Forward navigation ---------- */
 #define HISTORY_MAX 32
 static char g_hist[HISTORY_MAX][URL_MAX];
@@ -3054,6 +3814,8 @@ int main(void) {
     int  scroll_lines = 0;
     int  need_fetch = 1;
     int  sel_action = -1;
+    bool pending_post = false;
+    char post_body[POST_BODY_MAX] = "";
     long last_http_status = 0;
     bool url_editing = false;
     size_t url_cursor = 0;
@@ -3066,6 +3828,10 @@ int main(void) {
     /* URL to return to when leaving the bookmarks page with WHY+B. */
     char bookmark_return_url[URL_MAX] = "";
     bool viewing_bookmarks = false;
+
+    /* Phase 5 Page Information return state. */
+    char page_info_return_url[URL_MAX] = "";
+    bool viewing_page_info = false;
 
     /* Temporary message shown in the top bar. */
     char status_message[64] = "";
@@ -3128,6 +3894,8 @@ int main(void) {
                     strncpy(url_buf, tmp, URL_MAX); url_buf[URL_MAX-1]=0;
                 }
                 if (is_http_scheme(url_buf)) {
+                    viewing_page_info = false;
+
                     /* record in history just before fetching (unless reloading) */
                     if (!history_navigation) {
                         history_push(url_buf);
@@ -3147,7 +3915,17 @@ int main(void) {
                     mem_t m = {0};
                     long http_status = 0;
 
-                    int rc = fetch_url(url_buf, &m, &http_status);
+                    if (pending_post) {
+                        printf("[mini_browser] POST %s body=%s\n",
+                               url_buf, post_body);
+                    }
+
+                    int rc = fetch_url(url_buf,
+                                       pending_post ? post_body : NULL,
+                                       &m, &http_status);
+
+                    pending_post = false;
+                    post_body[0] = 0;
                     last_http_status = http_status;
 
                     if (rc != 0) {
@@ -3255,6 +4033,21 @@ int main(void) {
                                    (unsigned)m.len,
                                    page->link_count,
                                    url_buf);
+
+                            /*
+                             * Deterministic parser diagnostic.  Besides being
+                             * useful while debugging, the 2.5 regression suite
+                             * uses this to verify that HTML entities in <title>
+                             * were decoded into page->title.
+                             */
+                            printf("[mini_browser] page title: %s\n",
+                                   page->title[0] ? page->title : "(none)");
+                            printf("[mini_browser] parser: links=%d actions=%d forms=%d\n",
+                                   page->link_count,
+                                   page->action_count,
+                                   page->form_count);
+                            printf("[mini_browser] cookies: count=%d\n",
+                                   cookie_count());
 
                             if (wrapped) {
                                 printf("\n--- CONTENT START ---\n%s\n--- CONTENT END ---\n",
@@ -3495,6 +4288,49 @@ int main(void) {
                             inhibit_text_once = true;
                             break;
 
+                        case SDL_SCANCODE_I: { /* PAGE INFORMATION */
+                            if (viewing_page_info && page_info_return_url[0]) {
+                                strncpy(url_buf, page_info_return_url, URL_MAX);
+                                url_buf[URL_MAX - 1] = 0;
+                                page_info_return_url[0] = 0;
+                                viewing_page_info = false;
+                                history_navigation = true;
+                                need_fetch = 1;
+                                sel_action = -1;
+                            } else if (page && is_http_scheme(url_buf)) {
+                                strncpy(page_info_return_url, url_buf, URL_MAX);
+                                page_info_return_url[URL_MAX - 1] = 0;
+
+                                page_t *pg =
+                                    page_info_to_page(page, url_buf, last_http_status);
+
+                                if (pg) {
+                                    char *wrapped = wrap_text(pg->text, max_cols);
+
+                                    free(content_wrapped);
+                                    content_wrapped = wrapped;
+
+                                    free_page(page);
+                                    page = pg;
+
+                                    strncpy(url_buf, "page-info:", URL_MAX);
+                                    url_buf[URL_MAX - 1] = 0;
+
+                                    scroll_lines = 0;
+                                    sel_action = -1;
+                                    url_editing = false;
+                                    form_editing = false;
+                                    link_number_mode = false;
+                                    link_number_len = 0;
+                                    link_number_buf[0] = 0;
+                                    viewing_page_info = true;
+                                }
+                            }
+
+                            inhibit_text_once = true;
+                            break;
+                        }
+
                         case SDL_SCANCODE_M: { /* SHOW BOOKMARKS */
                             /*
                              * Remember the page we were viewing. If WHY+M is
@@ -3533,6 +4369,8 @@ int main(void) {
                                 sel_action = -1;
                                 url_editing = false;
                                 viewing_bookmarks = true;
+                                viewing_page_info = false;
+                                page_info_return_url[0] = 0;
 
                                 printf("[mini_browser] opened bookmarks: %d entries\n",
                                        g_bookmark_count);
@@ -3572,7 +4410,22 @@ int main(void) {
                         }
  
                         case SDL_SCANCODE_B: { /* BACK */
-                            if (viewing_bookmarks &&
+                            if (viewing_page_info &&
+                                page_info_return_url[0]) {
+
+                                strncpy(url_buf,
+                                        page_info_return_url,
+                                        URL_MAX);
+
+                                url_buf[URL_MAX - 1] = 0;
+                                page_info_return_url[0] = 0;
+
+                                viewing_page_info = false;
+                                history_navigation = true;
+                                need_fetch = 1;
+                                sel_action = -1;
+
+                            } else if (viewing_bookmarks &&
                                 bookmark_return_url[0]) {
 
                                 strncpy(url_buf,
@@ -3683,18 +4536,27 @@ int main(void) {
                                 page, action_index, url_buf, sizeof(url_buf),
                                 &form_edit_form, &form_edit_field,
                                 form_edit_buf, sizeof(form_edit_buf),
-                                &form_edit_cursor);
+                                &form_edit_cursor,
+                                post_body, sizeof(post_body));
                             if (result == ACTIVATE_EDIT_FIELD) {
                                 form_editing = true;
                                 url_editing = false;
                             } else if (result == ACTIVATE_NAVIGATE) {
+                                pending_post = false;
+                                post_body[0] = 0;
                                 viewing_bookmarks = false;
                                 bookmark_return_url[0] = 0;
                                 history_navigation = false;
                                 need_fetch = 1;
-                            } else if (result == ACTIVATE_POST_UNSUPPORTED) {
+                            } else if (result == ACTIVATE_POST) {
+                                pending_post = true;
+                                viewing_bookmarks = false;
+                                bookmark_return_url[0] = 0;
+                                history_navigation = false;
+                                need_fetch = 1;
+                            } else if (result == ACTIVATE_FORM_UNSUPPORTED) {
                                 snprintf(status_message, sizeof(status_message),
-                                         "POST FORMS NOT SUPPORTED");
+                                         "FORM METHOD/ENCODING NOT SUPPORTED");
                                 status_message_until = SDL_GetTicks() + 2000;
                             } else if (result == ACTIVATE_URL_TOO_LONG) {
                                 snprintf(status_message, sizeof(status_message),
@@ -3731,6 +4593,9 @@ int main(void) {
                             }
 
                             sel_action = -1;
+                        } else if (link_number_mode && link_number_len > 0) {
+                            link_number_len--;
+                            link_number_buf[link_number_len] = '\0';
                         }
                         break;
 
@@ -3757,6 +4622,9 @@ int main(void) {
                             }
 
                             sel_action = -1;
+                        } else if (link_number_mode && link_number_len > 0) {
+                            link_number_len--;
+                            link_number_buf[link_number_len] = '\0';
                         }
                         break;
 

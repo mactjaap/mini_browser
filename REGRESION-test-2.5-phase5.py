@@ -39,7 +39,7 @@ import serial
 
 CONFIG = {
     "serial": {
-        "device": "/dev/cu.wchusbserial210",
+        "device": "/dev/cu.wchusbserial110",
         "baudrate": 115200,
         "startup_delay": 2.0,
         "default_timeout": 1000,
@@ -1851,6 +1851,92 @@ def phase4_delete(badge):
 
 
 
+
+def phase5_open(badge, path, end_marker):
+    badge.clear_log()
+    badge.why("E")
+    badge.settle(0.5)
+    badge.type_text("minibrowser.macip.net/" + path)
+    badge.settle(0.2)
+    badge.enter()
+    badge.settle(0.4)
+    badge.wait_for(
+        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path),
+        DEFAULT_TIMEOUT,
+    )
+    badge.wait_for(re.escape(end_marker), 15)
+    badge.settle(0.5)
+    return latest_content_block(badge)
+
+
+def phase5_basic_page_info(badge):
+    content = phase5_open(badge, "phase5-info.php", "END PHASE5 INFO")
+    require_content(content, "PHASE 5 PAGE INFO", "END PHASE5 INFO")
+
+    badge.clear_log()
+    badge.why("I")
+    badge.settle(0.5)
+
+    line = badge.wait_for(
+        r"\[mini_browser\] page info: status=200 bytes=[0-9]+ redirects=0 "
+        r"content_type=text/html(?:; charset=UTF-8)? cookies=[0-9]+ "
+        r"links=[0-9]+ forms=[0-9]+ actions=[0-9]+ "
+        r"requested=https://minibrowser\.macip\.net/phase5-info\.php "
+        r"final=https://minibrowser\.macip\.net/phase5-info\.php",
+        15,
+    )
+    return [
+        "WHY+I opened Page Information",
+        "HTTP status, size, Content-Type and object counts were retained",
+        "Requested and final URL matched for a non-redirected page",
+    ]
+
+
+def phase5_redirect_info(badge):
+    # This endpoint redirects once to phase5-info.php.
+    phase5_open(badge, "phase5-redirect.php", "END PHASE5 INFO")
+
+    badge.clear_log()
+    badge.why("I")
+    badge.settle(0.5)
+
+    badge.wait_for(
+        r"\[mini_browser\] page info: status=200 bytes=[0-9]+ redirects=1 "
+        r"content_type=text/html(?:; charset=UTF-8)? cookies=[0-9]+ "
+        r"links=[0-9]+ forms=[0-9]+ actions=[0-9]+ "
+        r"requested=https://minibrowser\.macip\.net/phase5-redirect\.php "
+        r"final=https://minibrowser\.macip\.net/phase5-info\.php",
+        15,
+    )
+    return [
+        "Redirect count retained as 1",
+        "Requested URL retained separately",
+        "Final effective URL resolved to phase5-info.php",
+    ]
+
+
+def phase5_return_from_info(badge):
+    phase5_open(badge, "phase5-info.php", "END PHASE5 INFO")
+
+    badge.clear_log()
+    badge.why("I")
+    badge.wait_for(r"\[mini_browser\] page info: status=200 ", 15)
+
+    # WHY+B from the synthetic info page returns to the source URL.
+    badge.clear_log()
+    badge.why("B")
+    badge.wait_for(
+        r"HTTP 200.*https://minibrowser\.macip\.net/phase5-info\.php",
+        DEFAULT_TIMEOUT,
+    )
+    badge.wait_for("END PHASE5 INFO", 15)
+    return [
+        "WHY+B left Page Information",
+        "Original page URL was restored",
+        "Original page loaded successfully after return",
+    ]
+
+
 def show_final_result_page(badge, passed):
     """Leave Mini Browser displaying a clear PASS / NOT PASS result page."""
     filename = (
@@ -2136,6 +2222,22 @@ def main():
         ]
 
         for description, test_func in phase4_cases:
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 2.5 Phase 5: Page Information.
+        phase5_cases = [
+            ("Phase 5: basic Page Information", lambda: phase5_basic_page_info(badge)),
+            ("Phase 5: redirect metadata", lambda: phase5_redirect_info(badge)),
+            ("Phase 5: return from Page Information", lambda: phase5_return_from_info(badge)),
+        ]
+
+        for description, test_func in phase5_cases:
             run_test(
                 results,
                 number,

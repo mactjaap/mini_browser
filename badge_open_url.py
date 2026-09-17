@@ -9,17 +9,30 @@ Usage:
     ./badge_open_url.py
     ./badge_open_url.py https://example.com/
     ./badge_open_url.py --clipboard
+    ./badge_open_url.py -f urls.txt
+    ./badge_open_url.py -f urls.txt -s 10
+    ./badge_open_url.py -f urls.txt -z
     ./badge_open_url.py --device /dev/cu.wchusbserial10 https://example.com/
 
 The script sends WHY+E, types the URL through the normal BadgeVMS keyboard
 path, and presses Enter.
+
+With -f/--file, URLs are loaded sequentially. Each page remains on screen for
+the configured sleep period (30 seconds by default), making the script useful
+as a presentation/demo tool.
+
+With -z/--screenshot, a complete full-page screenshot is requested for every
+URL in file mode by invoking badge_screenshot.py with --full-page --request.
 """
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
+from urllib.parse import urlsplit
 
 try:
     import serial
@@ -194,13 +207,9 @@ def clipboard_text():
     )
 
 
-
-def detect_badge_device(explicit=None):
-    """Return the WHY2025 badge serial device, or fail clearly if ambiguous."""
-    if explicit:
-        return explicit
-
+def detect_device():
     candidates = []
+
     for port in list_ports.comports():
         device = port.device
         if sys.platform == "darwin":
@@ -223,14 +232,15 @@ def detect_badge_device(explicit=None):
         return candidates[0]
     if not candidates:
         raise RuntimeError(
-            "WHY2025 badge serial device not found. "
-            "Connect the badge or specify the device explicitly."
+            "No likely badge serial device found. Use --device DEVICE."
         )
+
     raise RuntimeError(
-        "Multiple possible badge serial devices found:\n  "
+        "Multiple serial devices found:\n  "
         + "\n  ".join(candidates)
-        + "\nSpecify the device explicitly."
+        + "\nUse --device DEVICE."
     )
+
 
 def normalize_url(value):
     url = value.strip()
@@ -275,9 +285,184 @@ def open_url(badge, url):
     badge.enter()
 
 
+
+def load_url_file(filename):
+    path = Path(filename)
+
+    if not path.is_file():
+        raise ValueError(f"URL file not found: {filename}")
+
+    urls = []
+
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        try:
+            urls.append(normalize_url(line))
+        except ValueError as exc:
+            raise ValueError(
+                f"{filename}:{line_number}: {exc}"
+            ) from exc
+
+    if not urls:
+        raise ValueError(f"No URLs found in: {filename}")
+
+    return urls
+
+
+def screenshot_script_path(explicit_path=None):
+    if explicit_path:
+        path = Path(explicit_path).expanduser().resolve()
+        if path.is_file():
+            return path
+        raise RuntimeError(
+            f"badge_screenshot.py not found: {explicit_path}"
+        )
+
+    local_path = Path(__file__).resolve().with_name(
+        "badge_screenshot.py"
+    )
+    if local_path.is_file():
+        return local_path.resolve()
+
+    cwd_path = (Path.cwd() / "badge_screenshot.py").resolve()
+    if cwd_path.is_file():
+        return cwd_path
+
+    found = shutil.which("badge_screenshot.py")
+    if found:
+        return Path(found).resolve()
+
+    raise RuntimeError(
+        "Could not find badge_screenshot.py. "
+        "Put it next to badge_open_url.py or use "
+        "--screenshot-script PATH."
+    )
+
+
+def screenshot_filename(index, url):
+    candidate = url
+
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+
+    parts = urlsplit(candidate)
+    host = parts.netloc or "page"
+    path = parts.path.strip("/")
+
+    label = host
+    if path:
+        label += "_" + path
+
+    label = re.sub(r"[^A-Za-z0-9._-]+", "_", label)
+    label = label.strip("._-") or "page"
+
+    return f"{index:03d}_{label}.png"
+
+
+def capture_full_page(
+    device,
+    screenshot_script,
+    output_dir,
+    index,
+    url,
+):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / screenshot_filename(index, url)
+
+    command = [
+        sys.executable,
+        str(screenshot_script),
+        device,
+        "--full-page",
+        "--request",
+    ]
+
+    # Current badge_screenshot.py versions write their own PNG filename.
+    # Run from the requested screenshot directory so all presentation
+    # screenshots stay together.
+    print(f"Requesting full-page screenshot for: {url}")
+    print(f"Screenshot directory: {output_dir}")
+
+    result = subprocess.run(
+        command,
+        cwd=output_dir,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            "badge_screenshot.py failed with exit status "
+            f"{result.returncode}"
+        )
+
+    # The receiver chooses its own final filename. The generated label is
+    # retained only for future compatibility/documentation.
+    return output_path
+
+
+def run_presentation(
+    urls,
+    device,
+    baudrate,
+    sleep_seconds,
+    take_screenshots,
+    screenshot_script,
+    screenshot_dir,
+):
+    total = len(urls)
+
+    print(f"Presentation URLs: {total}")
+    print(f"Page sleep:        {sleep_seconds:g} seconds")
+    if take_screenshots:
+        print("Full screenshots:  enabled")
+        print(f"Screenshot dir:    {screenshot_dir}")
+
+    for index, url in enumerate(urls, start=1):
+        print()
+        print("=" * 60)
+        print(f"PAGE {index}/{total}")
+        print(url)
+        print("=" * 60)
+
+        badge = Badge(device, baudrate)
+        try:
+            open_url(badge, url)
+        finally:
+            badge.close()
+
+        print(
+            f"Showing page for {sleep_seconds:g} seconds "
+            "(Ctrl-C to stop) ..."
+        )
+        time.sleep(sleep_seconds)
+
+        if take_screenshots:
+            capture_full_page(
+                device=device,
+                screenshot_script=screenshot_script,
+                output_dir=screenshot_dir,
+                index=index,
+                url=url,
+            )
+
+    print()
+    print("Presentation finished.")
+
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Paste/send a URL to Mini Browser on the WHY2025 badge."
+        description=(
+            "Paste/send URLs to Mini Browser on the WHY2025 badge, "
+            "or run a URL-list presentation."
+        )
     )
     parser.add_argument(
         "url",
@@ -303,20 +488,108 @@ def parse_args():
         "-c",
         "--clipboard",
         action="store_true",
-        help="Read the URL directly from the system clipboard.",
+        help="Read one URL directly from the system clipboard.",
+    )
+    parser.add_argument(
+        "-f",
+        "--file",
+        help=(
+            "Read URLs from a text file and load them sequentially. "
+            "Blank lines and lines beginning with # are ignored."
+        ),
+    )
+    parser.add_argument(
+        "-s",
+        "--sleep",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help=(
+            "Seconds to show each page in file/presentation mode "
+            "(default: 30)."
+        ),
+    )
+    parser.add_argument(
+        "-z",
+        "--screenshot",
+        action="store_true",
+        help=(
+            "In file mode, request a complete full-page screenshot "
+            "of every page after its sleep period."
+        ),
+    )
+    parser.add_argument(
+        "--screenshot-dir",
+        default="screenshots",
+        metavar="DIR",
+        help=(
+            "Directory used while receiving presentation screenshots "
+            "(default: screenshots)."
+        ),
+    )
+    parser.add_argument(
+        "--screenshot-script",
+        metavar="PATH",
+        help=(
+            "Path to badge_screenshot.py. By default it is searched "
+            "next to this script, in the current directory, then PATH."
+        ),
     )
     return parser.parse_args()
-
 
 def main():
     args = parse_args()
 
     try:
-        if args.clipboard:
-            if args.url is not None:
-                raise ValueError(
-                    "Use either a URL argument or --clipboard, not both."
+        if args.sleep < 0:
+            raise ValueError("--sleep must be zero or greater.")
+
+        selected_modes = sum(
+            bool(value)
+            for value in (
+                args.url is not None,
+                args.clipboard,
+                args.file,
+            )
+        )
+
+        if selected_modes > 1:
+            raise ValueError(
+                "Use only one input mode: URL, --clipboard, or --file."
+            )
+
+        if args.screenshot and not args.file:
+            raise ValueError(
+                "-z/--screenshot is intended for -f/--file mode."
+            )
+
+        device = args.device or detect_device()
+        print(f"Serial device: {device}")
+        print(f"Baud rate:     {args.baudrate}")
+
+        if args.file:
+            urls = load_url_file(args.file)
+
+            shot_script = None
+            shot_dir = Path(args.screenshot_dir).expanduser()
+
+            if args.screenshot:
+                shot_script = screenshot_script_path(
+                    args.screenshot_script
                 )
+
+            run_presentation(
+                urls=urls,
+                device=device,
+                baudrate=args.baudrate,
+                sleep_seconds=args.sleep,
+                take_screenshots=args.screenshot,
+                screenshot_script=shot_script,
+                screenshot_dir=shot_dir,
+            )
+            return 0
+
+        if args.clipboard:
             url = clipboard_text()
             print(f"Clipboard URL: {url}")
         elif args.url is not None:
@@ -325,10 +598,6 @@ def main():
             url = input("Paste URL and press Enter: ")
 
         url = normalize_url(url)
-
-        device = detect_badge_device(args.device)
-        print(f"Serial device: {device}")
-        print(f"Baud rate:     {args.baudrate}")
 
         badge = Badge(device, args.baudrate)
         try:
@@ -341,7 +610,12 @@ def main():
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
         return 130
-    except (ValueError, RuntimeError, serial.SerialException) as exc:
+    except (
+        ValueError,
+        RuntimeError,
+        OSError,
+        serial.SerialException,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

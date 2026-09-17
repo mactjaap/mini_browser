@@ -12,6 +12,7 @@ from pathlib import Path
 
 try:
     import serial
+    from serial.tools import list_ports
 except ImportError:
     print(
         "ERROR: pyserial is required. Install it with: python3 -m pip install pyserial",
@@ -20,9 +21,48 @@ except ImportError:
     raise SystemExit(2)
 
 
-DEFAULT_DEVICE = "/dev/cu.wchusbserial10"
+DEFAULT_DEVICE = None
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT = 150.0
+
+
+def detect_badge_device(explicit=None):
+    """Return the WHY2025 badge serial device, or fail clearly if ambiguous."""
+    if explicit:
+        return explicit
+
+    candidates = []
+    for port in list_ports.comports():
+        device = port.device
+        if sys.platform == "darwin":
+            if (
+                device.startswith("/dev/cu.wchusbserial")
+                or device.startswith("/dev/cu.usbserial")
+                or device.startswith("/dev/cu.usbmodem")
+            ):
+                candidates.append(device)
+        else:
+            if (
+                device.startswith("/dev/ttyUSB")
+                or device.startswith("/dev/ttyACM")
+            ):
+                candidates.append(device)
+
+    candidates = sorted(set(candidates))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise RuntimeError(
+            "WHY2025 badge serial device not found. "
+            "Connect the badge or specify the device explicitly."
+        )
+    raise RuntimeError(
+        "Multiple possible badge serial devices found:\n  "
+        + "\n  ".join(candidates)
+        + "\nSpecify the device explicitly."
+    )
+
 
 BEGIN_RE = re.compile(
     r"IMG BEGIN (\d+) (\d+) RGB24 RLE5FEC1 (\d+) (\d+)"
@@ -463,10 +503,9 @@ def main():
     parser.add_argument(
         "device",
         nargs="?",
-        default=DEFAULT_DEVICE,
+        default=None,
         help=(
-            f"serial device "
-            f"(default: {DEFAULT_DEVICE})"
+            "serial device (default: auto-detect WHY2025 badge)"
         ),
     )
 
@@ -524,6 +563,8 @@ def main():
 
     args = parser.parse_args()
 
+    device = detect_badge_device(args.device)
+
     output_path = (
         Path(args.output)
         if args.output
@@ -534,7 +575,7 @@ def main():
 
     try:
         port = serial.Serial(
-            args.device,
+            device,
             args.baud,
             timeout=0.1,
         )
@@ -542,7 +583,7 @@ def main():
         # Throw away stale serial text from before this receiver started.
         port.reset_input_buffer()
 
-        print(f"Serial: {args.device} @ {args.baud}")
+        print(f"Serial: {device} @ {args.baud}")
 
         shortcut = "WHY+Z" if args.full_page else "WHY+S"
 

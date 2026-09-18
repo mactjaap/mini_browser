@@ -1282,7 +1282,7 @@ def phase2_url(filename):
 
 def phase1b_foreground_colors(badge):
     open_direct_url(badge, CONFIG["phase1b"]["url"], CONFIG["phase1b"]["url_pattern"])
-    badge.wait_for(r"\[mini_browser\] visual: explicit_colors=10", 10)
+    badge.wait_for(r"\[mini_browser\] visual: explicit_colors=13", 13)
     content = latest_content_block(badge)
     if not content:
         raise RuntimeError("Phase 1B color page loaded but no CONTENT block was captured")

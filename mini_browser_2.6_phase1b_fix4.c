@@ -2540,22 +2540,6 @@ typedef struct {
 #define DIR_LTR     1
 #define DIR_RTL     2
 
-/*
- * Renderer scratch storage.
- *
- * BadgeVMS gives the app task a bounded stack.  These buffers used to be
- * automatic arrays in draw_text(), arabic_shape_line() and
- * bidi_visualize_line().  Those functions are nested, so their worst-case
- * stack usage accumulated and could trip the task's stack protector on
- * Unicode/Arabic pages.
- *
- * Rendering is single-threaded in Mini Browser, so one bounded static scratch
- * set is sufficient and preserves the existing algorithms without heap use.
- */
-static visual_glyph_t g_render_line[BIDI_LINE_MAX];
-static visual_glyph_t g_bidi_tmp[BIDI_LINE_MAX];
-static unsigned g_arabic_original[BIDI_LINE_MAX];
-
 typedef struct {
     uint32_t base;
     uint32_t isolated;
@@ -2627,7 +2611,7 @@ static bool arabic_transparent(unsigned cp) {
 }
 
 static void arabic_shape_line(visual_glyph_t *g, int count) {
-    unsigned *original = g_arabic_original;
+    unsigned original[BIDI_LINE_MAX];
 
     for (int i = 0; i < count; i++)
         original[i] = g[i].cp;
@@ -2750,7 +2734,7 @@ static int bidi_visualize_line(visual_glyph_t *g, int count, bool *base_rtl) {
         g[i].dir = (left != DIR_NEUTRAL && left == right) ? left : base;
     }
 
-    visual_glyph_t *tmp = g_bidi_tmp;
+    visual_glyph_t tmp[BIDI_LINE_MAX];
     int out = 0;
 
     if (base == DIR_LTR) {
@@ -2906,7 +2890,7 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
     unsigned color_value = 0;
 
     while (i <= L) {
-        visual_glyph_t *line = g_render_line;
+        visual_glyph_t line[BIDI_LINE_MAX];
         int count = 0;
         bool saw_newline = false;
 

@@ -850,12 +850,7 @@ static page_t *html_to_page(const char *html, const char *base_url) {
         if (p < html_end && *p == '/') { closing = true; p++; }
         while (p < html_end && isspace((unsigned char)*p)) p++;
         char tag[16]; size_t tag_len = 0;
-        /* HTML tag names may contain digits after the initial letter.
-         * This matters for h1..h6: the old isalpha-only loop parsed <h2>
-         * as tag "h", leaving "2" at the start of the attribute range.
-         * As a result headings were neither recognized as headings nor as
-         * color containers, so style="color:yellow" was never seen. */
-        while (p < html_end && tag_len + 1 < sizeof(tag) && isalnum((unsigned char)*p))
+        while (p < html_end && tag_len + 1 < sizeof(tag) && isalpha((unsigned char)*p))
             tag[tag_len++] = (char)tolower((unsigned char)*p++);
         tag[tag_len] = 0;
         const char *attributes = p;
@@ -897,20 +892,6 @@ static page_t *html_to_page(const char *html, const char *base_url) {
             continue;
         }
 
-        /* Block elements must break the line BEFORE their color marker is emitted.
-         * Otherwise wrap_text() can leave the marker on the preceding line, causing
-         * the block's requested color to be lost. Inline elements do not pre-break. */
-        bool color_block_tag =
-            !strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
-            !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
-            !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
-            !strcmp(tag, "blockquote") || !strcmp(tag, "address") ||
-            !strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
-            !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6") ||
-            !strcmp(tag, "tr");
-        if (color_block_tag)
-            append_line_break(template_text, template_cap, &used);
-
         /* Phase 1B: every supported paired text container pushes a color state.
          * Uncolored containers push inheritance, so nested closing tags restore correctly. */
         if (color_container_tag(tag)) {
@@ -935,11 +916,11 @@ static page_t *html_to_page(const char *html, const char *base_url) {
         else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
                  !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
                  !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
-                 !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "tr")) {
-            /* line break already emitted before the Phase 1B color marker */
-        }
+                 !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "tr"))
+            append_line_break(template_text, template_cap, &used);
         else if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
                  !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
+            append_line_break(template_text, template_cap, &used);
             char marker[2] = { TEXT_HEADING_ON, 0 };
             append_text(template_text, template_cap, &used, marker);
             append_text(template_text, template_cap, &used, "= ");
@@ -2540,22 +2521,6 @@ typedef struct {
 #define DIR_LTR     1
 #define DIR_RTL     2
 
-/*
- * Renderer scratch storage.
- *
- * BadgeVMS gives the app task a bounded stack.  These buffers used to be
- * automatic arrays in draw_text(), arabic_shape_line() and
- * bidi_visualize_line().  Those functions are nested, so their worst-case
- * stack usage accumulated and could trip the task's stack protector on
- * Unicode/Arabic pages.
- *
- * Rendering is single-threaded in Mini Browser, so one bounded static scratch
- * set is sufficient and preserves the existing algorithms without heap use.
- */
-static visual_glyph_t g_render_line[BIDI_LINE_MAX];
-static visual_glyph_t g_bidi_tmp[BIDI_LINE_MAX];
-static unsigned g_arabic_original[BIDI_LINE_MAX];
-
 typedef struct {
     uint32_t base;
     uint32_t isolated;
@@ -2627,7 +2592,7 @@ static bool arabic_transparent(unsigned cp) {
 }
 
 static void arabic_shape_line(visual_glyph_t *g, int count) {
-    unsigned *original = g_arabic_original;
+    unsigned original[BIDI_LINE_MAX];
 
     for (int i = 0; i < count; i++)
         original[i] = g[i].cp;
@@ -2750,7 +2715,7 @@ static int bidi_visualize_line(visual_glyph_t *g, int count, bool *base_rtl) {
         g[i].dir = (left != DIR_NEUTRAL && left == right) ? left : base;
     }
 
-    visual_glyph_t *tmp = g_bidi_tmp;
+    visual_glyph_t tmp[BIDI_LINE_MAX];
     int out = 0;
 
     if (base == DIR_LTR) {
@@ -2902,11 +2867,11 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
     struct { bool custom; unsigned char r,g,b; } color_stack[32];
     int color_depth = 0;
     bool custom_color = false; unsigned char custom_r=0, custom_g=0, custom_b=0;
-    int color_nibbles = -1;
+    int color_nibbles = 0;
     unsigned color_value = 0;
 
     while (i <= L) {
-        visual_glyph_t *line = g_render_line;
+        visual_glyph_t line[BIDI_LINE_MAX];
         int count = 0;
         bool saw_newline = false;
 

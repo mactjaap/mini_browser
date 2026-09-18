@@ -16,9 +16,16 @@
 
 <p>
 Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
-Current version 2.5 supports links, bookmarks, Back/Forward history, simple GET and POST forms, cookies support, 
+It is designed to explore the lightweight, text-oriented web while staying small
+enough to run comfortably on the badge.
+
+The latest stable release is Mini Browser 2.5. It supports links, bookmarks,
+Back/Forward history, simple GET and POST forms, bounded cookie support,
 56,352 Unicode glyphs, word-aware wrapping, RTL/Bidi text, Arabic shaping,
-monochrome emoji, real bold text and full-page screenshots.
+monochrome emoji, real bold text, HTTP/TLS page information and full-page screenshots.
+
+Development of Mini Browser 2.6 has started, with a refreshed visual identity
+and further improvements planned while keeping the browser deliberately small.
 </p>
 
 <pre>
@@ -42,7 +49,7 @@ for Mini Browser.
 
 <h2>Search with Google</h2>
 
-<form action="http://www.google.com/search" method="get">
+<form action="https://www.google.com/search" method="get">
 
   <input type="search" name="q" value="">
 
@@ -141,11 +148,11 @@ Customized WHY2025 firmware and test tools
 <pre>
 </pre>
 
-<h2>About 2.4</h2>
+<h2>About Mini Browser</h2>
 
 <p>
-Mini Browser 2.4 keeps the built-in ASCII font and uses an external
-GNU Unifont-based MBCJ font with 56,352 usable glyphs across 101 ranges.
+Mini Browser combines a built-in ASCII font with an external GNU Unifont-based
+MBCJ font containing 56,352 usable glyphs across 101 ranges.
 Text wrapping preserves complete words where possible, while CJK and
 overlong tokens safely fall back to glyph wrapping.
 Hebrew and Arabic are rendered right-to-left, with contextual Arabic shaping.
@@ -160,11 +167,11 @@ so basic list rendering does not depend on the external Unicode font.
 <p>
 Mini Browser intentionally has no JavaScript engine, CSS layout engine
 or image renderer. It is designed for ordinary server-rendered HTML,
-text content, links and simple GET forms.
+text content, links and simple GET and POST forms.
 </p>
 
 <p>
-<a href="/readme.html">Mini Browser 2.5 - full documentation</a>
+<a href="/readme.html">Full documentation</a>
 </p>
 
 <p>
@@ -177,7 +184,7 @@ text content, links and simple GET forms.
 <hr>
 
 <p>
-<b>Mini Browser 2.4</b> - WHY2025 BadgeVMS
+<b>Mini Browser</b> - WHY2025 BadgeVMS
 </p>
 
 </body>

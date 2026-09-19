@@ -75,6 +75,13 @@ CONFIG = {
         "url_pattern": r"HTTP 200.*https://minibrowser\.macip\.net/phase2a-styles\.html",
     },
 
+    # Mini Browser 2.6 Phase 2B controlled background-color page.
+    # Upload phase2b-backgrounds.html to the minibrowser.macip.net document root.
+    "phase2b": {
+        "url": "minibrowser.macip.net/phase2b-backgrounds.html",
+        "url_pattern": r"HTTP 200.*https://minibrowser\.macip\.net/phase2b-backgrounds\.html",
+    },
+
     # Mini Browser 2.5 Phase 2 controlled parser-torture pages.
     # Upload all phase2-*.html files to the minibrowser.macip.net document root.
     "phase2": {
@@ -1315,6 +1322,22 @@ def phase2a_inline_text_styles(badge):
             "Invalid style values ignored"]
 
 
+def phase2b_background_colors(badge):
+    open_direct_url(badge, CONFIG["phase2b"]["url"], CONFIG["phase2b"]["url_pattern"])
+    badge.wait_for(r"\[mini_browser\] visual: explicit_backgrounds=10", 13)
+    content = latest_content_block(badge)
+    if not content:
+        raise RuntimeError("Phase 2B background page loaded but no CONTENT block was captured")
+    require_content(content, "PHASE2B BACKGROUNDS", "yellow background", "short hex background",
+                    "dark blue paragraph text run", "purple parent", "orange child", "restored purple",
+                    "gray parent", "transparent child", "restored gray", "white bold on blue",
+                    "styled on red", "short abc background", "invalid background ignored",
+                    "END PHASE2B BACKGROUNDS")
+    return ["10 valid background-color declarations parsed",
+            "Nested and transparent background content preserved",
+            "Invalid background color ignored"]
+
+
 def phase2_expect(filename):
     return (
         r"HTTP 200.*https://minibrowser\.macip\.net/"
@@ -2273,6 +2296,15 @@ def main():
             number,
             "2.6 Phase 2A: inline text styles and nesting",
             lambda: phase2a_inline_text_styles(badge),
+        )
+        number += 1
+
+        # Mini Browser 2.6 Phase 2B: bounded inline background colors.
+        run_test(
+            results,
+            number,
+            "2.6 Phase 2B: background colors and nesting",
+            lambda: phase2b_background_colors(badge),
         )
         number += 1
 

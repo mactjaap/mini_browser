@@ -228,6 +228,8 @@ typedef struct {
     form_t forms[MAX_FORMS];
     int form_count;
     int explicit_color_count;  /* 2.6 Phase 1B valid HTML/CSS foreground colors */
+    int explicit_style_count;  /* 2.6 Phase 2A valid inline text-style declarations */
+    int explicit_background_count; /* 2.6 Phase 2B valid inline background-color declarations */
 } page_t;
 
 /* ---------- URL helpers ---------- */
@@ -595,6 +597,26 @@ static void append_line_break(char *out, size_t cap, size_t *used) {
 #define TEXT_COLOR_POP     0xE420u
 #define TEXT_COLOR_INHERIT 0xE421u
 
+/* 2.6 Phase 2A: compact inline-style state markers.
+ * STYLE_START is followed by two nibble codepoints containing one byte:
+ * bit 7 bold-set, bit 6 bold-value, bit 5 italic-set, bit 4 italic-value,
+ * bit 3 underline-set, bit 2 underline-value, bit 1..0 alignment
+ * (0 inherit, 1 left, 2 center, 3 right). Every supported paired text
+ * container pushes one style state; its closing tag emits STYLE_POP. */
+#define TEXT_STYLE_START   0xE430u
+#define TEXT_STYLE_NIBBLE  0xE440u
+#define TEXT_STYLE_POP     0xE450u
+
+/* 2.6 Phase 2B: zero-width background-color state markers.
+ * RGB uses the same fixed six-nibble encoding as foreground colors.
+ * Every supported paired style container pushes one background state;
+ * TRANSPARENT explicitly disables an inherited background until POP. */
+#define TEXT_BG_START       0xE460u
+#define TEXT_BG_NIBBLE      0xE470u  /* E470..E47F = hexadecimal nibble 0..15 */
+#define TEXT_BG_POP         0xE480u
+#define TEXT_BG_INHERIT     0xE481u
+#define TEXT_BG_TRANSPARENT 0xE482u
+
 static int append_utf8_cp(char *out, size_t cap, size_t *used, unsigned cp) {
     char b[4]; size_t n = 0;
     if (cp <= 0x7F) b[n++] = (char)cp;
@@ -657,6 +679,135 @@ static int style_color_value(const char *style, unsigned char *r, unsigned char 
         }
     }
     return 0;
+}
+
+typedef struct {
+    bool bold_set, bold;
+    bool italic_set, italic;
+    bool underline_set, underline;
+    unsigned char align; /* 0 inherit, 1 left, 2 center, 3 right */
+    int valid_count;
+} inline_style_t;
+
+/* Parse one inline background-color declaration. Return values:
+ * 0 = absent/invalid, 1 = RGB color, 2 = transparent. */
+static int style_background_value(const char *style, unsigned char *r, unsigned char *g, unsigned char *b) {
+    if (!style) return 0;
+    const char *p = style;
+    while (*p) {
+        while (*p == ';' || isspace((unsigned char)*p)) p++;
+        const char *name = p;
+        while (*p && *p != ':' && *p != ';') p++;
+        if (*p != ':') { while (*p && *p != ';') p++; continue; }
+        const char *name_end = p++;
+        while (name_end > name && isspace((unsigned char)name_end[-1])) name_end--;
+        while (name < name_end && isspace((unsigned char)*name)) name++;
+        const char *val = p;
+        while (*p && *p != ';') p++;
+        size_t nn = (size_t)(name_end - name), vn = (size_t)(p - val);
+        if (nn == 16 && !strncasecmp(name, "background-color", 16)) {
+            while (vn && isspace((unsigned char)*val)) { val++; vn--; }
+            while (vn && isspace((unsigned char)val[vn - 1])) vn--;
+            if (vn == 11 && !strncasecmp(val, "transparent", 11)) return 2;
+            char tmp[32];
+            if (vn >= sizeof(tmp)) return 0;
+            memcpy(tmp, val, vn); tmp[vn] = 0;
+            return parse_html_color(tmp, r, g, b) ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+static void append_background_push(char *out, size_t cap, size_t *used,
+                                   int kind, unsigned char r, unsigned char g, unsigned char b) {
+    if (kind == 2) {
+        append_utf8_cp(out, cap, used, TEXT_BG_TRANSPARENT);
+        return;
+    }
+    if (kind != 1) {
+        append_utf8_cp(out, cap, used, TEXT_BG_INHERIT);
+        return;
+    }
+    append_utf8_cp(out, cap, used, TEXT_BG_START);
+    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + ((r >> 4) & 0x0F));
+    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + (r & 0x0F));
+    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + ((g >> 4) & 0x0F));
+    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + (g & 0x0F));
+    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + ((b >> 4) & 0x0F));
+    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + (b & 0x0F));
+}
+
+static bool css_value_eq(const char *v, size_t n, const char *wanted) {
+    while (n && isspace((unsigned char)*v)) { v++; n--; }
+    while (n && isspace((unsigned char)v[n - 1])) n--;
+    size_t w = strlen(wanted);
+    return n == w && !strncasecmp(v, wanted, w);
+}
+
+static inline_style_t parse_inline_text_style(const char *style, bool allow_align) {
+    inline_style_t st = {0};
+    if (!style) return st;
+    const char *p = style;
+    while (*p) {
+        while (*p == ';' || isspace((unsigned char)*p)) p++;
+        const char *name = p;
+        while (*p && *p != ':' && *p != ';') p++;
+        if (*p != ':') { while (*p && *p != ';') p++; continue; }
+        const char *name_end = p++;
+        while (name_end > name && isspace((unsigned char)name_end[-1])) name_end--;
+        while (name < name_end && isspace((unsigned char)*name)) name++;
+        const char *val = p;
+        while (*p && *p != ';') p++;
+        size_t nn = (size_t)(name_end - name), vn = (size_t)(p - val);
+
+        if (nn == 11 && !strncasecmp(name, "font-weight", 11)) {
+            if (css_value_eq(val, vn, "bold") || css_value_eq(val, vn, "700")) {
+                st.bold_set = true; st.bold = true; st.valid_count++;
+            } else if (css_value_eq(val, vn, "normal")) {
+                st.bold_set = true; st.bold = false; st.valid_count++;
+            }
+        } else if (nn == 10 && !strncasecmp(name, "font-style", 10)) {
+            if (css_value_eq(val, vn, "italic")) {
+                st.italic_set = true; st.italic = true; st.valid_count++;
+            } else if (css_value_eq(val, vn, "normal")) {
+                st.italic_set = true; st.italic = false; st.valid_count++;
+            }
+        } else if (nn == 15 && !strncasecmp(name, "text-decoration", 15)) {
+            if (css_value_eq(val, vn, "underline")) {
+                st.underline_set = true; st.underline = true; st.valid_count++;
+            } else if (css_value_eq(val, vn, "none")) {
+                st.underline_set = true; st.underline = false; st.valid_count++;
+            }
+        } else if (allow_align && nn == 10 && !strncasecmp(name, "text-align", 10)) {
+            if (css_value_eq(val, vn, "left")) { st.align = 1; st.valid_count++; }
+            else if (css_value_eq(val, vn, "center")) { st.align = 2; st.valid_count++; }
+            else if (css_value_eq(val, vn, "right")) { st.align = 3; st.valid_count++; }
+        }
+    }
+    return st;
+}
+
+static bool style_container_tag(const char *tag) {
+    static const char *tags[] = {"span","p","div","section","article","main","header","footer","nav","aside","blockquote","address","code","strong","b","em","i","a","h1","h2","h3","h4","h5","h6","td","th"};
+    for (size_t i = 0; i < sizeof(tags)/sizeof(tags[0]); i++) if (!strcmp(tag, tags[i])) return true;
+    return false;
+}
+
+static bool style_block_tag(const char *tag) {
+    static const char *tags[] = {"p","div","section","article","main","header","footer","nav","aside","blockquote","address","h1","h2","h3","h4","h5","h6","td","th"};
+    for (size_t i = 0; i < sizeof(tags)/sizeof(tags[0]); i++) if (!strcmp(tag, tags[i])) return true;
+    return false;
+}
+
+static void append_style_push(char *out, size_t cap, size_t *used, inline_style_t st) {
+    unsigned char flags = 0;
+    if (st.bold_set) flags |= 0x80 | (st.bold ? 0x40 : 0);
+    if (st.italic_set) flags |= 0x20 | (st.italic ? 0x10 : 0);
+    if (st.underline_set) flags |= 0x08 | (st.underline ? 0x04 : 0);
+    flags |= (st.align & 0x03);
+    append_utf8_cp(out, cap, used, TEXT_STYLE_START);
+    append_utf8_cp(out, cap, used, TEXT_STYLE_NIBBLE + ((flags >> 4) & 0x0F));
+    append_utf8_cp(out, cap, used, TEXT_STYLE_NIBBLE + (flags & 0x0F));
 }
 
 static int color_container_tag(const char *tag) {
@@ -893,6 +1044,10 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                      !strcmp(tag, "tr") || !strcmp(tag, "table"))
                 append_line_break(template_text, template_cap, &used);
             if (color_container_tag(tag)) append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
+            if (style_container_tag(tag)) {
+                append_utf8_cp(template_text, template_cap, &used, TEXT_BG_POP);
+                append_utf8_cp(template_text, template_cap, &used, TEXT_STYLE_POP);
+            }
             cursor = after_tag;
             continue;
         }
@@ -910,6 +1065,30 @@ static page_t *html_to_page(const char *html, const char *base_url) {
             !strcmp(tag, "tr");
         if (color_block_tag)
             append_line_break(template_text, template_cap, &used);
+
+        /* Phase 2A: every supported paired text container pushes a compact
+         * text-style state. Alignment is accepted only on block-like elements. */
+        if (style_container_tag(tag)) {
+            char style_value[192] = "";
+            inline_style_t st = {0};
+            if (tag_attribute(attributes, tag_end, "style", style_value, sizeof(style_value)))
+                st = parse_inline_text_style(style_value, style_block_tag(tag));
+            append_style_push(template_text, template_cap, &used, st);
+            page->explicit_style_count += st.valid_count;
+        }
+
+        /* Phase 2B: background-color follows the same bounded push/pop model as
+         * the Phase 2A style state.  Missing/invalid values inherit; transparent
+         * is an explicit override that temporarily disables a parent background. */
+        if (style_container_tag(tag)) {
+            char bg_style_value[192] = "";
+            unsigned char br = 0, bg = 0, bb = 0;
+            int bg_kind = 0;
+            if (tag_attribute(attributes, tag_end, "style", bg_style_value, sizeof(bg_style_value)))
+                bg_kind = style_background_value(bg_style_value, &br, &bg, &bb);
+            append_background_push(template_text, template_cap, &used, bg_kind, br, bg, bb);
+            if (bg_kind) page->explicit_background_count++;
+        }
 
         /* Phase 1B: every supported paired text container pushes a color state.
          * Uncolored containers push inheritance, so nested closing tags restore correctly. */
@@ -1356,7 +1535,13 @@ static int wrap_glyph_width(unsigned cp) {
         cp == TEXT_HRULE || cp == TEXT_FORM_ON || cp == TEXT_FORM_OFF ||
         cp == TEXT_COLOR_START ||
         (cp >= TEXT_COLOR_NIBBLE && cp <= TEXT_COLOR_NIBBLE + 15) ||
-        cp == TEXT_COLOR_POP || cp == TEXT_COLOR_INHERIT)
+        cp == TEXT_COLOR_POP || cp == TEXT_COLOR_INHERIT ||
+        cp == TEXT_STYLE_START ||
+        (cp >= TEXT_STYLE_NIBBLE && cp <= TEXT_STYLE_NIBBLE + 15) ||
+        cp == TEXT_STYLE_POP ||
+        cp == TEXT_BG_START ||
+        (cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) ||
+        cp == TEXT_BG_POP || cp == TEXT_BG_INHERIT || cp == TEXT_BG_TRANSPARENT)
         return 0;
 
     if (cp >= 32 && cp <= 126)
@@ -2518,15 +2703,53 @@ static void draw_unicode_char(SDL_Renderer *r, int x, int y, unsigned cp) {
 }
 
 
+static void draw_char_italic(SDL_Renderer *r, int x, int y, char c) {
+    if (!r) return;
+    if ((unsigned char)c < 32 || (unsigned char)c > 127) c = '?';
+    const unsigned char *cols = font5x7[(unsigned char)c - 32];
+    for (int col = 0; col < FONT_W_COLS; col++) {
+        unsigned char bits = cols[col];
+        for (int row = 0; row < FONT_H_ROWS; row++) {
+            if (bits & (1u << row)) {
+                int skew = (FONT_H_ROWS - 1 - row) / 3;
+                SDL_FRect px = { (float)(x + col*FONT_SCALE + skew), (float)(y + row*FONT_SCALE),
+                                 (float)FONT_SCALE, (float)FONT_SCALE };
+                SDL_RenderFillRect(r, &px);
+            }
+        }
+    }
+}
+
+static void draw_unicode_char_italic(SDL_Renderer *r, int x, int y, unsigned cp) {
+    unsigned char bitmap[UNICODE_GLYPH_BYTES];
+    if (!load_unicode_glyph(cp, bitmap)) {
+        draw_unicode_char(r, x, y, cp);
+        return;
+    }
+    for (int row = 0; row < UNICODE_GLYPH_H; row++) {
+        uint16_t bits = ((uint16_t)bitmap[row * 2] << 8) | (uint16_t)bitmap[row * 2 + 1];
+        int skew = (UNICODE_GLYPH_H - 1 - row) / 5;
+        for (int col = 0; col < UNICODE_GLYPH_W; col++) {
+            if (bits & ((uint16_t)1 << (15 - col))) {
+                SDL_FRect px = { (float)(x + col + skew), (float)(y + row), 1.0f, 1.0f };
+                SDL_RenderFillRect(r, &px);
+            }
+        }
+    }
+}
 
 
 typedef struct {
     unsigned cp;
     bool bold;
     bool underline;
+    bool italic;
+    unsigned char align;
     unsigned char color;
     bool custom_color;
     unsigned char r, g, b;
+    bool custom_background;
+    unsigned char bg_r, bg_g, bg_b;
     unsigned char dir;
 } visual_glyph_t;
 
@@ -2806,7 +3029,14 @@ static void draw_visual_line(SDL_Renderer *r, int x, int y,
         line_w += visual_glyph_width(g[i].cp);
 
     int cx = x;
-    if (base_rtl && line_w < max_w)
+    unsigned char align = count > 0 ? g[0].align : 0;
+    if (align == 2 && line_w < max_w)
+        cx = x + (max_w - line_w) / 2;
+    else if (align == 3 && line_w < max_w)
+        cx = x + max_w - line_w;
+    else if (align == 1)
+        cx = x;
+    else if (base_rtl && line_w < max_w)
         cx = x + max_w - line_w;
 
     int cy = y;
@@ -2835,6 +3065,14 @@ static void draw_visual_line(SDL_Renderer *r, int x, int y,
             cy += (CH_H + LINE_SPACING);
         }
 
+        /* Phase 2B: paint the background cell first.  This intentionally
+         * follows the rendered text run rather than introducing block geometry. */
+        if (g[i].custom_background) {
+            SDL_SetRenderDrawColor(r, g[i].bg_r, g[i].bg_g, g[i].bg_b, 255);
+            SDL_FRect bg_rect = { (float)cx, (float)cy, (float)char_w, (float)CH_H };
+            SDL_RenderFillRect(r, &bg_rect);
+        }
+
         if (g[i].custom_color) {
             SDL_SetRenderDrawColor(r, g[i].r, g[i].g, g[i].b, 255);
         } else switch (g[i].color) {
@@ -2853,13 +3091,19 @@ static void draw_visual_line(SDL_Renderer *r, int x, int y,
         }
 
         if (cp >= 32 && cp <= 126) {
-            draw_char(r, cx, cy, (char)cp);
-            if (g[i].bold)
-                draw_char(r, cx + 1, cy, (char)cp);
+            if (g[i].italic) draw_char_italic(r, cx, cy, (char)cp);
+            else draw_char(r, cx, cy, (char)cp);
+            if (g[i].bold) {
+                if (g[i].italic) draw_char_italic(r, cx + 1, cy, (char)cp);
+                else draw_char(r, cx + 1, cy, (char)cp);
+            }
         } else if (cp >= 0x80 && cp <= 0x10FFFF) {
-            draw_unicode_char(r, cx, cy, cp);
-            if (g[i].bold)
-                draw_unicode_char(r, cx + 1, cy, cp);
+            if (g[i].italic) draw_unicode_char_italic(r, cx, cy, cp);
+            else draw_unicode_char(r, cx, cy, cp);
+            if (g[i].bold) {
+                if (g[i].italic) draw_unicode_char_italic(r, cx + 1, cy, cp);
+                else draw_unicode_char(r, cx + 1, cy, cp);
+            }
         }
 
         if (g[i].underline && cp != ' ') {
@@ -2883,7 +3127,13 @@ static void debug_print_content_clean(const char *s) {
             cp == TEXT_HRULE || cp == TEXT_FORM_ON || cp == TEXT_FORM_OFF ||
             cp == TEXT_COLOR_START ||
             (cp >= TEXT_COLOR_NIBBLE && cp <= TEXT_COLOR_NIBBLE + 15) ||
-            cp == TEXT_COLOR_POP || cp == TEXT_COLOR_INHERIT)
+            cp == TEXT_COLOR_POP || cp == TEXT_COLOR_INHERIT ||
+        cp == TEXT_STYLE_START ||
+        (cp >= TEXT_STYLE_NIBBLE && cp <= TEXT_STYLE_NIBBLE + 15) ||
+        cp == TEXT_STYLE_POP ||
+        cp == TEXT_BG_START ||
+        (cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) ||
+        cp == TEXT_BG_POP || cp == TEXT_BG_INHERIT || cp == TEXT_BG_TRANSPARENT)
             continue;
         fwrite(s + start, 1, i - start, stdout);
     }
@@ -2904,6 +3154,20 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
     bool custom_color = false; unsigned char custom_r=0, custom_g=0, custom_b=0;
     int color_nibbles = -1;
     unsigned color_value = 0;
+    struct { bool bold_set, bold, italic_set, italic, underline_set, underline; unsigned char align; } style_stack[32];
+    int style_depth = 0;
+    bool css_bold_set = false, css_bold = false;
+    bool css_italic_set = false, css_italic = false;
+    bool css_underline_set = false, css_underline = false;
+    unsigned char css_align = 0;
+    int style_nibbles = -1;
+    unsigned style_value = 0;
+    struct { bool custom; unsigned char r,g,b; } background_stack[32];
+    int background_depth = 0;
+    bool custom_background = false;
+    unsigned char background_r = 0, background_g = 0, background_b = 0;
+    int background_nibbles = -1;
+    unsigned background_value = 0;
 
     while (i <= L) {
         visual_glyph_t *line = g_render_line;
@@ -2980,6 +3244,90 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
                 color_value = 0;
                 continue;
             }
+            if (cp == TEXT_STYLE_START) {
+                style_nibbles = 0; style_value = 0; continue;
+            }
+            if (style_nibbles >= 0 && cp >= TEXT_STYLE_NIBBLE && cp <= TEXT_STYLE_NIBBLE + 15) {
+                style_value = (style_value << 4) | (unsigned)(cp - TEXT_STYLE_NIBBLE);
+                style_nibbles++;
+                if (style_nibbles == 2) {
+                    if (style_depth < 32) {
+                        style_stack[style_depth].bold_set = css_bold_set;
+                        style_stack[style_depth].bold = css_bold;
+                        style_stack[style_depth].italic_set = css_italic_set;
+                        style_stack[style_depth].italic = css_italic;
+                        style_stack[style_depth].underline_set = css_underline_set;
+                        style_stack[style_depth].underline = css_underline;
+                        style_stack[style_depth].align = css_align;
+                        style_depth++;
+                    }
+                    unsigned char f = (unsigned char)style_value;
+                    if (f & 0x80) { css_bold_set = true; css_bold = (f & 0x40) != 0; }
+                    if (f & 0x20) { css_italic_set = true; css_italic = (f & 0x10) != 0; }
+                    if (f & 0x08) { css_underline_set = true; css_underline = (f & 0x04) != 0; }
+                    if (f & 0x03) css_align = f & 0x03;
+                    style_nibbles = -1; style_value = 0;
+                }
+                continue;
+            }
+            if (cp == TEXT_STYLE_POP) {
+                if (style_depth > 0) {
+                    style_depth--;
+                    css_bold_set = style_stack[style_depth].bold_set;
+                    css_bold = style_stack[style_depth].bold;
+                    css_italic_set = style_stack[style_depth].italic_set;
+                    css_italic = style_stack[style_depth].italic;
+                    css_underline_set = style_stack[style_depth].underline_set;
+                    css_underline = style_stack[style_depth].underline;
+                    css_align = style_stack[style_depth].align;
+                }
+                style_nibbles = -1; style_value = 0; continue;
+            }
+            if (cp == TEXT_BG_START) {
+                background_nibbles = 0; background_value = 0; continue;
+            }
+            if (background_nibbles >= 0 && cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) {
+                background_value = (background_value << 4) | (unsigned)(cp - TEXT_BG_NIBBLE);
+                background_nibbles++;
+                if (background_nibbles == 6) {
+                    if (background_depth < 32) {
+                        background_stack[background_depth].custom = custom_background;
+                        background_stack[background_depth].r = background_r;
+                        background_stack[background_depth].g = background_g;
+                        background_stack[background_depth].b = background_b;
+                        background_depth++;
+                    }
+                    custom_background = true;
+                    background_r = (unsigned char)((background_value >> 16) & 0xFF);
+                    background_g = (unsigned char)((background_value >> 8) & 0xFF);
+                    background_b = (unsigned char)(background_value & 0xFF);
+                    background_nibbles = -1; background_value = 0;
+                }
+                continue;
+            }
+            if (cp == TEXT_BG_INHERIT || cp == TEXT_BG_TRANSPARENT) {
+                if (background_depth < 32) {
+                    background_stack[background_depth].custom = custom_background;
+                    background_stack[background_depth].r = background_r;
+                    background_stack[background_depth].g = background_g;
+                    background_stack[background_depth].b = background_b;
+                    background_depth++;
+                }
+                if (cp == TEXT_BG_TRANSPARENT) custom_background = false;
+                background_nibbles = -1; background_value = 0;
+                continue;
+            }
+            if (cp == TEXT_BG_POP) {
+                if (background_depth > 0) {
+                    background_depth--;
+                    custom_background = background_stack[background_depth].custom;
+                    background_r = background_stack[background_depth].r;
+                    background_g = background_stack[background_depth].g;
+                    background_b = background_stack[background_depth].b;
+                }
+                background_nibbles = -1; background_value = 0;
+                continue;
+            }
             if (cp == '\n') {
                 saw_newline = true;
                 break;
@@ -2987,13 +3335,17 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
 
             if (count < BIDI_LINE_MAX) {
                 line[count].cp = cp;
-                line[count].bold = bold_depth > 0 || heading_depth > 0;
-                line[count].underline = link_depth > 0;
+                line[count].bold = css_bold_set ? css_bold : (bold_depth > 0 || heading_depth > 0);
+                line[count].underline = css_underline_set ? css_underline : (link_depth > 0);
+                line[count].italic = css_italic_set ? css_italic : false;
+                line[count].align = css_align;
                 line[count].color = heading_depth > 0 ? TEXT_COLOR_HEADING :
                                     link_depth > 0 ? TEXT_COLOR_LINK :
                                     form_depth > 0 ? TEXT_COLOR_FORM : TEXT_COLOR_NORMAL;
                 line[count].custom_color = custom_color;
                 line[count].r = custom_r; line[count].g = custom_g; line[count].b = custom_b;
+                line[count].custom_background = custom_background;
+                line[count].bg_r = background_r; line[count].bg_g = background_g; line[count].bg_b = background_b;
                 line[count].dir = DIR_NEUTRAL;
                 count++;
             }
@@ -4400,6 +4752,8 @@ int main(void) {
                                    page->action_count,
                                    page->form_count);
                             printf("[mini_browser] visual: explicit_colors=%d\n", page->explicit_color_count);
+                            printf("[mini_browser] visual: explicit_styles=%d\n", page->explicit_style_count);
+                            printf("[mini_browser] visual: explicit_backgrounds=%d\n", page->explicit_background_count);
                             printf("[mini_browser] cookies: count=%d\n",
                                    cookie_count());
 

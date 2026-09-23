@@ -93,23 +93,34 @@
 #define SC_SPECIAL_129    ((SDL_Scancode)0x129)
 
 
-/* ---------- Mini Browser 2.6 Phase 3 proof-of-concept ---------- */
+/* ---------- Mini Browser 2.6 Phase 3 Candidate 3 ---------- */
 /*
- * Phase 3 deliberately starts with one bounded image and one very simple
- * image format (binary PPM/P6).  This proves the complete pipeline:
- *   <img> parsing -> URL resolution -> bounded download -> decode -> render.
+ * Bounded real-world image support:
+ *   - remember up to 32 <img> references
+ *   - render the first 5 inline
+ *   - expose later images as numbered actions
+ *   - JPEG/PNG via stb_image
+ *   - decode larger source images only inside a strict RGB decode budget
+ *   - immediately downscale retained images to RGB565
+ *   - direct image URLs and numbered image actions use one image viewer
  *
- * PNG/JPEG are intentionally NOT claimed by this proof-of-concept yet.
- * Once the pipeline is badge-proven, a production decoder can replace the
- * tiny PPM decoder without changing the page/image model.
+ * Important memory rule:
+ * stb_image still has to decode JPEG/PNG before Mini Browser can resize it.
+ * Therefore source images are accepted only when width*height*3 fits inside
+ * IMAGE_DECODE_MAX_BYTES.  This prevents a small compressed file from causing
+ * an unbounded multi-megabyte RGB allocation.
  */
-#define MAX_PAGE_IMAGES       1
-#define IMAGE_DOWNLOAD_MAX    (128 * 1024)
-#define IMAGE_SOURCE_MAX_W    320
-#define IMAGE_SOURCE_MAX_H    240
-#define IMAGE_DRAW_MAX_W      320
-#define IMAGE_DRAW_MAX_H      240
-#define IMAGE_RESERVE_LINES   1 /* marker only; renderer uses real pixel height */
+#define MAX_PAGE_IMAGES          32
+#define MAX_INLINE_IMAGES         5
+#define IMAGE_DOWNLOAD_MAX       (512 * 1024)
+#define IMAGE_DECODE_MAX_BYTES   (1536 * 1024)
+#define IMAGE_SOURCE_MAX_W       1600
+#define IMAGE_SOURCE_MAX_H       1600
+#define IMAGE_DRAW_MAX_W          320
+#define IMAGE_DRAW_MAX_H          240
+#define IMAGE_VIEW_MAX_W          640
+#define IMAGE_VIEW_MAX_H          600
+#define IMAGE_RESERVE_LINES         1
 
 typedef enum {
     DISPLAY_BW = 0,
@@ -251,7 +262,8 @@ typedef struct {
 typedef enum {
     ACTION_LINK,
     ACTION_FORM_FIELD,
-    ACTION_FORM_SUBMIT
+    ACTION_FORM_SUBMIT,
+    ACTION_IMAGE
 } action_type_t;
 
 typedef struct {
@@ -259,6 +271,7 @@ typedef struct {
     int link_index;
     int form_index;
     int field_index;
+    int image_index;
 } page_action_t;
 
 typedef struct {
@@ -895,6 +908,7 @@ static int add_action(page_t *page, action_type_t type, int link_index,
     page->actions[index].link_index = link_index;
     page->actions[index].form_index = form_index;
     page->actions[index].field_index = field_index;
+    page->actions[index].image_index = -1;
     return index;
 }
 
@@ -933,6 +947,13 @@ static int refresh_page_text(page_t *page) {
                                  TEXT_FORM_ON, action_index + 1,
                                  field->label[0] ? field->label : "Submit", TEXT_FORM_OFF);
                     }
+                } else if (action->type == ACTION_IMAGE &&
+                           action->image_index >= 0 &&
+                           action->image_index < page->image_count) {
+                    const page_image_t *image = &page->images[action->image_index];
+                    snprintf(line, sizeof(line), "%c[%d] Image: %s%c\n",
+                             TEXT_LINK_ON, action_index + 1,
+                             image->alt[0] ? image->alt : "image", TEXT_LINK_OFF);
                 }
                 if (!append_text(rendered, cap, &used, line)) { free(rendered); return 0; }
             }
@@ -1294,8 +1315,14 @@ static page_t *html_to_page(const char *html, const char *base_url) {
 
                 append_line_break(template_text, template_cap, &used);
 
-                if (g_display_mode == DISPLAY_COLORS_IMAGES &&
-                    page->image_count < MAX_PAGE_IMAGES) {
+                if (g_display_mode != DISPLAY_COLORS_IMAGES) {
+                    char placeholder[160];
+                    snprintf(placeholder, sizeof(placeholder),
+                             "[Image: %s]",
+                             alt_value[0] ? alt_value : "image");
+                    append_text(template_text, template_cap, &used, placeholder);
+                    append_line_break(template_text, template_cap, &used);
+                } else if (page->image_count < MAX_PAGE_IMAGES) {
                     int image_index = page->image_count++;
                     page_image_t *image = &page->images[image_index];
                     memset(image, 0, sizeof(*image));
@@ -1311,17 +1338,23 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                     if (height_value[0])
                         image->requested_height = atoi(height_value);
 
-                    /* Keep the marker on its own line. Blank lines reserve
-                     * vertical room in the existing line-based scroller. */
-                    char image_marker[32];
-                    snprintf(image_marker, sizeof(image_marker),
-                             "[[MBIMG%d]]", image_index);
-                    append_text(template_text, template_cap, &used, image_marker);
-                    append_line_break(template_text, template_cap, &used);
+                    if (image_index < MAX_INLINE_IMAGES) {
+                        char image_marker[32];
+                        snprintf(image_marker, sizeof(image_marker),
+                                 "[[MBIMG%d]]", image_index);
+                        append_text(template_text, template_cap, &used, image_marker);
+                        append_line_break(template_text, template_cap, &used);
+                    } else {
+                        int action = add_action(page, ACTION_IMAGE, -1, -1, -1);
+                        if (action >= 0) {
+                            page->actions[action].image_index = image_index;
+                            append_action_marker(template_text, template_cap, &used, action);
+                        }
+                    }
                 } else {
                     char placeholder[160];
                     snprintf(placeholder, sizeof(placeholder),
-                             "[Image: %s]",
+                             "[Image omitted: %s]",
                              alt_value[0] ? alt_value : "image");
                     append_text(template_text, template_cap, &used, placeholder);
                     append_line_break(template_text, template_cap, &used);
@@ -1499,7 +1532,8 @@ typedef enum {
     ACTIVATE_EDIT_FIELD,
     ACTIVATE_POST,
     ACTIVATE_FORM_UNSUPPORTED,
-    ACTIVATE_URL_TOO_LONG
+    ACTIVATE_URL_TOO_LONG,
+    ACTIVATE_IMAGE
 } activate_result_t;
 
 static activate_result_t activate_page_action(
@@ -1588,6 +1622,10 @@ return ACTIVATE_NAVIGATE;
     form_t *form = &page->forms[action->form_index];
     if (action->field_index < 0 || action->field_index >= form->field_count)
         return ACTIVATE_NONE;
+
+    if (action->type == ACTION_IMAGE) {
+        return ACTIVATE_IMAGE;
+    }
 
     if (action->type == ACTION_FORM_FIELD) {
         form_field_t *field = &form->fields[action->field_index];
@@ -2325,25 +2363,53 @@ static int fetch_url(const char *url, const char *post_body, mem_t *m, long *htt
 }
 
 
-/* ---------- Phase 3 bounded image proof-of-concept ---------- */
+/* Renderer functions used by the image viewer are defined later. */
+static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w);
+static void draw_ui(SDL_Renderer *r, const char *bar_text);
+
+/* ---------- Phase 3 Candidate 3 bounded image subsystem ---------- */
 
 typedef struct {
-    unsigned char *rgb;
+    uint16_t *rgb565;
     int width;
     int height;
     bool loaded;
     char url[URL_MAX];
 } decoded_image_t;
 
-static decoded_image_t g_decoded_image;
+static decoded_image_t g_inline_images[MAX_INLINE_IMAGES];
+static decoded_image_t g_viewer_image;
 
-static void image_release(void) {
-    if (g_decoded_image.rgb) stbi_image_free(g_decoded_image.rgb);
-    memset(&g_decoded_image, 0, sizeof(g_decoded_image));
+static void decoded_image_release(decoded_image_t *image) {
+    if (!image) return;
+    free(image->rgb565);
+    memset(image, 0, sizeof(*image));
 }
 
-/* Image fetch is intentionally separate from fetch_url(): it must not replace
- * the HTML page's HTTP/TLS metadata or cookie diagnostics. */
+static void image_release_all(void) {
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
+        decoded_image_release(&g_inline_images[i]);
+    decoded_image_release(&g_viewer_image);
+}
+
+/* Unlike the HTML sink, image downloads need their own 512 KiB cap. */
+static size_t image_wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
+    size_t n = sz * nm;
+    mem_t *m = (mem_t*)ud;
+    if (!m || !n) return n;
+
+    if (m->len + n > IMAGE_DOWNLOAD_MAX)
+        return 0; /* abort transfer: compressed image is too large */
+
+    char *p = (char*)realloc(m->buf, m->len + n);
+    if (!p) return 0;
+    m->buf = p;
+    memcpy(m->buf + m->len, ptr, n);
+    m->len += n;
+    return n;
+}
+
+/* Image fetch is separate from fetch_url(): it must not replace page metadata. */
 static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     if (!url || !m) return -1;
 
@@ -2379,7 +2445,7 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
     if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
 
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, image_wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
 
     CURLcode res = curl_easy_perform(curl);
@@ -2393,23 +2459,39 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     if (hdrs) curl_slist_free_all(hdrs);
     curl_easy_cleanup(curl);
 
-    if (m->len > IMAGE_DOWNLOAD_MAX) {
+    if (res != CURLE_OK) {
         free(m->buf);
         m->buf = NULL;
         m->len = 0;
-        return -3;
+        return (int)res;
     }
-    return (res == CURLE_OK) ? 0 : (int)res;
+    return 0;
 }
 
-static int decode_web_image(const unsigned char *buf, size_t len,
-                            decoded_image_t *out) {
+static void fit_image_size(int src_w, int src_h, int max_w, int max_h,
+                           int *out_w, int *out_h) {
+    int w = src_w, h = src_h;
+    if (w > max_w) {
+        h = (int)(((long long)h * max_w + w / 2) / w);
+        w = max_w;
+    }
+    if (h > max_h) {
+        w = (int)(((long long)w * max_h + h / 2) / h);
+        h = max_h;
+    }
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    *out_w = w;
+    *out_h = h;
+}
+
+static int decode_web_image_bounded(const unsigned char *buf, size_t len,
+                                    int target_max_w, int target_max_h,
+                                    decoded_image_t *out) {
     if (!buf || !len || !out || len > INT_MAX)
         return 0;
 
     int w = 0, h = 0, channels = 0;
-
-    /* Inspect dimensions before allocating the decoded pixel buffer. */
     if (!stbi_info_from_memory(buf, (int)len, &w, &h, &channels)) {
         printf("[mini_browser] image: stb info failed: %s\n",
                stbi_failure_reason() ? stbi_failure_reason() : "unknown");
@@ -2418,14 +2500,17 @@ static int decode_web_image(const unsigned char *buf, size_t len,
 
     if (w <= 0 || h <= 0 ||
         w > IMAGE_SOURCE_MAX_W || h > IMAGE_SOURCE_MAX_H) {
-        printf("[mini_browser] image: rejected dimensions %dx%d (limit %dx%d)\n",
+        printf("[mini_browser] image: rejected dimensions %dx%d (dimension limit %dx%d)\n",
                w, h, IMAGE_SOURCE_MAX_W, IMAGE_SOURCE_MAX_H);
         return 0;
     }
 
-    if ((size_t)w * (size_t)h >
-        (size_t)IMAGE_SOURCE_MAX_W * (size_t)IMAGE_SOURCE_MAX_H)
+    size_t pixels = (size_t)w * (size_t)h;
+    if (pixels > IMAGE_DECODE_MAX_BYTES / 3U) {
+        printf("[mini_browser] image: rejected %dx%d: RGB decode would need %u bytes (budget %u)\n",
+               w, h, (unsigned)(pixels * 3U), (unsigned)IMAGE_DECODE_MAX_BYTES);
         return 0;
+    }
 
     unsigned char *rgb =
         stbi_load_from_memory(buf, (int)len, &w, &h, &channels, 3);
@@ -2435,55 +2520,99 @@ static int decode_web_image(const unsigned char *buf, size_t len,
         return 0;
     }
 
-    image_release();
-    out->rgb = rgb;
-    out->width = w;
-    out->height = h;
+    int dw = 0, dh = 0;
+    fit_image_size(w, h, target_max_w, target_max_h, &dw, &dh);
+
+    size_t retained_bytes = (size_t)dw * (size_t)dh * sizeof(uint16_t);
+    uint16_t *small = (uint16_t*)malloc(retained_bytes);
+    if (!small) {
+        stbi_image_free(rgb);
+        printf("[mini_browser] image: no memory for %dx%d RGB565 cache\n", dw, dh);
+        return 0;
+    }
+
+    for (int y = 0; y < dh; y++) {
+        int sy = (int)(((long long)y * h) / dh);
+        for (int x = 0; x < dw; x++) {
+            int sx = (int)(((long long)x * w) / dw);
+            size_t off = ((size_t)sy * (size_t)w + (size_t)sx) * 3U;
+            unsigned r = rgb[off + 0];
+            unsigned g = rgb[off + 1];
+            unsigned b = rgb[off + 2];
+            small[(size_t)y * (size_t)dw + (size_t)x] =
+                (uint16_t)(((r & 0xF8U) << 8) |
+                           ((g & 0xFCU) << 3) |
+                           (b >> 3));
+        }
+    }
+
+    stbi_image_free(rgb);
+    decoded_image_release(out);
+    out->rgb565 = small;
+    out->width = dw;
+    out->height = dh;
     out->loaded = true;
+
+    printf("[mini_browser] image: decoded source=%dx%d retained=%dx%d RGB565=%u bytes\n",
+           w, h, dw, dh, (unsigned)retained_bytes);
     return 1;
 }
 
-static int load_page_image(const page_t *page) {
-    image_release();
+static int load_image_url(const char *url, int target_max_w, int target_max_h,
+                          decoded_image_t *out) {
+    if (!url || !out) return 0;
 
-    if (!page || g_display_mode != DISPLAY_COLORS_IMAGES ||
-        page->image_count <= 0)
-        return 0;
-
-    const page_image_t *image = &page->images[0];
     mem_t m = {0};
     long status = 0;
+    printf("[mini_browser] image: fetching %s\n", url);
 
-    printf("[mini_browser] image: fetching %s\n", image->src);
-    int rc = fetch_image_bytes(image->src, &m, &status);
+    int rc = fetch_image_bytes(url, &m, &status);
     if (rc != 0 || status >= 400) {
         printf("[mini_browser] image: fetch failed rc=%d HTTP=%ld\n", rc, status);
         free(m.buf);
         return 0;
     }
 
-    int ok = decode_web_image((const unsigned char*)m.buf, m.len,
-                              &g_decoded_image);
+    int ok = decode_web_image_bounded((const unsigned char*)m.buf, m.len,
+                                      target_max_w, target_max_h, out);
     if (ok) {
-        strncpy(g_decoded_image.url, image->src,
-                sizeof(g_decoded_image.url) - 1);
-        printf("[mini_browser] image: loaded %dx%d, compressed=%u bytes\n",
-               g_decoded_image.width, g_decoded_image.height,
+        strncpy(out->url, url, sizeof(out->url) - 1);
+        printf("[mini_browser] image: loaded compressed=%u bytes\n",
                (unsigned)m.len);
     } else {
-        printf("[mini_browser] image: unsupported/invalid JPEG/PNG\n");
+        printf("[mini_browser] image: unsupported, invalid, or outside memory budget\n");
     }
 
     free(m.buf);
     return ok;
 }
 
-/* Nearest-neighbour draw using SDL primitives only.  The POC image is small,
- * so this avoids adding an unverified SDL_image/PNG/JPEG dependency. */
+static int load_page_images(const page_t *page) {
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
+        decoded_image_release(&g_inline_images[i]);
+
+    if (!page || g_display_mode != DISPLAY_COLORS_IMAGES)
+        return 0;
+
+    int count = page->image_count;
+    if (count > MAX_INLINE_IMAGES) count = MAX_INLINE_IMAGES;
+
+    int loaded = 0;
+    for (int i = 0; i < count; i++) {
+        if (load_image_url(page->images[i].src,
+                           IMAGE_DRAW_MAX_W, IMAGE_DRAW_MAX_H,
+                           &g_inline_images[i]))
+            loaded++;
+    }
+    return loaded;
+}
+
 static void image_draw_size(const page_image_t *spec,
-                            int max_w, int *out_w, int *out_h) {
-    int src_w = g_decoded_image.width;
-    int src_h = g_decoded_image.height;
+                            const decoded_image_t *image,
+                            int max_w, int max_h,
+                            int *out_w, int *out_h) {
+    int src_w = image->width;
+    int src_h = image->height;
     int draw_w = src_w;
     int draw_h = src_h;
 
@@ -2495,7 +2624,6 @@ static void image_draw_size(const page_image_t *spec,
         draw_w = (src_w * draw_h + src_h / 2) / src_h;
     }
 
-    /* If both HTML dimensions are present, fit inside them without distortion. */
     if (spec && spec->requested_width > 0 && spec->requested_height > 0) {
         int h_by_w = (src_h * spec->requested_width + src_w / 2) / src_w;
         int w_by_h = (src_w * spec->requested_height + src_h / 2) / src_h;
@@ -2508,68 +2636,32 @@ static void image_draw_size(const page_image_t *spec,
         }
     }
 
-    if (draw_w > max_w) {
-        draw_h = (draw_h * max_w + draw_w / 2) / draw_w;
-        draw_w = max_w;
-    }
-    if (draw_w > IMAGE_DRAW_MAX_W) {
-        draw_h = (draw_h * IMAGE_DRAW_MAX_W + draw_w / 2) / draw_w;
-        draw_w = IMAGE_DRAW_MAX_W;
-    }
-    if (draw_h > IMAGE_DRAW_MAX_H) {
-        draw_w = (draw_w * IMAGE_DRAW_MAX_H + draw_h / 2) / draw_h;
-        draw_h = IMAGE_DRAW_MAX_H;
-    }
-
-    if (draw_w < 1) draw_w = 1;
-    if (draw_h < 1) draw_h = 1;
+    fit_image_size(draw_w, draw_h, max_w, max_h, &draw_w, &draw_h);
     *out_w = draw_w;
     *out_h = draw_h;
 }
 
 static int draw_decoded_image(SDL_Renderer *r, const page_image_t *spec,
-                              int x, int y, int max_w) {
-    if (!r || !g_decoded_image.loaded || !g_decoded_image.rgb)
+                              const decoded_image_t *image,
+                              int x, int y, int max_w, int max_h) {
+    if (!r || !image || !image->loaded || !image->rgb565)
         return 0;
 
-    int src_w = g_decoded_image.width;
-    int src_h = g_decoded_image.height;
     int draw_w = 0, draw_h = 0;
-    image_draw_size(spec, max_w, &draw_w, &draw_h);
+    image_draw_size(spec, image, max_w, max_h, &draw_w, &draw_h);
 
     for (int dy = 0; dy < draw_h; dy++) {
-        int sy = (dy * src_h) / draw_h;
-        int run_start = 0;
-        unsigned char run_r = 0, run_g = 0, run_b = 0;
-
-        for (int dx = 0; dx <= draw_w; dx++) {
-            unsigned char rr = 0, gg = 0, bb = 0;
-            if (dx < draw_w) {
-                int sx = (dx * src_w) / draw_w;
-                size_t off = ((size_t)sy * (size_t)src_w + (size_t)sx) * 3U;
-                rr = g_decoded_image.rgb[off + 0];
-                gg = g_decoded_image.rgb[off + 1];
-                bb = g_decoded_image.rgb[off + 2];
-            }
-
-            if (dx == 0) {
-                run_r = rr; run_g = gg; run_b = bb;
-                continue;
-            }
-
-            if (dx == draw_w || rr != run_r || gg != run_g || bb != run_b) {
-                SDL_SetRenderDrawColor(r, run_r, run_g, run_b, 255);
-                SDL_FRect rect = {
-                    (float)(x + run_start), (float)(y + dy),
-                    (float)(dx - run_start), 1.0f
-                };
-                SDL_RenderFillRect(r, &rect);
-                run_start = dx;
-                run_r = rr; run_g = gg; run_b = bb;
-            }
+        int sy = (dy * image->height) / draw_h;
+        for (int dx = 0; dx < draw_w; dx++) {
+            int sx = (dx * image->width) / draw_w;
+            uint16_t p = image->rgb565[(size_t)sy * (size_t)image->width + (size_t)sx];
+            unsigned char rr = (unsigned char)(((p >> 11) & 0x1F) * 255 / 31);
+            unsigned char gg = (unsigned char)(((p >> 5) & 0x3F) * 255 / 63);
+            unsigned char bb = (unsigned char)((p & 0x1F) * 255 / 31);
+            SDL_SetRenderDrawColor(r, rr, gg, bb, 255);
+            SDL_RenderPoint(r, (float)(x + dx), (float)(y + dy));
         }
     }
-
     return draw_h;
 }
 
@@ -2583,14 +2675,35 @@ static int is_image_marker_line(const char *line, int len, int *index) {
     int n = -1;
     char extra = 0;
     if (sscanf(tmp, "[[MBIMG%d]]%c", &n, &extra) == 1 &&
-        n >= 0 && n < MAX_PAGE_IMAGES) {
+        n >= 0 && n < MAX_INLINE_IMAGES) {
         if (index) *index = n;
         return 1;
     }
     return 0;
 }
 
+static int content_type_is_image(const char *content_type) {
+    if (!content_type) return 0;
+    return !strncasecmp(content_type, "image/jpeg", 10) ||
+           !strncasecmp(content_type, "image/jpg", 9) ||
+           !strncasecmp(content_type, "image/png", 9);
+}
 
+static void draw_image_viewer(SDL_Renderer *r, const decoded_image_t *image) {
+    draw_ui(r, "Image Viewer - WHY+B/Esc to return");
+    if (!image || !image->loaded) {
+        draw_text(r, PAD_LR, PAD_TOP, "Image unavailable", VIEW_W - 2 * PAD_LR);
+        return;
+    }
+
+    int max_w = VIEW_W - 2 * PAD_LR;
+    int max_h = VIEW_H - PAD_TOP - PAD_BOTTOM;
+    int w = 0, h = 0;
+    fit_image_size(image->width, image->height, max_w, max_h, &w, &h);
+    int x = (VIEW_W - w) / 2;
+    int y = PAD_TOP + (max_h - h) / 2;
+    draw_decoded_image(r, NULL, image, x, y, max_w, max_h);
+}
 
 /* ---------- tiny text renderer ---------- */
 
@@ -4942,7 +5055,8 @@ int main(void) {
     bool inhibit_text_once = false; /* swallow TEXT_INPUT after commands */
     bool screenshot_pending = false;      /* WHY+S: visible 716x716 frame */
     bool full_screenshot_pending = false; /* WHY+Z: complete rendered page */
-    bool options_open = false;            /* WHY+O: Phase 3 display mode menu */
+    bool options_open = false;
+    bool image_viewer_open = false;            /* WHY+O: Phase 3 display mode menu */
 
     const int max_cols = (VIEW_W - 2*PAD_LR) / CH_W;
     const int lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
@@ -4957,6 +5071,8 @@ int main(void) {
     while (running) {
 
                 if (need_fetch) {
+            image_viewer_open = false;
+            decoded_image_release(&g_viewer_image);
             url_editing = false;
             url_cursor = 0;
             form_editing = false;
@@ -5064,6 +5180,30 @@ int main(void) {
                         scroll_lines = 0;
                         sel_action = -1;
 
+			} else if (content_type_is_image(g_fetch_meta.content_type)) {
+                            printf("[mini_browser] direct image: content-type=%s URL=%s\n",
+                                   g_fetch_meta.content_type, url_buf);
+                            decoded_image_release(&g_viewer_image);
+                            if (g_display_mode == DISPLAY_COLORS_IMAGES &&
+                                load_image_url(url_buf, IMAGE_VIEW_MAX_W,
+                                               IMAGE_VIEW_MAX_H,
+                                               &g_viewer_image)) {
+                                image_viewer_open = true;
+                                snprintf(status_message, sizeof(status_message),
+                                         "Image loaded");
+                                status_message_until = SDL_GetTicks() + 1000;
+                            } else {
+                                image_viewer_open = false;
+                                free(content_wrapped);
+                                content_wrapped = wrap_text(
+                                    g_display_mode == DISPLAY_COLORS_IMAGES
+                                        ? "IMAGE UNAVAILABLE\n\nThe JPEG/PNG could not be decoded within the configured memory limits."
+                                        : "IMAGE\n\nImages are disabled in the current display mode. Press WHY+O and select Colors + Images.",
+                                    max_cols);
+                            }
+                            scroll_lines = 0;
+                            sel_action = -1;
+
 			} else {
     			debug_utf8("CURL", m.buf ? m.buf : "");
 
@@ -5092,7 +5232,7 @@ int main(void) {
 			} else {
    			 debug_utf8("PAGE TEXT", pg->text);
 
-                            load_page_image(pg);
+                            load_page_images(pg);
 
     			char *wrapped = wrap_text(pg->text, max_cols);
 
@@ -5134,10 +5274,13 @@ int main(void) {
                             printf("[mini_browser] visual: explicit_colors=%d\n", page->explicit_color_count);
                             printf("[mini_browser] visual: explicit_styles=%d\n", page->explicit_style_count);
                             printf("[mini_browser] visual: explicit_backgrounds=%d\n", page->explicit_background_count);
-                            printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d image_loaded=%d\n",
+                            int inline_loaded = 0;
+                            for (int ii = 0; ii < MAX_INLINE_IMAGES; ii++)
+                                if (g_inline_images[ii].loaded) inline_loaded++;
+                            printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d images_loaded=%d\n",
                                    display_mode_name(g_display_mode),
                                    page->image_seen_count, page->image_count,
-                                   g_decoded_image.loaded ? 1 : 0);
+                                   inline_loaded);
                             printf("[mini_browser] cookies: count=%d\n",
                                    cookie_count());
 
@@ -5210,6 +5353,12 @@ int main(void) {
                 snprintf(barline, sizeof(barline), "[%d/%d]  %s",
                          sel_action + 1, page->action_count,
                          page->links[action->link_index].href);
+            } else if (action->type == ACTION_IMAGE &&
+                       action->image_index >= 0 &&
+                       action->image_index < page->image_count) {
+                snprintf(barline, sizeof(barline), "[%d/%d] Image: %s",
+                         sel_action + 1, page->action_count,
+                         page->images[action->image_index].alt);
             } else {
                 snprintf(barline, sizeof(barline), "[%d/%d]",
                          sel_action + 1, page->action_count);
@@ -5228,7 +5377,9 @@ int main(void) {
         }
 
         /* Draw UI + visible text slice */
-        if (options_open) {
+        if (image_viewer_open) {
+            draw_image_viewer(ren, &g_viewer_image);
+        } else if (options_open) {
             draw_ui(ren, "Mini Browser - Options");
             int oy = PAD_TOP;
             char option_line[128];
@@ -5253,9 +5404,9 @@ int main(void) {
             draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
             oy += 2 * (CH_H + LINE_SPACING);
 
-            draw_text(ren, PAD_LR, oy, "Phase 3 POC image limits:", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "Phase 3 image support:", VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "1 image/page, JPEG/PNG, max 320x240", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "5 inline, extra images as links, JPEG/PNG", VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
             draw_text(ren, PAD_LR, oy, "Press 1/2/3 to select, Esc to cancel", VIEW_W - 2*PAD_LR);
         } else {
@@ -5266,16 +5417,21 @@ int main(void) {
                 for (int ss = 0; ss < scroll_lines && p && *p; ) { if (*p++ == '\n') ss++; }
                 SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
                 int drawn = 0;
-                while (p && *p && drawn < lines_per_page) {
+                while (p && *p && drawn < lines_per_page &&
+                       y < VIEW_H - PAD_BOTTOM) {
                     const char *nl = strchr(p, '\n');
                     int len = nl ? (int)(nl - p) : (int)strlen(p);
                     int image_index = -1;
 
                     if (is_image_marker_line(p, len, &image_index)) {
-                        if (image_index == 0 && g_decoded_image.loaded) {
+                        if (image_index >= 0 &&
+                            image_index < MAX_INLINE_IMAGES &&
+                            g_inline_images[image_index].loaded) {
                             int image_h = draw_decoded_image(
                                 ren, &page->images[image_index],
-                                PAD_LR, y, VIEW_W - 2*PAD_LR);
+                                &g_inline_images[image_index],
+                                PAD_LR, y, VIEW_W - 2*PAD_LR,
+                                IMAGE_DRAW_MAX_H);
                             y += image_h + LINE_SPACING;
                         } else {
                             draw_text(ren, PAD_LR, y, "[Image unavailable]",
@@ -5389,8 +5545,10 @@ int main(void) {
                     if (changed) {
                         g_display_mode = selected;
                         options_open = false;
-                        image_release();
+                        image_release_all();
                         if (is_http_scheme(url_buf))
+                            image_viewer_open = false;
+                            decoded_image_release(&g_viewer_image);
                             need_fetch = 1; /* reparse <img> for the new mode */
                         scroll_lines = 0;
                         sel_action = -1;
@@ -5589,7 +5747,10 @@ int main(void) {
                         }
  
                         case SDL_SCANCODE_B: { /* BACK */
-                            if (viewing_page_info &&
+                            if (image_viewer_open) {
+                                image_viewer_open = false;
+                                decoded_image_release(&g_viewer_image);
+                            } else if (viewing_page_info &&
                                 page_info_return_url[0]) {
 
                                 strncpy(url_buf,
@@ -5740,6 +5901,24 @@ int main(void) {
                                 bookmark_return_url[0] = 0;
                                 history_navigation = false;
                                 need_fetch = 1;
+                            } else if (result == ACTIVATE_IMAGE) {
+                                if (action_index >= 0 &&
+                                    action_index < page->action_count) {
+                                    int image_index = page->actions[action_index].image_index;
+                                    if (image_index >= 0 && image_index < page->image_count &&
+                                        g_display_mode == DISPLAY_COLORS_IMAGES) {
+                                        decoded_image_release(&g_viewer_image);
+                                        if (load_image_url(page->images[image_index].src,
+                                                           IMAGE_VIEW_MAX_W, IMAGE_VIEW_MAX_H,
+                                                           &g_viewer_image)) {
+                                            image_viewer_open = true;
+                                        } else {
+                                            snprintf(status_message, sizeof(status_message),
+                                                     "IMAGE UNAVAILABLE");
+                                            status_message_until = SDL_GetTicks() + 2000;
+                                        }
+                                    }
+                                }
                             } else if (result == ACTIVATE_FORM_UNSUPPORTED) {
                                 snprintf(status_message, sizeof(status_message),
                                          "FORM METHOD/ENCODING NOT SUPPORTED");
@@ -5916,7 +6095,10 @@ case SDL_SCANCODE_TAB: {
     break;
 }
                     case SDL_SCANCODE_ESCAPE:
-                        if (form_editing) {
+                        if (image_viewer_open) {
+                            image_viewer_open = false;
+                            decoded_image_release(&g_viewer_image);
+                        } else if (form_editing) {
                             form_editing = false;
                             form_edit_form = -1;
                             form_edit_field = -1;
@@ -5978,6 +6160,7 @@ case SDL_SCANCODE_TAB: {
     }
 
     SDL_StopTextInput(win);
+    image_release_all();
     free_page(page);
     free(content_wrapped);
     SDL_DestroyRenderer(ren);

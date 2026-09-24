@@ -643,8 +643,63 @@ static int append_text(char *out, size_t cap, size_t *used, const char *text) {
     return append_bytes(out, cap, used, text, strlen(text));
 }
 
+/*
+ * Candidate 3 Fix 10: marker-aware vertical whitespace normalization.
+ *
+ * Color/style/background state markers are zero-width. Closing a block can
+ * leave: visible text + newline + zero-width POP markers. The old code saw
+ * the final marker byte instead of the existing newline and added another
+ * newline when the next block opened, creating a visually empty line.
+ *
+ * Normalize at line-break insertion time, not by collapsing the finished
+ * text, so literal newlines inside <pre> remain untouched.
+ */
+static int tail_after_last_newline_is_zero_width(const char *out, size_t used) {
+    size_t start = used;
+    while (start > 0 && out[start - 1] != '\n')
+        start--;
+
+    for (size_t i = start; i < used; ) {
+        unsigned char c = (unsigned char)out[i];
+
+        if (c >= 0x01 && c <= 0x09) {
+            i++;
+            continue;
+        }
+
+        if (c == ' ' || c == '\t' || c == '\r') {
+            i++;
+            continue;
+        }
+
+        if ((c & 0xF0) == 0xE0 && i + 2 < used) {
+            unsigned char c1 = (unsigned char)out[i + 1];
+            unsigned char c2 = (unsigned char)out[i + 2];
+            if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80) {
+                unsigned cp = ((unsigned)(c & 0x0F) << 12) |
+                              ((unsigned)(c1 & 0x3F) << 6) |
+                              (unsigned)(c2 & 0x3F);
+                if (cp >= 0xE400u && cp <= 0xE482u) {
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    return 1;
+}
+
 static void append_line_break(char *out, size_t cap, size_t *used) {
-    if (*used && out[*used - 1] != '\n') append_text(out, cap, used, "\n");
+    if (!*used || out[*used - 1] == '\n')
+        return;
+
+    if (tail_after_last_newline_is_zero_width(out, *used))
+        return;
+
+    append_text(out, cap, used, "\n");
 }
 
 #define TEXT_BOLD_ON     0x01

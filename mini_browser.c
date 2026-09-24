@@ -119,8 +119,19 @@
 #define IMAGE_SOURCE_MAX_H       1600
 #define IMAGE_DRAW_MAX_W          320
 #define IMAGE_DRAW_MAX_H          240
-#define IMAGE_VIEW_MAX_W          640
-#define IMAGE_VIEW_MAX_H          600
+/*
+ * Viewer retention is deliberately capped at 320x240.
+ *
+ * Fix 8 made the decode path memory-safe by converting RGB888 -> RGB565
+ * in-place. A direct 640x480 image nevertheless retained a 614400-byte
+ * RGB565 viewer buffer, which exhausted BadgeVMS memory during rendering.
+ *
+ * Keep viewer storage at the same proven-safe bound as inline images.
+ * draw_image_viewer() still scales the retained image to the available
+ * screen area, so this changes retained resolution, not viewer layout.
+ */
+#define IMAGE_VIEW_MAX_W          320
+#define IMAGE_VIEW_MAX_H          240
 #define IMAGE_RESERVE_LINES         1
 
 typedef enum {

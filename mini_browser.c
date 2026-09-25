@@ -4981,13 +4981,76 @@ static int screenshot_wrapped_line_count(const char *content_wrapped) {
     return lines;
 }
 
-static int screenshot_full_page_height(const char *content_wrapped) {
-    int lines = screenshot_wrapped_line_count(content_wrapped);
-    int line_step = CH_H + LINE_SPACING;
+/*
+ * Candidate 3 Fix 12a:
+ * Pass the active page_t explicitly through the WHY+Z full-page screenshot
+ * functions so image metadata is available without relying on a global.
+ */
+/*
+ * Candidate 3 Fix 12:
+ * Full-page screenshots must use the same vertical layout rules as the
+ * normal viewport renderer. An inline image marker occupies the rendered
+ * image height, not one text line.
+ */
+static int screenshot_full_page_height(const page_t *page,
+                                       const char *content_wrapped) {
     int height = PAD_TOP + PAD_BOTTOM;
 
-    if (lines > 0) {
-        height += lines * line_step;
+    if (content_wrapped && *content_wrapped) {
+        const char *p = content_wrapped;
+
+        while (p && *p) {
+            const char *nl = strchr(p, '\n');
+            int len = nl ? (int)(nl - p) : (int)strlen(p);
+            int image_index = -1;
+
+
+if (len >= 2 && p[0] == '[' && p[1] == '[') {
+    char dbg[64];
+    int dbg_len = len;
+    if (dbg_len > (int)sizeof(dbg) - 1)
+        dbg_len = (int)sizeof(dbg) - 1;
+
+    memcpy(dbg, p, (size_t)dbg_len);
+    dbg[dbg_len] = 0;
+
+    int dbg_index = -1;
+    int dbg_match = is_image_marker_line(p, len, &dbg_index);
+
+    printf("[mini_browser] WHY+Z height: len=%d text='%s' match=%d index=%d loaded=%d\n",
+           len,
+           dbg,
+           dbg_match,
+           dbg_index,
+           (dbg_index >= 0 && dbg_index < MAX_INLINE_IMAGES)
+               ? g_inline_images[dbg_index].loaded
+               : -1);
+}
+
+
+
+
+            if (is_image_marker_line(p, len, &image_index) &&
+                image_index >= 0 &&
+                image_index < MAX_INLINE_IMAGES &&
+                g_inline_images[image_index].loaded) {
+                int draw_w = 0;
+                int draw_h = 0;
+
+                image_draw_size(&page->images[image_index],
+                                &g_inline_images[image_index],
+                                VIEW_W - 2 * PAD_LR,
+                                IMAGE_DRAW_MAX_H,
+                                &draw_w,
+                                &draw_h);
+
+                height += draw_h + LINE_SPACING;
+            } else {
+                height += CH_H + LINE_SPACING;
+            }
+
+            p = nl ? nl + 1 : NULL;
+        }
     }
 
     if (height < VIEW_H) {
@@ -4998,6 +5061,7 @@ static int screenshot_full_page_height(const char *content_wrapped) {
 }
 
 static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
+                                              const page_t *page,
                                               const char *bar_text,
                                               const char *content_wrapped,
                                               int slice_top,
@@ -5018,39 +5082,75 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
         return;
     }
 
-    const int line_step = CH_H + LINE_SPACING;
     const int slice_bottom = slice_top + slice_height;
     const char *p = content_wrapped;
-    int line_index = 0;
+    int logical_y = PAD_TOP;
 
     while (p && *p) {
         const char *nl = strchr(p, '\n');
         int len = nl ? (int)(nl - p) : (int)strlen(p);
-        int logical_y = PAD_TOP + line_index * line_step;
+        int image_index = -1;
 
-        if (logical_y + CH_H > slice_top && logical_y < slice_bottom) {
-            char tmp[1024];
-            if (len > (int)sizeof(tmp) - 1) {
-                len = (int)sizeof(tmp) - 1;
+        if (is_image_marker_line(p, len, &image_index) &&
+            image_index >= 0 &&
+            image_index < MAX_INLINE_IMAGES &&
+            g_inline_images[image_index].loaded) {
+            int draw_w = 0;
+            int draw_h = 0;
+
+            image_draw_size(&page->images[image_index],
+                            &g_inline_images[image_index],
+                            VIEW_W - 2 * PAD_LR,
+                            IMAGE_DRAW_MAX_H,
+                            &draw_w,
+                            &draw_h);
+
+            /*
+             * Render the image for every screenshot slice it intersects.
+             * Coordinates outside the current 716-pixel renderer are clipped
+             * by SDL, so an image crossing a slice boundary is reconstructed
+             * correctly when the slices are concatenated by the receiver.
+             */
+            if (logical_y + draw_h > slice_top &&
+                logical_y < slice_bottom) {
+                draw_decoded_image(renderer,
+                                   &page->images[image_index],
+                                   &g_inline_images[image_index],
+                                   PAD_LR,
+                                   logical_y - slice_top,
+                                   VIEW_W - 2 * PAD_LR,
+                                   IMAGE_DRAW_MAX_H);
             }
 
-            memcpy(tmp, p, (size_t)len);
-            tmp[len] = 0;
+            logical_y += draw_h + LINE_SPACING;
+        } else {
+            if (logical_y + CH_H > slice_top &&
+                logical_y < slice_bottom) {
+                char tmp[1024];
+                if (len > (int)sizeof(tmp) - 1) {
+                    len = (int)sizeof(tmp) - 1;
+                }
 
-            SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
-            draw_text(renderer,
-                      PAD_LR,
-                      logical_y - slice_top,
-                      tmp,
-                      VIEW_W - 2 * PAD_LR);
+                memcpy(tmp, p, (size_t)len);
+                tmp[len] = 0;
+
+                SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+                draw_text(renderer,
+                          PAD_LR,
+                          logical_y - slice_top,
+                          tmp,
+                          VIEW_W - 2 * PAD_LR);
+            }
+
+            logical_y += CH_H + LINE_SPACING;
         }
 
-        line_index++;
         p = nl ? nl + 1 : NULL;
     }
 }
 
 static bool screenshot_stream_full_page(SDL_Renderer *renderer,
+                                        const page_t *page,
                                         const char *bar_text,
                                         const char *content_wrapped) {
     if (!renderer) {
@@ -5059,7 +5159,7 @@ static bool screenshot_stream_full_page(SDL_Renderer *renderer,
         return false;
     }
 
-    int full_height = screenshot_full_page_height(content_wrapped);
+    int full_height = screenshot_full_page_height(page, content_wrapped);
     screenshot_stream_t stream;
 
     printf("[mini_browser] full-page screenshot height=%d\n", full_height);
@@ -5077,6 +5177,7 @@ static bool screenshot_stream_full_page(SDL_Renderer *renderer,
         }
 
         screenshot_render_full_page_slice(renderer,
+                                          page,
                                           bar_text,
                                           content_wrapped,
                                           slice_top,
@@ -5582,7 +5683,7 @@ int main(void) {
             }
         }
         if (full_screenshot_pending) {
-            screenshot_stream_full_page(ren, barline, content_wrapped);
+            screenshot_stream_full_page(ren, page, barline, content_wrapped);
             full_screenshot_pending = false;
 
             /*

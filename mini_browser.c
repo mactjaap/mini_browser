@@ -322,13 +322,69 @@ static void get_scheme_host(const char *url, char *out, size_t cap) {
     if (n >= cap) n = cap - 1;
     memcpy(out, url, n); out[n]=0;
 }
+/*
+ * Candidate 3 Fix 13: document-relative URL base directory.
+ *
+ * The old get_dir() used the final '/' anywhere in the URL. For a root
+ * document URL such as "https://example.org" the final slash is one of the
+ * two slashes in "://", so "img/pic.png" incorrectly became
+ * "https://img/pic.png".
+ *
+ * Work only on the URL before ?/# and distinguish the authority separator
+ * from an actual path. A URL with no path resolves relative references
+ * against the origin root.
+ */
 static void get_dir(const char *url, char *out, size_t cap) {
-    const char *q = url;
-    const char *p = strrchr(q, '/');
-    if (!p) { out[0]=0; return; }
-    size_t n = (size_t)(p - q) + 1;
-    if (n >= cap) n = cap - 1;
-    memcpy(out, q, n); out[n]=0;
+    if (!out || cap == 0) return;
+    out[0] = 0;
+    if (!url || !*url) return;
+
+    char clean[URL_MAX];
+    size_t n = strlen(url);
+    size_t cut = n;
+
+    for (size_t i = 0; i < n; i++) {
+        if (url[i] == '?' || url[i] == '#') {
+            cut = i;
+            break;
+        }
+    }
+
+    if (cut >= sizeof(clean))
+        cut = sizeof(clean) - 1;
+    memcpy(clean, url, cut);
+    clean[cut] = 0;
+
+    const char *scheme = strstr(clean, "://");
+    if (scheme) {
+        const char *authority = scheme + 3;
+        const char *path = strchr(authority, '/');
+
+        if (!path) {
+            snprintf(out, cap, "%s/", clean);
+            return;
+        }
+
+        const char *last = strrchr(path, '/');
+        size_t dir_len = (size_t)(last - clean) + 1;
+        if (dir_len >= cap)
+            dir_len = cap - 1;
+        memcpy(out, clean, dir_len);
+        out[dir_len] = 0;
+        return;
+    }
+
+    const char *last = strrchr(clean, '/');
+    if (!last) {
+        out[0] = 0;
+        return;
+    }
+
+    size_t dir_len = (size_t)(last - clean) + 1;
+    if (dir_len >= cap)
+        dir_len = cap - 1;
+    memcpy(out, clean, dir_len);
+    out[dir_len] = 0;
 }
 static void base_no_query_or_hash(const char *u, char *out, size_t cap) {
     size_t n = strlen(u), cut = n;

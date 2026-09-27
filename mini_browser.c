@@ -137,19 +137,37 @@
 typedef enum {
     DISPLAY_BW = 0,
     DISPLAY_COLORS = 1,
-    DISPLAY_COLORS_IMAGES = 2
+    DISPLAY_COLORS_IMAGE = 2,
+    DISPLAY_COLORS_IMAGES_EXPERIMENTAL = 3
 } display_mode_t;
 
-/* Start rich for the Phase 3 proof-of-concept. WHY+O opens the mode menu. */
-static display_mode_t g_display_mode = DISPLAY_COLORS_IMAGES;
+/*
+ * Fix 15: tiered visual modes.
+ * Default mode 3 decodes one inline image. Mode 4 keeps the proven
+ * five-image path as an explicit experimental higher-memory option.
+ */
+static display_mode_t g_display_mode = DISPLAY_COLORS_IMAGE;
 
 static const char *display_mode_name(display_mode_t mode) {
     switch (mode) {
-        case DISPLAY_BW:            return "Black & White";
-        case DISPLAY_COLORS:        return "Colors";
-        case DISPLAY_COLORS_IMAGES: return "Colors + Images";
-        default:                    return "Unknown";
+        case DISPLAY_BW:                         return "Black & White";
+        case DISPLAY_COLORS:                     return "Colors";
+        case DISPLAY_COLORS_IMAGE:               return "Colors + Image";
+        case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return "Colors + 5 Images (Experimental)";
+        default:                                 return "Unknown";
     }
+}
+
+static int display_inline_image_limit(void) {
+    switch (g_display_mode) {
+        case DISPLAY_COLORS_IMAGE:               return 1;
+        case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return MAX_INLINE_IMAGES;
+        default:                                 return 0;
+    }
+}
+
+static int display_mode_has_images(void) {
+    return display_inline_image_limit() > 0;
 }
 
 /* ---------- 5x7 bitmap font (ASCII 32..127) ---------- */
@@ -1230,23 +1248,49 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 char marker[2] = { TEXT_LINK_OFF, 0 };
                 append_text(template_text, template_cap, &used, marker);
             }
-            else if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
-                     !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
+            /*
+             * Fix 14: close block formatting state BEFORE emitting the block
+             * line break.  Fix 10 deliberately treats trailing formatting
+             * markers as zero-width.  Previously </p> produced:
+             *
+             *     text\n + POP markers
+             *
+             * so a following <img> saw the POP-only tail as zero-width and
+             * its [[MBIMGn]] marker was appended to that same logical line.
+             * The renderer only recognizes an image marker on a line by
+             * itself, so the image disappeared.
+             *
+             * The correct ordering is:
+             *
+             *     text + POP markers + \n
+             *
+             * This also avoids creating a visible marker-only blank line.
+             */
+            bool closing_block_break =
+                !strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
+                !strcmp(tag, "tr") || !strcmp(tag, "table") ||
+                !strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6");
+
+            if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
                 char marker[2] = { TEXT_HEADING_OFF, 0 };
                 append_text(template_text, template_cap, &used, marker);
-                append_line_break(template_text, template_cap, &used);
             }
-            else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
-                     !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
-                     !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
-                     !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
-                     !strcmp(tag, "tr") || !strcmp(tag, "table"))
-                append_line_break(template_text, template_cap, &used);
-            if (color_container_tag(tag)) append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
+
+            if (color_container_tag(tag))
+                append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
             if (style_container_tag(tag)) {
                 append_utf8_cp(template_text, template_cap, &used, TEXT_BG_POP);
                 append_utf8_cp(template_text, template_cap, &used, TEXT_STYLE_POP);
             }
+
+            if (closing_block_break)
+                append_line_break(template_text, template_cap, &used);
+
             cursor = after_tag;
             continue;
         }
@@ -1438,7 +1482,7 @@ static page_t *html_to_page(const char *html, const char *base_url) {
 
                 append_line_break(template_text, template_cap, &used);
 
-                if (g_display_mode != DISPLAY_COLORS_IMAGES) {
+                if (!display_mode_has_images()) {
                     char placeholder[160];
                     snprintf(placeholder, sizeof(placeholder),
                              "[Image: %s]",
@@ -1461,7 +1505,7 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                     if (height_value[0])
                         image->requested_height = atoi(height_value);
 
-                    if (image_index < MAX_INLINE_IMAGES) {
+                    if (image_index < display_inline_image_limit()) {
                         char image_marker[32];
                         snprintf(image_marker, sizeof(image_marker),
                                  "[[MBIMG%d]]", image_index);
@@ -2751,11 +2795,12 @@ static int load_page_images(const page_t *page) {
     for (int i = 0; i < MAX_INLINE_IMAGES; i++)
         decoded_image_release(&g_inline_images[i]);
 
-    if (!page || g_display_mode != DISPLAY_COLORS_IMAGES)
+    int inline_limit = display_inline_image_limit();
+    if (!page || inline_limit <= 0)
         return 0;
 
     int count = page->image_count;
-    if (count > MAX_INLINE_IMAGES) count = MAX_INLINE_IMAGES;
+    if (count > inline_limit) count = inline_limit;
 
     int loaded = 0;
     for (int i = 0; i < count; i++) {
@@ -5471,7 +5516,7 @@ int main(void) {
                                        ? "yes" : "no",
                                    url_buf);
                             decoded_image_release(&g_viewer_image);
-                            if (g_display_mode == DISPLAY_COLORS_IMAGES &&
+                            if (display_mode_has_images() &&
                                 load_image_url(url_buf, IMAGE_VIEW_MAX_W,
                                                IMAGE_VIEW_MAX_H,
                                                &g_viewer_image)) {
@@ -5483,7 +5528,7 @@ int main(void) {
                                 image_viewer_open = false;
                                 free(content_wrapped);
                                 content_wrapped = wrap_text(
-                                    g_display_mode == DISPLAY_COLORS_IMAGES
+                                    display_mode_has_images()
                                         ? "IMAGE UNAVAILABLE\n\nThe JPEG/PNG could not be decoded within the configured memory limits."
                                         : "IMAGE\n\nImages are disabled in the current display mode. Press WHY+O and select Colors + Images.",
                                     max_cols);
@@ -5686,16 +5731,21 @@ int main(void) {
             draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
 
-            snprintf(option_line, sizeof(option_line), "%s 3. Colors + Images",
-                     g_display_mode == DISPLAY_COLORS_IMAGES ? "(*)" : "( )");
+            snprintf(option_line, sizeof(option_line), "%s 3. Colors + Image (default)",
+                     g_display_mode == DISPLAY_COLORS_IMAGE ? "(*)" : "( )");
+            draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
+            oy += (CH_H + LINE_SPACING);
+
+            snprintf(option_line, sizeof(option_line), "%s 4. Colors + 5 Images",
+                     g_display_mode == DISPLAY_COLORS_IMAGES_EXPERIMENTAL ? "(*)" : "( )");
             draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
             oy += 2 * (CH_H + LINE_SPACING);
 
-            draw_text(ren, PAD_LR, oy, "Phase 3 image support:", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "Mode 3: 1 inline, extra images as links", VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "5 inline, extra images as links, JPEG/PNG", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "Mode 4: 5 inline - EXPERIMENTAL / more memory", VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "Press 1/2/3 to select, Esc to cancel", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "JPEG/PNG - Press 1/2/3/4, Esc to cancel", VIEW_W - 2*PAD_LR);
         } else {
             draw_ui(ren, barline);
             if (content_wrapped) {
@@ -5812,7 +5862,7 @@ int main(void) {
             if (ev.type == SDL_EVENT_KEY_DOWN) {
                 SDL_Scancode sc = ev.key.scancode;
 
-                /* Phase 3 options menu consumes ordinary 1/2/3/Escape. */
+                /* Phase 3 Fix 15 options menu consumes ordinary 1/2/3/4/Escape. */
                 if (options_open) {
                     display_mode_t selected = g_display_mode;
                     bool changed = false;
@@ -5822,7 +5872,9 @@ int main(void) {
                     } else if (sc == SDL_SCANCODE_2) {
                         selected = DISPLAY_COLORS; changed = true;
                     } else if (sc == SDL_SCANCODE_3) {
-                        selected = DISPLAY_COLORS_IMAGES; changed = true;
+                        selected = DISPLAY_COLORS_IMAGE; changed = true;
+                    } else if (sc == SDL_SCANCODE_4) {
+                        selected = DISPLAY_COLORS_IMAGES_EXPERIMENTAL; changed = true;
                     } else if (sc == SDL_SCANCODE_ESCAPE) {
                         options_open = false;
                         inhibit_text_once = true;
@@ -6193,7 +6245,7 @@ int main(void) {
                                     action_index < page->action_count) {
                                     int image_index = page->actions[action_index].image_index;
                                     if (image_index >= 0 && image_index < page->image_count &&
-                                        g_display_mode == DISPLAY_COLORS_IMAGES) {
+                                        display_mode_has_images()) {
                                         decoded_image_release(&g_viewer_image);
                                         if (load_image_url(page->images[image_index].src,
                                                            IMAGE_VIEW_MAX_W, IMAGE_VIEW_MAX_H,

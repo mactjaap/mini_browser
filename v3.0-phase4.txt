@@ -1,0 +1,49 @@
+Phase 4 — completed improvements
+
+Phase 4 turned Mini Browser from primarily a text/form browser into a substantially more complete graphical web client for the badge.
+
+* Added image support for the main web formats:
+    * PNG
+    * JPEG
+    * GIF
+* Added inline image rendering so images can appear as part of normal page content rather than only being treated as links/resources.
+* Added multiple display/rendering modes, including the more graphical/full-page modes.
+* Added image sizing/scaling appropriate for the badge display.
+* Integrated image rendering with the existing page layout rather than creating an entirely separate image viewer workflow.
+* Added handling for multiple images on a page.
+* Preserved navigation functionality while adding image support:
+    * links
+    * Back/Forward
+    * reload
+    * forms
+    * bookmarks
+    * keyboard/actions
+* Preserved the Phase 3 HTTP functionality:
+    * GET
+    * POST
+    * application/x-www-form-urlencoded
+    * editable form fields
+    * hidden form fields
+    * submit buttons
+    * cookies
+* Special characters in POST data continue to be encoded correctly.
+* Cookie storage and subsequent transmission over HTTPS still work.
+* Existing parser safety limits remain intact:
+    * MAX_LINKS=128
+    * MAX_FORMS=4
+    * MAX_FORM_FIELDS=8
+    * bounded/deterministic action generation
+* Added/retained graceful handling for web conditions such as redirects, HTTP errors and malformed/unusual content rather than assuming every request produces a normal HTML page.
+* Changed Mini Browser to use the BadgeVMS fullscreen window path:
+    * SDL_WINDOW_FULLSCREEN
+    * removes the BadgeVMS window decorations/title area
+    * lets Mini Browser use the display area directly
+    * avoids hacking BORDER_TOP_PX or the BadgeVMS compositor itself
+* Regression testing was improved significantly:
+    * --help
+    * --list
+    * individual tests by number
+    * multiple selected tests
+    * ranges of tests
+    * normal invocation still runs the complete suite
+* The important Phase 2/3 regression subset after the fullscreen work passed 6/6, including the POST and cookie tests.

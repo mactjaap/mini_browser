@@ -165,10 +165,17 @@ do not include the external Unicode font.
 <h2>Images and display modes</h2>
 
 <p>
-Mini Browser 3.0 adds bounded PNG, JPEG and GIF image rendering. Images can be rendered
-inline with normal page content and are sized/scaled for the badge display. Pages with
-multiple images are supported, and the browser provides multiple display/rendering modes.
+Mini Browser 3.0 adds bounded JPEG, PNG and GIF image rendering. Images are sized/scaled
+for the badge display. Press WHY+O to open the display mode options and choose between
+four rendering modes.
 </p>
+
+<ol>
+  <li><b>Black &amp; White</b> - black-and-white page rendering.</li>
+  <li><b>Colors</b> - color page rendering without inline images.</li>
+  <li><b>Colors and image (default)</b> - color rendering with one inline image; additional images are presented as links.</li>
+  <li><b>Color and 5 images (experimental)</b> - color rendering with up to five inline images. This mode uses more memory and is intentionally experimental.</li>
+</ol>
 
 <p>
 Mini Browser now uses the BadgeVMS fullscreen window path via SDL_WINDOW_FULLSCREEN,
@@ -210,6 +217,7 @@ one-line scrolling.
   <li>WHY+G - forward</li>
   <li>WHY+F - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
+  <li>WHY+O - open display mode options</li>
   <li>WHY+S - capture and transmit the visible 716x716 viewport</li>
   <li>WHY+Z - capture and transmit the complete rendered page</li>
   <li>WHY+I - open HTTP/TLS Inspector / Page Information</li>
@@ -287,7 +295,7 @@ macOS/Linux computer to send keyboard events to Mini Browser over USB serial.
 <p>
 The firmware repository includes badge_keyboard.py for interactive computer-keyboard
 control of the badge. This also allows browser accelerator commands such as WHY+E,
-WHY+H, WHY+R, WHY+B, WHY+G, WHY+F, WHY+S, WHY+Z and WHY+Q to be generated remotely.
+WHY+H, WHY+R, WHY+B, WHY+G, WHY+F, WHY+O, WHY+S, WHY+Z and WHY+Q to be generated remotely.
 </p>
 
 <p>

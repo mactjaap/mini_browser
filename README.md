@@ -205,6 +205,7 @@ The WHY2025 key acts as the browser accelerator:
   `WHY+G`    Forward
   `WHY+F`    Add/remove current bookmark
   `WHY+M`    Open bookmarks
+  `WHY+O`    Open display mode options
   `WHY+S`    Capture and transmit the visible viewport
   `WHY+Z`    Capture and transmit the complete rendered page
   `WHY+I`    Open HTTP/TLS Inspector / Page Information
@@ -212,10 +213,16 @@ The WHY2025 key acts as the browser accelerator:
 
 ## Images and display modes
 
-Mini Browser 3.0 adds bounded PNG, JPEG and GIF image rendering. Images can
-be rendered inline with normal page content and are sized/scaled for the badge
-display. Pages with multiple images are supported, and the browser provides
-multiple display/rendering modes.
+Mini Browser 3.0 adds bounded JPEG, PNG and GIF image rendering. Images are
+sized/scaled for the badge display. Press `WHY+O` to open the display mode
+options and choose between four rendering modes:
+
+1. **Black & White** - black-and-white page rendering.
+2. **Colors** - color page rendering without inline images.
+3. **Colors and image (default)** - color rendering with one inline image;
+   additional images are presented as links.
+4. **Color and 5 images (experimental)** - color rendering with up to five
+   inline images. This mode uses more memory and is intentionally experimental.
 
 Mini Browser now uses the BadgeVMS fullscreen window path through
 `SDL_WINDOW_FULLSCREEN`. This removes the normal BadgeVMS window decorations
@@ -295,7 +302,7 @@ BadgeVMS/SDL keyboard event path.
 The firmware repository includes `badge_keyboard.py`, which makes it
 possible to operate Mini Browser from a computer keyboard. Browser
 accelerator commands such as `WHY+E`, `WHY+H`, `WHY+R`, `WHY+B`,
-`WHY+G`, `WHY+F`, `WHY+S`, `WHY+Z` and `WHY+Q` can therefore be
+`WHY+G`, `WHY+F`, `WHY+O`, `WHY+S`, `WHY+Z` and `WHY+Q` can therefore be
 generated remotely.
 
 The custom firmware repository also contains automated Mini Browser test

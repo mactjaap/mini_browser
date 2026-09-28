@@ -2,24 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 2.5 - Documentation</title>
-  <meta name="description" content="Documentation for Mini Browser 2.5 on the WHY2025 badge">
+  <title>Mini Browser 3.0 - Documentation</title>
+  <meta name="description" content="Documentation for Mini Browser 3.0 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 2.5</h1>
+<h1>Mini Browser 3.0</h1>
 
 <p>
-Mini Browser is a compact, interactive, text-oriented web browser for the WHY2025 badge,
+Mini Browser is a compact, interactive web browser for the WHY2025 badge,
 written in C using SDL3 and libcurl.
 </p>
 
 <p>
-Version 2.5 builds on the 2.4 Unicode and rendering foundation with a more robust
-HTML/entity parser, editable action-number input, bounded POST form submission, a
-bounded in-memory cookie jar and a WHY+I HTTP/TLS Inspector. It retains the
+Version 3.0 builds on the Unicode, forms, cookies and HTTP/TLS foundations of the 2.x
+releases with PNG, JPEG and GIF image support, inline image rendering, image sizing and
+scaling, multiple display modes and fullscreen BadgeVMS operation. It retains the
 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering, contextual Arabic
-shaping, bookmarks, history and complete-page screenshots.
+shaping, bookmarks, history, GET/POST forms, cookies and complete-page screenshots.
 </p>
 
 <p><a href="/">Back to Mini Browser home</a></p>
@@ -157,6 +157,28 @@ are not currently supported.
 <p>
 Unordered list items use an ASCII * marker for compatibility with installations that
 do not include the external Unicode font.
+</p>
+
+<pre>
+</pre>
+
+<h2>Images and display modes</h2>
+
+<p>
+Mini Browser 3.0 adds bounded PNG, JPEG and GIF image rendering. Images can be rendered
+inline with normal page content and are sized/scaled for the badge display. Pages with
+multiple images are supported, and the browser provides multiple display/rendering modes.
+</p>
+
+<p>
+Mini Browser now uses the BadgeVMS fullscreen window path via SDL_WINDOW_FULLSCREEN,
+removing the normal BadgeVMS window decorations and allowing the browser to use the
+display area directly.
+</p>
+
+<p>
+Known limitation: in Mode 4, complete full-page screenshots are currently limited to five
+images. This is a documented resource limitation for 3.0.
 </p>
 
 <pre>
@@ -423,7 +445,7 @@ this environment. WHY+B or WHY+I returns to the page.
 <h2>Cookies</h2>
 
 <p>
-Mini Browser 2.5 includes a bounded in-memory session cookie jar. It stores up to 12
+Mini Browser 3.0 includes a bounded in-memory session cookie jar. It stores up to 12
 cookies, supports replacement, path scoping and deletion with Max-Age=0, and sends
 matching cookies on subsequent requests. Cookies are not persisted across browser
 restarts.
@@ -480,9 +502,10 @@ shown as readable browser pages.
 <h2>Unsupported web features</h2>
 
 <p>
-Mini Browser does not implement JavaScript, CSS layout, images, audio/video, complex
-form controls, file uploads, a complete HTML5 DOM/parser, color
-emoji or complex emoji composition.
+Mini Browser does not implement JavaScript, a CSS layout engine, audio/video, complex
+form controls, file uploads, a complete HTML5 DOM/parser, color emoji or complex emoji
+composition. Version 3.0 provides bounded PNG, JPEG and GIF image rendering rather than
+a general-purpose modern browser graphics engine.
 </p>
 
 <pre>
@@ -524,7 +547,7 @@ redistributing the generated font asset.
 <p><a href="https://minibrowser.macip.net/">Mini Browser project home</a></p>
 
 <hr>
-<p><b>Mini Browser 2.5</b> - WHY2025 BadgeVMS</p>
+<p><b>Mini Browser 3.0</b> - WHY2025 BadgeVMS</p>
 <p><a href="/">Back to Mini Browser home</a></p>
 
 </body>

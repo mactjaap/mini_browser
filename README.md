@@ -1,25 +1,25 @@
-# Mini Browser 2.5
+# Mini Browser 3.0
 
 ![Mini Browser logo Logo](Mini_Browser_Logo-small.jpg)
 
-A compact, interactive, text-oriented web browser for the WHY2025 badge.
+A compact, interactive web browser for the WHY2025 badge.
 
 Mini Browser is written in C using SDL3 and libcurl. It retrieves HTML
 pages, converts them into readable text, extracts links and simple HTML
 forms, and provides a keyboard-driven browsing interface designed for
 the 720×720 WHY2025 badge display.
 
-Version **2.5** builds on the 2.4 Unicode and rendering foundation with a
-more robust HTML/entity parser, editable action-number input, bounded POST
-form submission, a bounded in-memory cookie jar, and a `WHY+I` HTTP/TLS
-Inspector. It retains the 56,352-glyph Unicode font, word-aware wrapping,
-RTL/Bidi rendering, contextual Arabic shaping, bookmarks, history and
+Version **3.0** builds on the Unicode, forms, cookies and HTTP/TLS foundations
+of the 2.x releases with PNG, JPEG and GIF image support, inline image rendering,
+image sizing and scaling, multiple display modes and fullscreen BadgeVMS operation.
+It retains the 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering,
+contextual Arabic shaping, bookmarks, history, GET/POST forms, cookies and
 complete-page screenshots.
 
-Mini Browser deliberately does **not** try to be a modern graphical
-browser. There is no JavaScript engine, CSS layout engine, image
-renderer, or full DOM. The goal is a small, fast browser for
-text-oriented and lightweight websites.
+Mini Browser deliberately does **not** try to be a modern graphical browser.
+There is no JavaScript engine, CSS layout engine or full DOM. Version 3.0 adds
+bounded image rendering while keeping the goal of a small, fast browser for
+lightweight and server-rendered websites.
 
 ## Highlights
 
@@ -50,12 +50,17 @@ text-oriented and lightweight websites.
     transfer
 -   `WHY+Z` complete rendered-page screenshot capture without allocating
     a giant framebuffer
+-   PNG, JPEG and GIF image rendering
+-   Inline images integrated with normal page layout
+-   Image sizing and scaling for the badge display
+-   Multiple display/rendering modes
+-   BadgeVMS fullscreen operation via `SDL_WINDOW_FULLSCREEN`
 -   `WHY+I` HTTP/TLS Inspector for request, response, page and resource information
 -   Standalone `badge_screenshot.py` receiver for macOS/Linux
 -   ASCII `*` markers for unordered lists, so list markers remain usable
     without the external Unicode font
 -   Small built-in 5×7 ASCII bitmap font
--   No JavaScript, CSS layout or image rendering required
+-   No JavaScript engine, CSS layout engine or full DOM required
 
 ## Unicode and text rendering
 
@@ -204,6 +209,21 @@ The WHY2025 key acts as the browser accelerator:
   `WHY+Z`    Capture and transmit the complete rendered page
   `WHY+I`    Open HTTP/TLS Inspector / Page Information
   `WHY+Q`    Quit
+
+## Images and display modes
+
+Mini Browser 3.0 adds bounded PNG, JPEG and GIF image rendering. Images can
+be rendered inline with normal page content and are sized/scaled for the badge
+display. Pages with multiple images are supported, and the browser provides
+multiple display/rendering modes.
+
+Mini Browser now uses the BadgeVMS fullscreen window path through
+`SDL_WINDOW_FULLSCREEN`. This removes the normal BadgeVMS window decorations
+and lets the browser use the display area directly without modifying the
+BadgeVMS compositor or `BORDER_TOP_PX`.
+
+Known limitation: in Mode 4, complete full-page screenshots are currently
+limited to five images. This is documented as a 3.0 resource limitation.
 
 ## Screenshots
 
@@ -401,7 +421,7 @@ unavailable because they are not reliable in this environment.
 
 ## Cookies
 
-Mini Browser 2.5 includes a bounded in-memory session cookie jar. It stores up
+Mini Browser 3.0 includes a bounded in-memory session cookie jar. It stores up
 to 12 cookies, supports replacement, path scoping and deletion with
 `Max-Age=0`, and sends matching cookies on subsequent requests. Cookies are
 kept only in memory and are not persisted across browser restarts.
@@ -448,10 +468,11 @@ shown as readable browser pages.
 
 ## What Mini Browser does not support
 
-Mini Browser does not currently provide JavaScript execution, CSS
-layout/styling, images, video/audio, file uploads,
-complex HTML form controls, a complete HTML5 DOM/parser, color emoji, or
-complex emoji composition.
+Mini Browser does not currently provide JavaScript execution, a CSS layout
+engine, video/audio, file uploads, complex HTML form controls, a complete HTML5
+DOM/parser, color emoji, or complex emoji composition. Version 3.0 provides
+bounded PNG, JPEG and GIF image rendering rather than a general-purpose modern
+browser graphics engine.
 
 Simple server-rendered websites and text-oriented sites work best.
 
@@ -526,9 +547,9 @@ Home page:
 
 ## Version
 
-**Mini Browser 2.5**
+**Mini Browser 3.0**
 
-Version 2.5 adds robust HTML/entity parsing, editable action-number input,
-bounded POST submission, a bounded in-memory cookie jar and the `WHY+I`
-HTTP/TLS Inspector to the 2.4 Unicode/rendering foundation. The final 2.5
-release passed all 49 automated regression tests on the WHY2025 badge.
+Version 3.0 adds PNG, JPEG and GIF image rendering, inline images, image sizing
+and scaling, multiple display modes and fullscreen BadgeVMS operation while
+preserving the Unicode, navigation, forms, cookies, bookmarks, history,
+HTTP/TLS Inspector and screenshot functionality developed in the 2.x releases.

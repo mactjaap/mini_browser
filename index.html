@@ -15,17 +15,15 @@
 </pre>
 
 <p>
-Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
-It is designed to explore the lightweight, text-oriented web while staying small
+Welcome to Mini Browser, a compact web browser for the WHY2025 badge.
+It is designed to explore lightweight and server-rendered websites while staying small
 enough to run comfortably on the badge.
 
-The latest stable release is Mini Browser 2.5. It supports links, bookmarks,
-Back/Forward history, simple GET and POST forms, bounded cookie support,
-56,352 Unicode glyphs, word-aware wrapping, RTL/Bidi text, Arabic shaping,
-monochrome emoji, real bold text, HTTP/TLS page information and full-page screenshots.
-
-Development of Mini Browser 2.6 has started, with a refreshed visual identity
-and further improvements planned while keeping the browser deliberately small.
+The latest stable release is Mini Browser 3.0. It supports links, bookmarks,
+Back/Forward history, simple GET and POST forms, bounded cookie support, PNG/JPEG/GIF
+images, inline image rendering, multiple display modes, 56,352 Unicode glyphs,
+word-aware wrapping, RTL/Bidi text, Arabic shaping, monochrome emoji, real bold text,
+HTTP/TLS page information and full-page screenshots.
 </p>
 
 <pre>
@@ -49,7 +47,7 @@ for Mini Browser.
 
 <h2>Search with Google</h2>
 
-<form action="https://www.google.com/search" method="get">
+<form action="http://www.google.com/search" method="get">
 
   <input type="search" name="q" value="">
 
@@ -151,7 +149,7 @@ Customized WHY2025 firmware and test tools
 <h2>About Mini Browser</h2>
 
 <p>
-Mini Browser combines a built-in ASCII font with an external GNU Unifont-based
+Mini Browser 3.0 combines a built-in ASCII font with an external GNU Unifont-based
 MBCJ font containing 56,352 usable glyphs across 101 ranges.
 Text wrapping preserves complete words where possible, while CJK and
 overlong tokens safely fall back to glyph wrapping.
@@ -165,9 +163,10 @@ so basic list rendering does not depend on the external Unicode font.
 </p>
 
 <p>
-Mini Browser intentionally has no JavaScript engine, CSS layout engine
-or image renderer. It is designed for ordinary server-rendered HTML,
-text content, links and simple GET and POST forms.
+Mini Browser intentionally has no JavaScript engine, CSS layout engine or full HTML DOM.
+Version 3.0 adds bounded PNG, JPEG and GIF image rendering, including inline images and
+multiple display modes, while retaining the browser's focus on ordinary server-rendered
+HTML, text content, links and simple GET and POST forms.
 </p>
 
 <p>

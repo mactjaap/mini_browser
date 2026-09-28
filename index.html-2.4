@@ -13,20 +13,12 @@
 
 <pre>
 </pre>
-<p align="center">
-<img src="img/mb.png" alt="Mini Browser">
-</p>
 
 <p>
-Welcome to Mini Browser, a compact web browser for the WHY2025 badge.
-It is designed to explore lightweight and server-rendered websites while staying small
-enough to run comfortably on the badge.
-
-The latest stable release is Mini Browser 3.0. It supports links, bookmarks,
-Back/Forward history, simple GET and POST forms, bounded cookie support, PNG/JPEG/GIF
-images, inline image rendering, multiple display modes, 56,352 Unicode glyphs,
-word-aware wrapping, RTL/Bidi text, Arabic shaping, monochrome emoji, real bold text,
-HTTP/TLS page information and full-page screenshots.
+Welcome to Mini Browser, a small text-oriented web browser for the WHY2025 badge.
+Current version 2.5 supports links, bookmarks, Back/Forward history, simple GET and POST forms, cookies support, 
+56,352 Unicode glyphs, word-aware wrapping, RTL/Bidi text, Arabic shaping,
+monochrome emoji, real bold text and full-page screenshots.
 </p>
 
 <pre>
@@ -50,7 +42,7 @@ for Mini Browser.
 
 <h2>Search with Google</h2>
 
-<form action="https://www.google.com/search" method="get">
+<form action="http://www.google.com/search" method="get">
 
   <input type="search" name="q" value="">
 
@@ -110,7 +102,6 @@ J and K also scroll one line at a time.
   <li>WHY+I - page information</li>
   <li>WHY+F - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
-  <li>WHY+O - display mode options</li>
   <li>WHY+S - capture the visible 716x716 viewport</li>
   <li>WHY+Z - capture the complete rendered page</li>
   <li>WHY+Q - quit</li>
@@ -150,11 +141,11 @@ Customized WHY2025 firmware and test tools
 <pre>
 </pre>
 
-<h2>About Mini Browser</h2>
+<h2>About 2.4</h2>
 
 <p>
-Mini Browser 3.0 combines a built-in ASCII font with an external GNU Unifont-based
-MBCJ font containing 56,352 usable glyphs across 101 ranges.
+Mini Browser 2.4 keeps the built-in ASCII font and uses an external
+GNU Unifont-based MBCJ font with 56,352 usable glyphs across 101 ranges.
 Text wrapping preserves complete words where possible, while CJK and
 overlong tokens safely fall back to glyph wrapping.
 Hebrew and Arabic are rendered right-to-left, with contextual Arabic shaping.
@@ -167,14 +158,13 @@ so basic list rendering does not depend on the external Unicode font.
 </p>
 
 <p>
-Mini Browser intentionally has no JavaScript engine, CSS layout engine or full HTML DOM.
-Version 3.0 adds bounded PNG, JPEG and GIF image rendering, including inline images and
-multiple display modes, while retaining the browser's focus on ordinary server-rendered
-HTML, text content, links and simple GET and POST forms.
+Mini Browser intentionally has no JavaScript engine, CSS layout engine
+or image renderer. It is designed for ordinary server-rendered HTML,
+text content, links and simple GET forms.
 </p>
 
 <p>
-<a href="/readme.html">Full documentation</a>
+<a href="/readme.html">Mini Browser 2.5 - full documentation</a>
 </p>
 
 <p>
@@ -187,7 +177,7 @@ HTML, text content, links and simple GET and POST forms.
 <hr>
 
 <p>
-<b>Mini Browser</b> - WHY2025 BadgeVMS
+<b>Mini Browser 2.4</b> - WHY2025 BadgeVMS
 </p>
 
 </body>

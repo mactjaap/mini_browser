@@ -13,14 +13,6 @@
 #include <string.h>
 #include <strings.h>   /* for strncasecmp */
 
-/* Phase 3: same stb_image v2.30 already used by WHY2025 namebadge. */
-#define STBI_ASSERT(x)
-#define STBI_NO_THREAD_LOCALS
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_PNG
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
 /* --- Yield macro for BadgeVMS/ESP-IDF, no-op on desktop --- */
 #if defined(ESP_PLATFORM)
 # include "freertos/FreeRTOS.h"
@@ -91,84 +83,6 @@
 #define SC_SPECIAL_127    ((SDL_Scancode)0x127)
 #define SC_SPECIAL_128    ((SDL_Scancode)0x128)
 #define SC_SPECIAL_129    ((SDL_Scancode)0x129)
-
-
-/* ---------- Mini Browser 2.6 Phase 3 Candidate 3 ---------- */
-/*
- * Bounded real-world image support:
- *   - remember up to 32 <img> references
- *   - render the first 5 inline
- *   - expose later images as numbered actions
- *   - JPEG/PNG via stb_image
- *   - decode larger source images only inside a strict RGB decode budget
- *   - immediately downscale retained images to RGB565
- *   - direct image URLs and numbered image actions use one image viewer
- *
- * Important memory rule:
- * stb_image still has to decode JPEG/PNG before Mini Browser can resize it.
- * Therefore source images are accepted only when width*height*3 fits inside
- * IMAGE_DECODE_MAX_BYTES. Fix 8 performs RGB888 -> RGB565 downscaling in-place
- * inside stb's decode allocation and then shrinks that allocation, avoiding a
- * second full retained-image allocation at peak decode memory.
- */
-#define MAX_PAGE_IMAGES          32
-#define MAX_INLINE_IMAGES         5
-#define IMAGE_DOWNLOAD_MAX       (512 * 1024)
-#define IMAGE_DECODE_MAX_BYTES   (1536 * 1024)
-#define IMAGE_SOURCE_MAX_W       1600
-#define IMAGE_SOURCE_MAX_H       1600
-#define IMAGE_DRAW_MAX_W          320
-#define IMAGE_DRAW_MAX_H          240
-/*
- * Viewer retention is deliberately capped at 320x240.
- *
- * Fix 8 made the decode path memory-safe by converting RGB888 -> RGB565
- * in-place. A direct 640x480 image nevertheless retained a 614400-byte
- * RGB565 viewer buffer, which exhausted BadgeVMS memory during rendering.
- *
- * Keep viewer storage at the same proven-safe bound as inline images.
- * draw_image_viewer() still scales the retained image to the available
- * screen area, so this changes retained resolution, not viewer layout.
- */
-#define IMAGE_VIEW_MAX_W          320
-#define IMAGE_VIEW_MAX_H          240
-#define IMAGE_RESERVE_LINES         1
-
-typedef enum {
-    DISPLAY_BW = 0,
-    DISPLAY_COLORS = 1,
-    DISPLAY_COLORS_IMAGE = 2,
-    DISPLAY_COLORS_IMAGES_EXPERIMENTAL = 3
-} display_mode_t;
-
-/*
- * Fix 15: tiered visual modes.
- * Default mode 3 decodes one inline image. Mode 4 keeps the proven
- * five-image path as an explicit experimental higher-memory option.
- */
-static display_mode_t g_display_mode = DISPLAY_COLORS_IMAGE;
-
-static const char *display_mode_name(display_mode_t mode) {
-    switch (mode) {
-        case DISPLAY_BW:                         return "Black & White";
-        case DISPLAY_COLORS:                     return "Colors";
-        case DISPLAY_COLORS_IMAGE:               return "Colors + Image";
-        case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return "Colors + 5 Images (Experimental)";
-        default:                                 return "Unknown";
-    }
-}
-
-static int display_inline_image_limit(void) {
-    switch (g_display_mode) {
-        case DISPLAY_COLORS_IMAGE:               return 1;
-        case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return MAX_INLINE_IMAGES;
-        default:                                 return 0;
-    }
-}
-
-static int display_mode_has_images(void) {
-    return display_inline_image_limit() > 0;
-}
 
 /* ---------- 5x7 bitmap font (ASCII 32..127) ---------- */
 static const unsigned char font5x7[96][5] = {
@@ -292,8 +206,7 @@ typedef struct {
 typedef enum {
     ACTION_LINK,
     ACTION_FORM_FIELD,
-    ACTION_FORM_SUBMIT,
-    ACTION_IMAGE
+    ACTION_FORM_SUBMIT
 } action_type_t;
 
 typedef struct {
@@ -301,15 +214,7 @@ typedef struct {
     int link_index;
     int form_index;
     int field_index;
-    int image_index;
 } page_action_t;
-
-typedef struct {
-    char src[URL_MAX];
-    char alt[96];
-    int requested_width;
-    int requested_height;
-} page_image_t;
 
 typedef struct {
     char *text;
@@ -324,10 +229,6 @@ typedef struct {
     int form_count;
     int explicit_color_count;  /* 2.6 Phase 1B valid HTML/CSS foreground colors */
     int explicit_style_count;  /* 2.6 Phase 2A valid inline text-style declarations */
-    int explicit_background_count; /* 2.6 Phase 2B valid inline background-color declarations */
-    page_image_t images[MAX_PAGE_IMAGES];
-    int image_count;              /* 2.6 Phase 3 bounded <img> elements retained */
-    int image_seen_count;         /* all supported <img src=...> tags seen */
 } page_t;
 
 /* ---------- URL helpers ---------- */
@@ -340,69 +241,13 @@ static void get_scheme_host(const char *url, char *out, size_t cap) {
     if (n >= cap) n = cap - 1;
     memcpy(out, url, n); out[n]=0;
 }
-/*
- * Candidate 3 Fix 13: document-relative URL base directory.
- *
- * The old get_dir() used the final '/' anywhere in the URL. For a root
- * document URL such as "https://example.org" the final slash is one of the
- * two slashes in "://", so "img/pic.png" incorrectly became
- * "https://img/pic.png".
- *
- * Work only on the URL before ?/# and distinguish the authority separator
- * from an actual path. A URL with no path resolves relative references
- * against the origin root.
- */
 static void get_dir(const char *url, char *out, size_t cap) {
-    if (!out || cap == 0) return;
-    out[0] = 0;
-    if (!url || !*url) return;
-
-    char clean[URL_MAX];
-    size_t n = strlen(url);
-    size_t cut = n;
-
-    for (size_t i = 0; i < n; i++) {
-        if (url[i] == '?' || url[i] == '#') {
-            cut = i;
-            break;
-        }
-    }
-
-    if (cut >= sizeof(clean))
-        cut = sizeof(clean) - 1;
-    memcpy(clean, url, cut);
-    clean[cut] = 0;
-
-    const char *scheme = strstr(clean, "://");
-    if (scheme) {
-        const char *authority = scheme + 3;
-        const char *path = strchr(authority, '/');
-
-        if (!path) {
-            snprintf(out, cap, "%s/", clean);
-            return;
-        }
-
-        const char *last = strrchr(path, '/');
-        size_t dir_len = (size_t)(last - clean) + 1;
-        if (dir_len >= cap)
-            dir_len = cap - 1;
-        memcpy(out, clean, dir_len);
-        out[dir_len] = 0;
-        return;
-    }
-
-    const char *last = strrchr(clean, '/');
-    if (!last) {
-        out[0] = 0;
-        return;
-    }
-
-    size_t dir_len = (size_t)(last - clean) + 1;
-    if (dir_len >= cap)
-        dir_len = cap - 1;
-    memcpy(out, clean, dir_len);
-    out[dir_len] = 0;
+    const char *q = url;
+    const char *p = strrchr(q, '/');
+    if (!p) { out[0]=0; return; }
+    size_t n = (size_t)(p - q) + 1;
+    if (n >= cap) n = cap - 1;
+    memcpy(out, q, n); out[n]=0;
 }
 static void base_no_query_or_hash(const char *u, char *out, size_t cap) {
     size_t n = strlen(u), cut = n;
@@ -728,63 +573,8 @@ static int append_text(char *out, size_t cap, size_t *used, const char *text) {
     return append_bytes(out, cap, used, text, strlen(text));
 }
 
-/*
- * Candidate 3 Fix 10: marker-aware vertical whitespace normalization.
- *
- * Color/style/background state markers are zero-width. Closing a block can
- * leave: visible text + newline + zero-width POP markers. The old code saw
- * the final marker byte instead of the existing newline and added another
- * newline when the next block opened, creating a visually empty line.
- *
- * Normalize at line-break insertion time, not by collapsing the finished
- * text, so literal newlines inside <pre> remain untouched.
- */
-static int tail_after_last_newline_is_zero_width(const char *out, size_t used) {
-    size_t start = used;
-    while (start > 0 && out[start - 1] != '\n')
-        start--;
-
-    for (size_t i = start; i < used; ) {
-        unsigned char c = (unsigned char)out[i];
-
-        if (c >= 0x01 && c <= 0x09) {
-            i++;
-            continue;
-        }
-
-        if (c == ' ' || c == '\t' || c == '\r') {
-            i++;
-            continue;
-        }
-
-        if ((c & 0xF0) == 0xE0 && i + 2 < used) {
-            unsigned char c1 = (unsigned char)out[i + 1];
-            unsigned char c2 = (unsigned char)out[i + 2];
-            if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80) {
-                unsigned cp = ((unsigned)(c & 0x0F) << 12) |
-                              ((unsigned)(c1 & 0x3F) << 6) |
-                              (unsigned)(c2 & 0x3F);
-                if (cp >= 0xE400u && cp <= 0xE482u) {
-                    i += 3;
-                    continue;
-                }
-            }
-        }
-
-        return 0;
-    }
-
-    return 1;
-}
-
 static void append_line_break(char *out, size_t cap, size_t *used) {
-    if (!*used || out[*used - 1] == '\n')
-        return;
-
-    if (tail_after_last_newline_is_zero_width(out, *used))
-        return;
-
-    append_text(out, cap, used, "\n");
+    if (*used && out[*used - 1] != '\n') append_text(out, cap, used, "\n");
 }
 
 #define TEXT_BOLD_ON     0x01
@@ -815,16 +605,6 @@ static void append_line_break(char *out, size_t cap, size_t *used) {
 #define TEXT_STYLE_START   0xE430u
 #define TEXT_STYLE_NIBBLE  0xE440u
 #define TEXT_STYLE_POP     0xE450u
-
-/* 2.6 Phase 2B: zero-width background-color state markers.
- * RGB uses the same fixed six-nibble encoding as foreground colors.
- * Every supported paired style container pushes one background state;
- * TRANSPARENT explicitly disables an inherited background until POP. */
-#define TEXT_BG_START       0xE460u
-#define TEXT_BG_NIBBLE      0xE470u  /* E470..E47F = hexadecimal nibble 0..15 */
-#define TEXT_BG_POP         0xE480u
-#define TEXT_BG_INHERIT     0xE481u
-#define TEXT_BG_TRANSPARENT 0xE482u
 
 static int append_utf8_cp(char *out, size_t cap, size_t *used, unsigned cp) {
     char b[4]; size_t n = 0;
@@ -897,54 +677,6 @@ typedef struct {
     unsigned char align; /* 0 inherit, 1 left, 2 center, 3 right */
     int valid_count;
 } inline_style_t;
-
-/* Parse one inline background-color declaration. Return values:
- * 0 = absent/invalid, 1 = RGB color, 2 = transparent. */
-static int style_background_value(const char *style, unsigned char *r, unsigned char *g, unsigned char *b) {
-    if (!style) return 0;
-    const char *p = style;
-    while (*p) {
-        while (*p == ';' || isspace((unsigned char)*p)) p++;
-        const char *name = p;
-        while (*p && *p != ':' && *p != ';') p++;
-        if (*p != ':') { while (*p && *p != ';') p++; continue; }
-        const char *name_end = p++;
-        while (name_end > name && isspace((unsigned char)name_end[-1])) name_end--;
-        while (name < name_end && isspace((unsigned char)*name)) name++;
-        const char *val = p;
-        while (*p && *p != ';') p++;
-        size_t nn = (size_t)(name_end - name), vn = (size_t)(p - val);
-        if (nn == 16 && !strncasecmp(name, "background-color", 16)) {
-            while (vn && isspace((unsigned char)*val)) { val++; vn--; }
-            while (vn && isspace((unsigned char)val[vn - 1])) vn--;
-            if (vn == 11 && !strncasecmp(val, "transparent", 11)) return 2;
-            char tmp[32];
-            if (vn >= sizeof(tmp)) return 0;
-            memcpy(tmp, val, vn); tmp[vn] = 0;
-            return parse_html_color(tmp, r, g, b) ? 1 : 0;
-        }
-    }
-    return 0;
-}
-
-static void append_background_push(char *out, size_t cap, size_t *used,
-                                   int kind, unsigned char r, unsigned char g, unsigned char b) {
-    if (kind == 2) {
-        append_utf8_cp(out, cap, used, TEXT_BG_TRANSPARENT);
-        return;
-    }
-    if (kind != 1) {
-        append_utf8_cp(out, cap, used, TEXT_BG_INHERIT);
-        return;
-    }
-    append_utf8_cp(out, cap, used, TEXT_BG_START);
-    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + ((r >> 4) & 0x0F));
-    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + (r & 0x0F));
-    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + ((g >> 4) & 0x0F));
-    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + (g & 0x0F));
-    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + ((b >> 4) & 0x0F));
-    append_utf8_cp(out, cap, used, TEXT_BG_NIBBLE + (b & 0x0F));
-}
 
 static bool css_value_eq(const char *v, size_t n, const char *wanted) {
     while (n && isspace((unsigned char)*v)) { v++; n--; }
@@ -1049,7 +781,6 @@ static int add_action(page_t *page, action_type_t type, int link_index,
     page->actions[index].link_index = link_index;
     page->actions[index].form_index = form_index;
     page->actions[index].field_index = field_index;
-    page->actions[index].image_index = -1;
     return index;
 }
 
@@ -1088,13 +819,6 @@ static int refresh_page_text(page_t *page) {
                                  TEXT_FORM_ON, action_index + 1,
                                  field->label[0] ? field->label : "Submit", TEXT_FORM_OFF);
                     }
-                } else if (action->type == ACTION_IMAGE &&
-                           action->image_index >= 0 &&
-                           action->image_index < page->image_count) {
-                    const page_image_t *image = &page->images[action->image_index];
-                    snprintf(line, sizeof(line), "%c[%d] Image: %s%c\n",
-                             TEXT_LINK_ON, action_index + 1,
-                             image->alt[0] ? image->alt : "image", TEXT_LINK_OFF);
                 }
                 if (!append_text(rendered, cap, &used, line)) { free(rendered); return 0; }
             }
@@ -1248,49 +972,20 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 char marker[2] = { TEXT_LINK_OFF, 0 };
                 append_text(template_text, template_cap, &used, marker);
             }
-            /*
-             * Fix 14: close block formatting state BEFORE emitting the block
-             * line break.  Fix 10 deliberately treats trailing formatting
-             * markers as zero-width.  Previously </p> produced:
-             *
-             *     text\n + POP markers
-             *
-             * so a following <img> saw the POP-only tail as zero-width and
-             * its [[MBIMGn]] marker was appended to that same logical line.
-             * The renderer only recognizes an image marker on a line by
-             * itself, so the image disappeared.
-             *
-             * The correct ordering is:
-             *
-             *     text + POP markers + \n
-             *
-             * This also avoids creating a visible marker-only blank line.
-             */
-            bool closing_block_break =
-                !strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
-                !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
-                !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
-                !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
-                !strcmp(tag, "tr") || !strcmp(tag, "table") ||
-                !strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
-                !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6");
-
-            if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
-                !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
+            else if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                     !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
                 char marker[2] = { TEXT_HEADING_OFF, 0 };
                 append_text(template_text, template_cap, &used, marker);
-            }
-
-            if (color_container_tag(tag))
-                append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
-            if (style_container_tag(tag)) {
-                append_utf8_cp(template_text, template_cap, &used, TEXT_BG_POP);
-                append_utf8_cp(template_text, template_cap, &used, TEXT_STYLE_POP);
-            }
-
-            if (closing_block_break)
                 append_line_break(template_text, template_cap, &used);
-
+            }
+            else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                     !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                     !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                     !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
+                     !strcmp(tag, "tr") || !strcmp(tag, "table"))
+                append_line_break(template_text, template_cap, &used);
+            if (color_container_tag(tag)) append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
+            if (style_container_tag(tag)) append_utf8_cp(template_text, template_cap, &used, TEXT_STYLE_POP);
             cursor = after_tag;
             continue;
         }
@@ -1318,19 +1013,6 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 st = parse_inline_text_style(style_value, style_block_tag(tag));
             append_style_push(template_text, template_cap, &used, st);
             page->explicit_style_count += st.valid_count;
-        }
-
-        /* Phase 2B: background-color follows the same bounded push/pop model as
-         * the Phase 2A style state.  Missing/invalid values inherit; transparent
-         * is an explicit override that temporarily disables a parent background. */
-        if (style_container_tag(tag)) {
-            char bg_style_value[192] = "";
-            unsigned char br = 0, bg = 0, bb = 0;
-            int bg_kind = 0;
-            if (tag_attribute(attributes, tag_end, "style", bg_style_value, sizeof(bg_style_value)))
-                bg_kind = style_background_value(bg_style_value, &br, &bg, &bb);
-            append_background_push(template_text, template_cap, &used, bg_kind, br, bg, bb);
-            if (bg_kind) page->explicit_background_count++;
         }
 
         /* Phase 1B: every supported paired text container pushes a color state.
@@ -1461,71 +1143,6 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 const char *close_end = strchr(close, '>');
                 cursor = close_end ? close_end + 1 : html_end;
                 continue;
-            }
-        } else if (!strcmp(tag, "img")) {
-            char src_value[URL_MAX] = "";
-            char alt_value[96] = "";
-            char width_value[16] = "";
-            char height_value[16] = "";
-
-            if (tag_attribute(attributes, tag_end, "src",
-                              src_value, sizeof(src_value)) &&
-                is_supported_href(src_value)) {
-                page->image_seen_count++;
-
-                tag_attribute(attributes, tag_end, "alt",
-                              alt_value, sizeof(alt_value));
-                tag_attribute(attributes, tag_end, "width",
-                              width_value, sizeof(width_value));
-                tag_attribute(attributes, tag_end, "height",
-                              height_value, sizeof(height_value));
-
-                append_line_break(template_text, template_cap, &used);
-
-                if (!display_mode_has_images()) {
-                    char placeholder[160];
-                    snprintf(placeholder, sizeof(placeholder),
-                             "[Image: %s]",
-                             alt_value[0] ? alt_value : "image");
-                    append_text(template_text, template_cap, &used, placeholder);
-                    append_line_break(template_text, template_cap, &used);
-                } else if (page->image_count < MAX_PAGE_IMAGES) {
-                    int image_index = page->image_count++;
-                    page_image_t *image = &page->images[image_index];
-                    memset(image, 0, sizeof(*image));
-
-                    resolve_url(page->base, src_value,
-                                image->src, sizeof(image->src));
-                    strncpy(image->alt,
-                            alt_value[0] ? alt_value : "image",
-                            sizeof(image->alt) - 1);
-
-                    if (width_value[0])
-                        image->requested_width = atoi(width_value);
-                    if (height_value[0])
-                        image->requested_height = atoi(height_value);
-
-                    if (image_index < display_inline_image_limit()) {
-                        char image_marker[32];
-                        snprintf(image_marker, sizeof(image_marker),
-                                 "[[MBIMG%d]]", image_index);
-                        append_text(template_text, template_cap, &used, image_marker);
-                        append_line_break(template_text, template_cap, &used);
-                    } else {
-                        int action = add_action(page, ACTION_IMAGE, -1, -1, -1);
-                        if (action >= 0) {
-                            page->actions[action].image_index = image_index;
-                            append_action_marker(template_text, template_cap, &used, action);
-                        }
-                    }
-                } else {
-                    char placeholder[160];
-                    snprintf(placeholder, sizeof(placeholder),
-                             "[Image omitted: %s]",
-                             alt_value[0] ? alt_value : "image");
-                    append_text(template_text, template_cap, &used, placeholder);
-                    append_line_break(template_text, template_cap, &used);
-                }
             }
         } else if (!strcmp(tag, "a")) {
             char href[URL_MAX] = "";
@@ -1699,8 +1316,7 @@ typedef enum {
     ACTIVATE_EDIT_FIELD,
     ACTIVATE_POST,
     ACTIVATE_FORM_UNSUPPORTED,
-    ACTIVATE_URL_TOO_LONG,
-    ACTIVATE_IMAGE
+    ACTIVATE_URL_TOO_LONG
 } activate_result_t;
 
 static activate_result_t activate_page_action(
@@ -1784,14 +1400,6 @@ return ACTIVATE_NAVIGATE;
  
     }
 
-    /*
-     * Image actions are not form actions. Handle them before validating
-     * form_index/field_index: ACTION_IMAGE deliberately stores -1 there.
-     */
-    if (action->type == ACTION_IMAGE) {
-        return ACTIVATE_IMAGE;
-    }
-
     if (action->form_index < 0 || action->form_index >= page->form_count)
         return ACTIVATE_NONE;
     form_t *form = &page->forms[action->form_index];
@@ -1855,10 +1463,7 @@ static int wrap_glyph_width(unsigned cp) {
         cp == TEXT_COLOR_POP || cp == TEXT_COLOR_INHERIT ||
         cp == TEXT_STYLE_START ||
         (cp >= TEXT_STYLE_NIBBLE && cp <= TEXT_STYLE_NIBBLE + 15) ||
-        cp == TEXT_STYLE_POP ||
-        cp == TEXT_BG_START ||
-        (cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) ||
-        cp == TEXT_BG_POP || cp == TEXT_BG_INHERIT || cp == TEXT_BG_TRANSPARENT)
+        cp == TEXT_STYLE_POP)
         return 0;
 
     if (cp >= 32 && cp <= 126)
@@ -2534,401 +2139,6 @@ static int fetch_url(const char *url, const char *post_body, mem_t *m, long *htt
 }
 
 
-/* Renderer functions used by the image viewer are defined later. */
-static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w);
-static void draw_ui(SDL_Renderer *r, const char *bar_text);
-
-/* ---------- Phase 3 Candidate 3 bounded image subsystem ---------- */
-
-typedef struct {
-    uint16_t *rgb565;
-    int width;
-    int height;
-    bool loaded;
-    char url[URL_MAX];
-} decoded_image_t;
-
-static decoded_image_t g_inline_images[MAX_INLINE_IMAGES];
-static decoded_image_t g_viewer_image;
-
-static void decoded_image_release(decoded_image_t *image) {
-    if (!image) return;
-    free(image->rgb565);
-    memset(image, 0, sizeof(*image));
-}
-
-static void image_release_all(void) {
-    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
-        decoded_image_release(&g_inline_images[i]);
-    decoded_image_release(&g_viewer_image);
-}
-
-/* Unlike the HTML sink, image downloads need their own 512 KiB cap. */
-static size_t image_wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
-    size_t n = sz * nm;
-    mem_t *m = (mem_t*)ud;
-    if (!m || !n) return n;
-
-    if (m->len + n > IMAGE_DOWNLOAD_MAX)
-        return 0; /* abort transfer: compressed image is too large */
-
-    char *p = (char*)realloc(m->buf, m->len + n);
-    if (!p) return 0;
-    m->buf = p;
-    memcpy(m->buf + m->len, ptr, n);
-    m->len += n;
-    return n;
-}
-
-/* Image fetch is separate from fetch_url(): it must not replace page metadata. */
-static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
-    if (!url || !m) return -1;
-
-    CURL *curl = curl_easy_init();
-    if (!curl) return -2;
-
-    m->buf = NULL;
-    m->len = 0;
-    if (http_status) *http_status = 0;
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-#ifdef CURLOPT_FOLLOWLOCATION
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-#endif
-#ifdef CURLOPT_MAXREDIRS
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-#endif
-#ifdef CURLOPT_CONNECTTIMEOUT
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-#endif
-#ifdef CURLOPT_TIMEOUT
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
-#endif
-#if defined(CURLOPT_HTTP_VERSION) && defined(CURL_HTTP_VERSION_1_1)
-    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-#endif
-
-    struct curl_slist *hdrs = NULL;
-    hdrs = curl_slist_append(hdrs,
-        "User-Agent: MiniBrowser/" MINI_BROWSER_VERSION " BadgeVMS Phase3");
-    hdrs = curl_slist_append(hdrs,
-        "Accept: image/jpeg,image/png,image/*;q=0.5,*/*;q=0.1");
-    hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
-    if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
-
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, image_wr_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
-
-    CURLcode res = curl_easy_perform(curl);
-
-    if (http_status) {
-        long code = 0;
-        if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code) == CURLE_OK)
-            *http_status = code;
-    }
-
-    if (hdrs) curl_slist_free_all(hdrs);
-    curl_easy_cleanup(curl);
-
-    if (res != CURLE_OK) {
-        free(m->buf);
-        m->buf = NULL;
-        m->len = 0;
-        return (int)res;
-    }
-    return 0;
-}
-
-static void fit_image_size(int src_w, int src_h, int max_w, int max_h,
-                           int *out_w, int *out_h) {
-    int w = src_w, h = src_h;
-    if (w > max_w) {
-        h = (int)(((long long)h * max_w + w / 2) / w);
-        w = max_w;
-    }
-    if (h > max_h) {
-        w = (int)(((long long)w * max_h + h / 2) / h);
-        h = max_h;
-    }
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-    *out_w = w;
-    *out_h = h;
-}
-
-static int decode_web_image_bounded(const unsigned char *buf, size_t len,
-                                    int target_max_w, int target_max_h,
-                                    decoded_image_t *out) {
-    if (!buf || !len || !out || len > INT_MAX)
-        return 0;
-
-    int w = 0, h = 0, channels = 0;
-    if (!stbi_info_from_memory(buf, (int)len, &w, &h, &channels)) {
-        printf("[mini_browser] image: stb info failed: %s\n",
-               stbi_failure_reason() ? stbi_failure_reason() : "unknown");
-        return 0;
-    }
-
-    if (w <= 0 || h <= 0 ||
-        w > IMAGE_SOURCE_MAX_W || h > IMAGE_SOURCE_MAX_H) {
-        printf("[mini_browser] image: rejected dimensions %dx%d (dimension limit %dx%d)\n",
-               w, h, IMAGE_SOURCE_MAX_W, IMAGE_SOURCE_MAX_H);
-        return 0;
-    }
-
-    size_t pixels = (size_t)w * (size_t)h;
-    if (pixels > IMAGE_DECODE_MAX_BYTES / 3U) {
-        printf("[mini_browser] image: rejected %dx%d: RGB decode would need %u bytes (budget %u)\n",
-               w, h, (unsigned)(pixels * 3U), (unsigned)IMAGE_DECODE_MAX_BYTES);
-        return 0;
-    }
-
-    unsigned char *rgb =
-        stbi_load_from_memory(buf, (int)len, &w, &h, &channels, 3);
-    if (!rgb) {
-        printf("[mini_browser] image: stb decode failed: %s\n",
-               stbi_failure_reason() ? stbi_failure_reason() : "unknown");
-        return 0;
-    }
-
-    int dw = 0, dh = 0;
-    fit_image_size(w, h, target_max_w, target_max_h, &dw, &dh);
-
-    size_t retained_bytes = (size_t)dw * (size_t)dh * sizeof(uint16_t);
-
-    /*
-     * Candidate 3 Fix 8 memory-safety fix
-     * ------------------------------------
-     * Do NOT allocate a second RGB565 image while stb's full RGB888 decode
-     * is still alive. On BadgeVMS a 640x480 JPEG needs 921600 bytes for the
-     * temporary RGB888 decode; adding a separate 153600-byte 320x240 RGB565
-     * buffer at the same time caused severe allocator pressure and corrupted
-     * unrelated live allocations.
-     *
-     * Instead, downscale/convert forward into the beginning of stb's own
-     * RGB888 allocation. This is overlap-safe:
-     *
-     *   source position grows as 3 bytes/pixel (or faster when downscaling)
-     *   destination grows as 2 bytes/pixel
-     *
-     * Each source RGB triplet is copied into local r/g/b values before the
-     * destination uint16_t is written, so the forward conversion never
-     * destroys source bytes that a later output pixel still needs.
-     */
-    uint16_t *small = (uint16_t*)rgb;
-
-    for (int y = 0; y < dh; y++) {
-        int sy = (int)(((long long)y * h) / dh);
-        for (int x = 0; x < dw; x++) {
-            int sx = (int)(((long long)x * w) / dw);
-            size_t off = ((size_t)sy * (size_t)w + (size_t)sx) * 3U;
-            unsigned r = rgb[off + 0];
-            unsigned g = rgb[off + 1];
-            unsigned b = rgb[off + 2];
-
-            small[(size_t)y * (size_t)dw + (size_t)x] =
-                (uint16_t)(((r & 0xF8U) << 8) |
-                           ((g & 0xFCU) << 3) |
-                           (b >> 3));
-        }
-    }
-
-    /*
-     * Release the unused tail of the stb allocation only after conversion.
-     * This is a shrink, not a second image allocation. If the allocator
-     * cannot shrink/move it, reject the image rather than retaining the
-     * original large RGB888-sized block.
-     *
-     * stb_image uses the normal malloc/realloc/free family in this build, so
-     * the resulting pointer remains compatible with decoded_image_release().
-     */
-    void *shrunk = realloc(rgb, retained_bytes);
-    if (!shrunk) {
-        stbi_image_free(rgb);
-        printf("[mini_browser] image: could not shrink RGB565 cache to %u bytes\n",
-               (unsigned)retained_bytes);
-        return 0;
-    }
-    small = (uint16_t*)shrunk;
-
-    decoded_image_release(out);
-    out->rgb565 = small;
-    out->width = dw;
-    out->height = dh;
-    out->loaded = true;
-
-    printf("[mini_browser] image: decoded source=%dx%d retained=%dx%d RGB565=%u bytes\n",
-           w, h, dw, dh, (unsigned)retained_bytes);
-    return 1;
-}
-
-static int load_image_url(const char *url, int target_max_w, int target_max_h,
-                          decoded_image_t *out) {
-    if (!url || !out) return 0;
-
-    mem_t m = {0};
-    long status = 0;
-    printf("[mini_browser] image: fetching %s\n", url);
-
-    int rc = fetch_image_bytes(url, &m, &status);
-    if (rc != 0 || status >= 400) {
-        printf("[mini_browser] image: fetch failed rc=%d HTTP=%ld\n", rc, status);
-        free(m.buf);
-        return 0;
-    }
-
-    int ok = decode_web_image_bounded((const unsigned char*)m.buf, m.len,
-                                      target_max_w, target_max_h, out);
-    if (ok) {
-        strncpy(out->url, url, sizeof(out->url) - 1);
-        printf("[mini_browser] image: loaded compressed=%u bytes\n",
-               (unsigned)m.len);
-    } else {
-        printf("[mini_browser] image: unsupported, invalid, or outside memory budget\n");
-    }
-
-    free(m.buf);
-    return ok;
-}
-
-static int load_page_images(const page_t *page) {
-    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
-        decoded_image_release(&g_inline_images[i]);
-
-    int inline_limit = display_inline_image_limit();
-    if (!page || inline_limit <= 0)
-        return 0;
-
-    int count = page->image_count;
-    if (count > inline_limit) count = inline_limit;
-
-    int loaded = 0;
-    for (int i = 0; i < count; i++) {
-        if (load_image_url(page->images[i].src,
-                           IMAGE_DRAW_MAX_W, IMAGE_DRAW_MAX_H,
-                           &g_inline_images[i]))
-            loaded++;
-    }
-    return loaded;
-}
-
-static void image_draw_size(const page_image_t *spec,
-                            const decoded_image_t *image,
-                            int max_w, int max_h,
-                            int *out_w, int *out_h) {
-    int src_w = image->width;
-    int src_h = image->height;
-    int draw_w = src_w;
-    int draw_h = src_h;
-
-    if (spec && spec->requested_width > 0) {
-        draw_w = spec->requested_width;
-        draw_h = (src_h * draw_w + src_w / 2) / src_w;
-    } else if (spec && spec->requested_height > 0) {
-        draw_h = spec->requested_height;
-        draw_w = (src_w * draw_h + src_h / 2) / src_h;
-    }
-
-    if (spec && spec->requested_width > 0 && spec->requested_height > 0) {
-        int h_by_w = (src_h * spec->requested_width + src_w / 2) / src_w;
-        int w_by_h = (src_w * spec->requested_height + src_h / 2) / src_h;
-        if (h_by_w <= spec->requested_height) {
-            draw_w = spec->requested_width;
-            draw_h = h_by_w;
-        } else {
-            draw_h = spec->requested_height;
-            draw_w = w_by_h;
-        }
-    }
-
-    fit_image_size(draw_w, draw_h, max_w, max_h, &draw_w, &draw_h);
-    *out_w = draw_w;
-    *out_h = draw_h;
-}
-
-static int draw_decoded_image(SDL_Renderer *r, const page_image_t *spec,
-                              const decoded_image_t *image,
-                              int x, int y, int max_w, int max_h) {
-    if (!r || !image || !image->loaded || !image->rgb565)
-        return 0;
-
-    int draw_w = 0, draw_h = 0;
-    image_draw_size(spec, image, max_w, max_h, &draw_w, &draw_h);
-
-    for (int dy = 0; dy < draw_h; dy++) {
-        int sy = (dy * image->height) / draw_h;
-        for (int dx = 0; dx < draw_w; dx++) {
-            int sx = (dx * image->width) / draw_w;
-            uint16_t p = image->rgb565[(size_t)sy * (size_t)image->width + (size_t)sx];
-            unsigned char rr = (unsigned char)(((p >> 11) & 0x1F) * 255 / 31);
-            unsigned char gg = (unsigned char)(((p >> 5) & 0x3F) * 255 / 63);
-            unsigned char bb = (unsigned char)((p & 0x1F) * 255 / 31);
-            SDL_SetRenderDrawColor(r, rr, gg, bb, 255);
-            SDL_RenderPoint(r, (float)(x + dx), (float)(y + dy));
-        }
-    }
-    return draw_h;
-}
-
-static int is_image_marker_line(const char *line, int len, int *index) {
-    if (!line || len < 10) return 0;
-    char tmp[32];
-    if (len >= (int)sizeof(tmp)) return 0;
-    memcpy(tmp, line, (size_t)len);
-    tmp[len] = 0;
-
-    int n = -1;
-    char extra = 0;
-    if (sscanf(tmp, "[[MBIMG%d]]%c", &n, &extra) == 1 &&
-        n >= 0 && n < MAX_INLINE_IMAGES) {
-        if (index) *index = n;
-        return 1;
-    }
-    return 0;
-}
-
-static int content_type_is_image(const char *content_type) {
-    if (!content_type) return 0;
-    return !strncasecmp(content_type, "image/jpeg", 10) ||
-           !strncasecmp(content_type, "image/jpg", 9) ||
-           !strncasecmp(content_type, "image/png", 9);
-}
-
-static int buffer_is_supported_image(const unsigned char *buf, size_t len) {
-    if (!buf) return 0;
-
-    /* JPEG SOI */
-    if (len >= 3 &&
-        buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF)
-        return 1;
-
-    /* PNG signature */
-    static const unsigned char png_sig[8] = {
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
-    };
-    if (len >= sizeof(png_sig) &&
-        !memcmp(buf, png_sig, sizeof(png_sig)))
-        return 1;
-
-    return 0;
-}
-
-static void draw_image_viewer(SDL_Renderer *r, const decoded_image_t *image) {
-    draw_ui(r, "Image Viewer - WHY+B/Esc to return");
-    if (!image || !image->loaded) {
-        draw_text(r, PAD_LR, PAD_TOP, "Image unavailable", VIEW_W - 2 * PAD_LR);
-        return;
-    }
-
-    int max_w = VIEW_W - 2 * PAD_LR;
-    int max_h = VIEW_H - PAD_TOP - PAD_BOTTOM;
-    int w = 0, h = 0;
-    fit_image_size(image->width, image->height, max_w, max_h, &w, &h);
-    int x = (VIEW_W - w) / 2;
-    int y = PAD_TOP + (max_h - h) / 2;
-    draw_decoded_image(r, NULL, image, x, y, max_w, max_h);
-}
-
 /* ---------- tiny text renderer ---------- */
 
 
@@ -3460,8 +2670,6 @@ typedef struct {
     unsigned char color;
     bool custom_color;
     unsigned char r, g, b;
-    bool custom_background;
-    unsigned char bg_r, bg_g, bg_b;
     unsigned char dir;
 } visual_glyph_t;
 
@@ -3777,17 +2985,7 @@ static void draw_visual_line(SDL_Renderer *r, int x, int y,
             cy += (CH_H + LINE_SPACING);
         }
 
-        /* Phase 2B: paint the background cell first.  This intentionally
-         * follows the rendered text run rather than introducing block geometry. */
-        if (g_display_mode != DISPLAY_BW && g[i].custom_background) {
-            SDL_SetRenderDrawColor(r, g[i].bg_r, g[i].bg_g, g[i].bg_b, 255);
-            SDL_FRect bg_rect = { (float)cx, (float)cy, (float)char_w, (float)CH_H };
-            SDL_RenderFillRect(r, &bg_rect);
-        }
-
-        if (g_display_mode == DISPLAY_BW) {
-            SDL_SetRenderDrawColor(r, 220, 220, 220, 255);
-        } else if (g[i].custom_color) {
+        if (g[i].custom_color) {
             SDL_SetRenderDrawColor(r, g[i].r, g[i].g, g[i].b, 255);
         } else switch (g[i].color) {
             case TEXT_COLOR_LINK:
@@ -3844,10 +3042,7 @@ static void debug_print_content_clean(const char *s) {
             cp == TEXT_COLOR_POP || cp == TEXT_COLOR_INHERIT ||
         cp == TEXT_STYLE_START ||
         (cp >= TEXT_STYLE_NIBBLE && cp <= TEXT_STYLE_NIBBLE + 15) ||
-        cp == TEXT_STYLE_POP ||
-        cp == TEXT_BG_START ||
-        (cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) ||
-        cp == TEXT_BG_POP || cp == TEXT_BG_INHERIT || cp == TEXT_BG_TRANSPARENT)
+        cp == TEXT_STYLE_POP)
             continue;
         fwrite(s + start, 1, i - start, stdout);
     }
@@ -3876,12 +3071,6 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
     unsigned char css_align = 0;
     int style_nibbles = -1;
     unsigned style_value = 0;
-    struct { bool custom; unsigned char r,g,b; } background_stack[32];
-    int background_depth = 0;
-    bool custom_background = false;
-    unsigned char background_r = 0, background_g = 0, background_b = 0;
-    int background_nibbles = -1;
-    unsigned background_value = 0;
 
     while (i <= L) {
         visual_glyph_t *line = g_render_line;
@@ -3997,51 +3186,6 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
                 }
                 style_nibbles = -1; style_value = 0; continue;
             }
-            if (cp == TEXT_BG_START) {
-                background_nibbles = 0; background_value = 0; continue;
-            }
-            if (background_nibbles >= 0 && cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) {
-                background_value = (background_value << 4) | (unsigned)(cp - TEXT_BG_NIBBLE);
-                background_nibbles++;
-                if (background_nibbles == 6) {
-                    if (background_depth < 32) {
-                        background_stack[background_depth].custom = custom_background;
-                        background_stack[background_depth].r = background_r;
-                        background_stack[background_depth].g = background_g;
-                        background_stack[background_depth].b = background_b;
-                        background_depth++;
-                    }
-                    custom_background = true;
-                    background_r = (unsigned char)((background_value >> 16) & 0xFF);
-                    background_g = (unsigned char)((background_value >> 8) & 0xFF);
-                    background_b = (unsigned char)(background_value & 0xFF);
-                    background_nibbles = -1; background_value = 0;
-                }
-                continue;
-            }
-            if (cp == TEXT_BG_INHERIT || cp == TEXT_BG_TRANSPARENT) {
-                if (background_depth < 32) {
-                    background_stack[background_depth].custom = custom_background;
-                    background_stack[background_depth].r = background_r;
-                    background_stack[background_depth].g = background_g;
-                    background_stack[background_depth].b = background_b;
-                    background_depth++;
-                }
-                if (cp == TEXT_BG_TRANSPARENT) custom_background = false;
-                background_nibbles = -1; background_value = 0;
-                continue;
-            }
-            if (cp == TEXT_BG_POP) {
-                if (background_depth > 0) {
-                    background_depth--;
-                    custom_background = background_stack[background_depth].custom;
-                    background_r = background_stack[background_depth].r;
-                    background_g = background_stack[background_depth].g;
-                    background_b = background_stack[background_depth].b;
-                }
-                background_nibbles = -1; background_value = 0;
-                continue;
-            }
             if (cp == '\n') {
                 saw_newline = true;
                 break;
@@ -4058,8 +3202,6 @@ static void draw_text(SDL_Renderer *r, int x, int y, const char *s, int max_w) {
                                     form_depth > 0 ? TEXT_COLOR_FORM : TEXT_COLOR_NORMAL;
                 line[count].custom_color = custom_color;
                 line[count].r = custom_r; line[count].g = custom_g; line[count].b = custom_b;
-                line[count].custom_background = custom_background;
-                line[count].bg_r = background_r; line[count].bg_g = background_g; line[count].bg_b = background_b;
                 line[count].dir = DIR_NEUTRAL;
                 count++;
             }
@@ -5082,76 +4224,13 @@ static int screenshot_wrapped_line_count(const char *content_wrapped) {
     return lines;
 }
 
-/*
- * Candidate 3 Fix 12a:
- * Pass the active page_t explicitly through the WHY+Z full-page screenshot
- * functions so image metadata is available without relying on a global.
- */
-/*
- * Candidate 3 Fix 12:
- * Full-page screenshots must use the same vertical layout rules as the
- * normal viewport renderer. An inline image marker occupies the rendered
- * image height, not one text line.
- */
-static int screenshot_full_page_height(const page_t *page,
-                                       const char *content_wrapped) {
+static int screenshot_full_page_height(const char *content_wrapped) {
+    int lines = screenshot_wrapped_line_count(content_wrapped);
+    int line_step = CH_H + LINE_SPACING;
     int height = PAD_TOP + PAD_BOTTOM;
 
-    if (content_wrapped && *content_wrapped) {
-        const char *p = content_wrapped;
-
-        while (p && *p) {
-            const char *nl = strchr(p, '\n');
-            int len = nl ? (int)(nl - p) : (int)strlen(p);
-            int image_index = -1;
-
-
-if (len >= 2 && p[0] == '[' && p[1] == '[') {
-    char dbg[64];
-    int dbg_len = len;
-    if (dbg_len > (int)sizeof(dbg) - 1)
-        dbg_len = (int)sizeof(dbg) - 1;
-
-    memcpy(dbg, p, (size_t)dbg_len);
-    dbg[dbg_len] = 0;
-
-    int dbg_index = -1;
-    int dbg_match = is_image_marker_line(p, len, &dbg_index);
-
-    printf("[mini_browser] WHY+Z height: len=%d text='%s' match=%d index=%d loaded=%d\n",
-           len,
-           dbg,
-           dbg_match,
-           dbg_index,
-           (dbg_index >= 0 && dbg_index < MAX_INLINE_IMAGES)
-               ? g_inline_images[dbg_index].loaded
-               : -1);
-}
-
-
-
-
-            if (is_image_marker_line(p, len, &image_index) &&
-                image_index >= 0 &&
-                image_index < MAX_INLINE_IMAGES &&
-                g_inline_images[image_index].loaded) {
-                int draw_w = 0;
-                int draw_h = 0;
-
-                image_draw_size(&page->images[image_index],
-                                &g_inline_images[image_index],
-                                VIEW_W - 2 * PAD_LR,
-                                IMAGE_DRAW_MAX_H,
-                                &draw_w,
-                                &draw_h);
-
-                height += draw_h + LINE_SPACING;
-            } else {
-                height += CH_H + LINE_SPACING;
-            }
-
-            p = nl ? nl + 1 : NULL;
-        }
+    if (lines > 0) {
+        height += lines * line_step;
     }
 
     if (height < VIEW_H) {
@@ -5162,7 +4241,6 @@ if (len >= 2 && p[0] == '[' && p[1] == '[') {
 }
 
 static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
-                                              const page_t *page,
                                               const char *bar_text,
                                               const char *content_wrapped,
                                               int slice_top,
@@ -5183,75 +4261,39 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
         return;
     }
 
+    const int line_step = CH_H + LINE_SPACING;
     const int slice_bottom = slice_top + slice_height;
     const char *p = content_wrapped;
-    int logical_y = PAD_TOP;
+    int line_index = 0;
 
     while (p && *p) {
         const char *nl = strchr(p, '\n');
         int len = nl ? (int)(nl - p) : (int)strlen(p);
-        int image_index = -1;
+        int logical_y = PAD_TOP + line_index * line_step;
 
-        if (is_image_marker_line(p, len, &image_index) &&
-            image_index >= 0 &&
-            image_index < MAX_INLINE_IMAGES &&
-            g_inline_images[image_index].loaded) {
-            int draw_w = 0;
-            int draw_h = 0;
-
-            image_draw_size(&page->images[image_index],
-                            &g_inline_images[image_index],
-                            VIEW_W - 2 * PAD_LR,
-                            IMAGE_DRAW_MAX_H,
-                            &draw_w,
-                            &draw_h);
-
-            /*
-             * Render the image for every screenshot slice it intersects.
-             * Coordinates outside the current 716-pixel renderer are clipped
-             * by SDL, so an image crossing a slice boundary is reconstructed
-             * correctly when the slices are concatenated by the receiver.
-             */
-            if (logical_y + draw_h > slice_top &&
-                logical_y < slice_bottom) {
-                draw_decoded_image(renderer,
-                                   &page->images[image_index],
-                                   &g_inline_images[image_index],
-                                   PAD_LR,
-                                   logical_y - slice_top,
-                                   VIEW_W - 2 * PAD_LR,
-                                   IMAGE_DRAW_MAX_H);
+        if (logical_y + CH_H > slice_top && logical_y < slice_bottom) {
+            char tmp[1024];
+            if (len > (int)sizeof(tmp) - 1) {
+                len = (int)sizeof(tmp) - 1;
             }
 
-            logical_y += draw_h + LINE_SPACING;
-        } else {
-            if (logical_y + CH_H > slice_top &&
-                logical_y < slice_bottom) {
-                char tmp[1024];
-                if (len > (int)sizeof(tmp) - 1) {
-                    len = (int)sizeof(tmp) - 1;
-                }
+            memcpy(tmp, p, (size_t)len);
+            tmp[len] = 0;
 
-                memcpy(tmp, p, (size_t)len);
-                tmp[len] = 0;
-
-                SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
-                draw_text(renderer,
-                          PAD_LR,
-                          logical_y - slice_top,
-                          tmp,
-                          VIEW_W - 2 * PAD_LR);
-            }
-
-            logical_y += CH_H + LINE_SPACING;
+            SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+            draw_text(renderer,
+                      PAD_LR,
+                      logical_y - slice_top,
+                      tmp,
+                      VIEW_W - 2 * PAD_LR);
         }
 
+        line_index++;
         p = nl ? nl + 1 : NULL;
     }
 }
 
 static bool screenshot_stream_full_page(SDL_Renderer *renderer,
-                                        const page_t *page,
                                         const char *bar_text,
                                         const char *content_wrapped) {
     if (!renderer) {
@@ -5260,7 +4302,7 @@ static bool screenshot_stream_full_page(SDL_Renderer *renderer,
         return false;
     }
 
-    int full_height = screenshot_full_page_height(page, content_wrapped);
+    int full_height = screenshot_full_page_height(content_wrapped);
     screenshot_stream_t stream;
 
     printf("[mini_browser] full-page screenshot height=%d\n", full_height);
@@ -5278,7 +4320,6 @@ static bool screenshot_stream_full_page(SDL_Renderer *renderer,
         }
 
         screenshot_render_full_page_slice(renderer,
-                                          page,
                                           bar_text,
                                           content_wrapped,
                                           slice_top,
@@ -5380,8 +4421,6 @@ int main(void) {
     bool inhibit_text_once = false; /* swallow TEXT_INPUT after commands */
     bool screenshot_pending = false;      /* WHY+S: visible 716x716 frame */
     bool full_screenshot_pending = false; /* WHY+Z: complete rendered page */
-    bool options_open = false;
-    bool image_viewer_open = false;            /* WHY+O: Phase 3 display mode menu */
 
     const int max_cols = (VIEW_W - 2*PAD_LR) / CH_W;
     const int lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
@@ -5396,8 +4435,6 @@ int main(void) {
     while (running) {
 
                 if (need_fetch) {
-            image_viewer_open = false;
-            decoded_image_release(&g_viewer_image);
             url_editing = false;
             url_cursor = 0;
             form_editing = false;
@@ -5505,37 +4542,6 @@ int main(void) {
                         scroll_lines = 0;
                         sel_action = -1;
 
-			} else if (content_type_is_image(g_fetch_meta.content_type) ||
-                                   buffer_is_supported_image(
-                                       (const unsigned char *)m.buf, m.len)) {
-                            printf("[mini_browser] direct image: content-type=%s magic=%s URL=%s\n",
-                                   g_fetch_meta.content_type[0]
-                                       ? g_fetch_meta.content_type : "(none)",
-                                   buffer_is_supported_image(
-                                       (const unsigned char *)m.buf, m.len)
-                                       ? "yes" : "no",
-                                   url_buf);
-                            decoded_image_release(&g_viewer_image);
-                            if (display_mode_has_images() &&
-                                load_image_url(url_buf, IMAGE_VIEW_MAX_W,
-                                               IMAGE_VIEW_MAX_H,
-                                               &g_viewer_image)) {
-                                image_viewer_open = true;
-                                snprintf(status_message, sizeof(status_message),
-                                         "Image loaded");
-                                status_message_until = SDL_GetTicks() + 1000;
-                            } else {
-                                image_viewer_open = false;
-                                free(content_wrapped);
-                                content_wrapped = wrap_text(
-                                    display_mode_has_images()
-                                        ? "IMAGE UNAVAILABLE\n\nThe JPEG/PNG could not be decoded within the configured memory limits."
-                                        : "IMAGE\n\nImages are disabled in the current display mode. Press WHY+O and select Colors + Images.",
-                                    max_cols);
-                            }
-                            scroll_lines = 0;
-                            sel_action = -1;
-
 			} else {
     			debug_utf8("CURL", m.buf ? m.buf : "");
 
@@ -5563,8 +4569,6 @@ int main(void) {
                             
 			} else {
    			 debug_utf8("PAGE TEXT", pg->text);
-
-                            load_page_images(pg);
 
     			char *wrapped = wrap_text(pg->text, max_cols);
 
@@ -5605,14 +4609,6 @@ int main(void) {
                                    page->form_count);
                             printf("[mini_browser] visual: explicit_colors=%d\n", page->explicit_color_count);
                             printf("[mini_browser] visual: explicit_styles=%d\n", page->explicit_style_count);
-                            printf("[mini_browser] visual: explicit_backgrounds=%d\n", page->explicit_background_count);
-                            int inline_loaded = 0;
-                            for (int ii = 0; ii < MAX_INLINE_IMAGES; ii++)
-                                if (g_inline_images[ii].loaded) inline_loaded++;
-                            printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d images_loaded=%d\n",
-                                   display_mode_name(g_display_mode),
-                                   page->image_seen_count, page->image_count,
-                                   inline_loaded);
                             printf("[mini_browser] cookies: count=%d\n",
                                    cookie_count());
 
@@ -5685,12 +4681,6 @@ int main(void) {
                 snprintf(barline, sizeof(barline), "[%d/%d]  %s",
                          sel_action + 1, page->action_count,
                          page->links[action->link_index].href);
-            } else if (action->type == ACTION_IMAGE &&
-                       action->image_index >= 0 &&
-                       action->image_index < page->image_count) {
-                snprintf(barline, sizeof(barline), "[%d/%d] Image: %s",
-                         sel_action + 1, page->action_count,
-                         page->images[action->image_index].alt);
             } else {
                 snprintf(barline, sizeof(barline), "[%d/%d]",
                          sel_action + 1, page->action_count);
@@ -5709,87 +4699,27 @@ int main(void) {
         }
 
         /* Draw UI + visible text slice */
-        if (image_viewer_open) {
-            draw_image_viewer(ren, &g_viewer_image);
-        } else if (options_open) {
-            draw_ui(ren, "Mini Browser - Options");
-            int oy = PAD_TOP;
-            char option_line[128];
-
-            draw_text(ren, PAD_LR, oy, "MINI BROWSER OPTIONS", VIEW_W - 2*PAD_LR);
-            oy += 2 * (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "Display mode", VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-
-            snprintf(option_line, sizeof(option_line), "%s 1. Black & White",
-                     g_display_mode == DISPLAY_BW ? "(*)" : "( )");
-            draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-
-            snprintf(option_line, sizeof(option_line), "%s 2. Colors",
-                     g_display_mode == DISPLAY_COLORS ? "(*)" : "( )");
-            draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-
-            snprintf(option_line, sizeof(option_line), "%s 3. Colors + Image (default)",
-                     g_display_mode == DISPLAY_COLORS_IMAGE ? "(*)" : "( )");
-            draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-
-            snprintf(option_line, sizeof(option_line), "%s 4. Colors + 5 Images",
-                     g_display_mode == DISPLAY_COLORS_IMAGES_EXPERIMENTAL ? "(*)" : "( )");
-            draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
-            oy += 2 * (CH_H + LINE_SPACING);
-
-            draw_text(ren, PAD_LR, oy, "Mode 3: 1 inline, extra images as links", VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "Mode 4: 5 inline - EXPERIMENTAL / more memory", VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "JPEG/PNG - Press 1/2/3/4, Esc to cancel", VIEW_W - 2*PAD_LR);
-        } else {
-            draw_ui(ren, barline);
-            if (content_wrapped) {
-                int y = PAD_TOP;
-                const char *p = content_wrapped;
-                for (int ss = 0; ss < scroll_lines && p && *p; ) { if (*p++ == '\n') ss++; }
-                SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
-                int drawn = 0;
-                while (p && *p && drawn < lines_per_page &&
-                       y < VIEW_H - PAD_BOTTOM) {
-                    const char *nl = strchr(p, '\n');
-                    int len = nl ? (int)(nl - p) : (int)strlen(p);
-                    int image_index = -1;
-
-                    if (is_image_marker_line(p, len, &image_index)) {
-                        if (image_index >= 0 &&
-                            image_index < MAX_INLINE_IMAGES &&
-                            g_inline_images[image_index].loaded) {
-                            int image_h = draw_decoded_image(
-                                ren, &page->images[image_index],
-                                &g_inline_images[image_index],
-                                PAD_LR, y, VIEW_W - 2*PAD_LR,
-                                IMAGE_DRAW_MAX_H);
-                            y += image_h + LINE_SPACING;
-                        } else {
-                            draw_text(ren, PAD_LR, y, "[Image unavailable]",
-                                      VIEW_W - 2*PAD_LR);
-                            y += (CH_H + LINE_SPACING);
-                        }
-                    } else {
-                        char tmp[1024];
-                        if (len > (int)sizeof(tmp)-1) len = (int)sizeof(tmp)-1;
-                        memcpy(tmp, p, len); tmp[len] = 0;
-                        draw_text(ren, PAD_LR, y, tmp, VIEW_W - 2*PAD_LR);
-                        y += (CH_H + LINE_SPACING);
-                    }
-
-                    drawn++;
-                    p = nl ? nl + 1 : NULL;
-                }
+        draw_ui(ren, barline);
+        if (content_wrapped) {
+            int y = PAD_TOP;
+            const char *p = content_wrapped;
+            for (int s = 0; s < scroll_lines && p && *p; ) { if (*p++ == '\n') s++; }
+            SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
+            int drawn = 0;
+            while (p && *p && drawn < lines_per_page) {
+                const char *nl = strchr(p, '\n');
+                int len = nl ? (int)(nl - p) : (int)strlen(p);
+                char tmp[1024];
+                if (len > (int)sizeof(tmp)-1) len = (int)sizeof(tmp)-1;
+                memcpy(tmp, p, len); tmp[len] = 0;
+                draw_text(ren, PAD_LR, y, tmp, VIEW_W - 2*PAD_LR);
+                y += (CH_H + LINE_SPACING);
+                drawn++;
+                p = nl ? nl + 1 : NULL;
             }
         }
         if (full_screenshot_pending) {
-            screenshot_stream_full_page(ren, page, barline, content_wrapped);
+            screenshot_stream_full_page(ren, barline, content_wrapped);
             full_screenshot_pending = false;
 
             /*
@@ -5861,48 +4791,6 @@ int main(void) {
             
             if (ev.type == SDL_EVENT_KEY_DOWN) {
                 SDL_Scancode sc = ev.key.scancode;
-
-                /* Phase 3 Fix 15 options menu consumes ordinary 1/2/3/4/Escape. */
-                if (options_open) {
-                    display_mode_t selected = g_display_mode;
-                    bool changed = false;
-
-                    if (sc == SDL_SCANCODE_1) {
-                        selected = DISPLAY_BW; changed = true;
-                    } else if (sc == SDL_SCANCODE_2) {
-                        selected = DISPLAY_COLORS; changed = true;
-                    } else if (sc == SDL_SCANCODE_3) {
-                        selected = DISPLAY_COLORS_IMAGE; changed = true;
-                    } else if (sc == SDL_SCANCODE_4) {
-                        selected = DISPLAY_COLORS_IMAGES_EXPERIMENTAL; changed = true;
-                    } else if (sc == SDL_SCANCODE_ESCAPE) {
-                        options_open = false;
-                        inhibit_text_once = true;
-                        continue;
-                    }
-
-                    if (changed) {
-                        g_display_mode = selected;
-                        options_open = false;
-                        image_release_all();
-                        if (is_http_scheme(url_buf))
-                            image_viewer_open = false;
-                            decoded_image_release(&g_viewer_image);
-                            need_fetch = 1; /* reparse <img> for the new mode */
-                        scroll_lines = 0;
-                        sel_action = -1;
-                        snprintf(status_message, sizeof(status_message),
-                                 "MODE: %s", display_mode_name(g_display_mode));
-                        status_message_until = SDL_GetTicks() + 1500;
-                        printf("[mini_browser] display mode: %s\\n",
-                               display_mode_name(g_display_mode));
-                        inhibit_text_once = true;
-                        continue;
-                    }
-
-                    /* Ignore other keys while the modal options page is open. */
-                    continue;
-                }
 
                 /* Track accelerator press/release */
                 if (sc == SC_ACCELERATOR) {
@@ -6086,10 +4974,7 @@ int main(void) {
                         }
  
                         case SDL_SCANCODE_B: { /* BACK */
-                            if (image_viewer_open) {
-                                image_viewer_open = false;
-                                decoded_image_release(&g_viewer_image);
-                            } else if (viewing_page_info &&
+                            if (viewing_page_info &&
                                 page_info_return_url[0]) {
 
                                 strncpy(url_buf,
@@ -6158,13 +5043,6 @@ int main(void) {
                             full_screenshot_pending = true;
                             inhibit_text_once = true;
                             printf("[mini_browser] full-page screenshot requested; clean page queued\n");
-                            break;
-
-                        case SDL_SCANCODE_O:
-                            options_open = true;
-                            inhibit_text_once = true;
-                            printf("[mini_browser] options opened; current mode=%s\n",
-                                   display_mode_name(g_display_mode));
                             break;
 
                         case SDL_SCANCODE_Q:
@@ -6240,24 +5118,6 @@ int main(void) {
                                 bookmark_return_url[0] = 0;
                                 history_navigation = false;
                                 need_fetch = 1;
-                            } else if (result == ACTIVATE_IMAGE) {
-                                if (action_index >= 0 &&
-                                    action_index < page->action_count) {
-                                    int image_index = page->actions[action_index].image_index;
-                                    if (image_index >= 0 && image_index < page->image_count &&
-                                        display_mode_has_images()) {
-                                        decoded_image_release(&g_viewer_image);
-                                        if (load_image_url(page->images[image_index].src,
-                                                           IMAGE_VIEW_MAX_W, IMAGE_VIEW_MAX_H,
-                                                           &g_viewer_image)) {
-                                            image_viewer_open = true;
-                                        } else {
-                                            snprintf(status_message, sizeof(status_message),
-                                                     "IMAGE UNAVAILABLE");
-                                            status_message_until = SDL_GetTicks() + 2000;
-                                        }
-                                    }
-                                }
                             } else if (result == ACTIVATE_FORM_UNSUPPORTED) {
                                 snprintf(status_message, sizeof(status_message),
                                          "FORM METHOD/ENCODING NOT SUPPORTED");
@@ -6434,10 +5294,7 @@ case SDL_SCANCODE_TAB: {
     break;
 }
                     case SDL_SCANCODE_ESCAPE:
-                        if (image_viewer_open) {
-                            image_viewer_open = false;
-                            decoded_image_release(&g_viewer_image);
-                        } else if (form_editing) {
+                        if (form_editing) {
                             form_editing = false;
                             form_edit_form = -1;
                             form_edit_field = -1;
@@ -6499,7 +5356,6 @@ case SDL_SCANCODE_TAB: {
     }
 
     SDL_StopTextInput(win);
-    image_release_all();
     free_page(page);
     free(content_wrapped);
     SDL_DestroyRenderer(ren);

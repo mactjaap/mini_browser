@@ -119,55 +119,26 @@
 #define IMAGE_SOURCE_MAX_H       1600
 #define IMAGE_DRAW_MAX_W          320
 #define IMAGE_DRAW_MAX_H          240
-/*
- * Viewer retention is deliberately capped at 320x240.
- *
- * Fix 8 made the decode path memory-safe by converting RGB888 -> RGB565
- * in-place. A direct 640x480 image nevertheless retained a 614400-byte
- * RGB565 viewer buffer, which exhausted BadgeVMS memory during rendering.
- *
- * Keep viewer storage at the same proven-safe bound as inline images.
- * draw_image_viewer() still scales the retained image to the available
- * screen area, so this changes retained resolution, not viewer layout.
- */
-#define IMAGE_VIEW_MAX_W          320
-#define IMAGE_VIEW_MAX_H          240
+#define IMAGE_VIEW_MAX_W          640
+#define IMAGE_VIEW_MAX_H          600
 #define IMAGE_RESERVE_LINES         1
 
 typedef enum {
     DISPLAY_BW = 0,
     DISPLAY_COLORS = 1,
-    DISPLAY_COLORS_IMAGE = 2,
-    DISPLAY_COLORS_IMAGES_EXPERIMENTAL = 3
+    DISPLAY_COLORS_IMAGES = 2
 } display_mode_t;
 
-/*
- * Fix 15: tiered visual modes.
- * Default mode 3 decodes one inline image. Mode 4 keeps the proven
- * five-image path as an explicit experimental higher-memory option.
- */
-static display_mode_t g_display_mode = DISPLAY_COLORS_IMAGE;
+/* Start rich for the Phase 3 proof-of-concept. WHY+O opens the mode menu. */
+static display_mode_t g_display_mode = DISPLAY_COLORS_IMAGES;
 
 static const char *display_mode_name(display_mode_t mode) {
     switch (mode) {
-        case DISPLAY_BW:                         return "Black & White";
-        case DISPLAY_COLORS:                     return "Colors";
-        case DISPLAY_COLORS_IMAGE:               return "Colors + Image";
-        case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return "Colors + 5 Images (Experimental)";
-        default:                                 return "Unknown";
+        case DISPLAY_BW:            return "Black & White";
+        case DISPLAY_COLORS:        return "Colors";
+        case DISPLAY_COLORS_IMAGES: return "Colors + Images";
+        default:                    return "Unknown";
     }
-}
-
-static int display_inline_image_limit(void) {
-    switch (g_display_mode) {
-        case DISPLAY_COLORS_IMAGE:               return 1;
-        case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return MAX_INLINE_IMAGES;
-        default:                                 return 0;
-    }
-}
-
-static int display_mode_has_images(void) {
-    return display_inline_image_limit() > 0;
 }
 
 /* ---------- 5x7 bitmap font (ASCII 32..127) ---------- */
@@ -340,69 +311,13 @@ static void get_scheme_host(const char *url, char *out, size_t cap) {
     if (n >= cap) n = cap - 1;
     memcpy(out, url, n); out[n]=0;
 }
-/*
- * Candidate 3 Fix 13: document-relative URL base directory.
- *
- * The old get_dir() used the final '/' anywhere in the URL. For a root
- * document URL such as "https://example.org" the final slash is one of the
- * two slashes in "://", so "img/pic.png" incorrectly became
- * "https://img/pic.png".
- *
- * Work only on the URL before ?/# and distinguish the authority separator
- * from an actual path. A URL with no path resolves relative references
- * against the origin root.
- */
 static void get_dir(const char *url, char *out, size_t cap) {
-    if (!out || cap == 0) return;
-    out[0] = 0;
-    if (!url || !*url) return;
-
-    char clean[URL_MAX];
-    size_t n = strlen(url);
-    size_t cut = n;
-
-    for (size_t i = 0; i < n; i++) {
-        if (url[i] == '?' || url[i] == '#') {
-            cut = i;
-            break;
-        }
-    }
-
-    if (cut >= sizeof(clean))
-        cut = sizeof(clean) - 1;
-    memcpy(clean, url, cut);
-    clean[cut] = 0;
-
-    const char *scheme = strstr(clean, "://");
-    if (scheme) {
-        const char *authority = scheme + 3;
-        const char *path = strchr(authority, '/');
-
-        if (!path) {
-            snprintf(out, cap, "%s/", clean);
-            return;
-        }
-
-        const char *last = strrchr(path, '/');
-        size_t dir_len = (size_t)(last - clean) + 1;
-        if (dir_len >= cap)
-            dir_len = cap - 1;
-        memcpy(out, clean, dir_len);
-        out[dir_len] = 0;
-        return;
-    }
-
-    const char *last = strrchr(clean, '/');
-    if (!last) {
-        out[0] = 0;
-        return;
-    }
-
-    size_t dir_len = (size_t)(last - clean) + 1;
-    if (dir_len >= cap)
-        dir_len = cap - 1;
-    memcpy(out, clean, dir_len);
-    out[dir_len] = 0;
+    const char *q = url;
+    const char *p = strrchr(q, '/');
+    if (!p) { out[0]=0; return; }
+    size_t n = (size_t)(p - q) + 1;
+    if (n >= cap) n = cap - 1;
+    memcpy(out, q, n); out[n]=0;
 }
 static void base_no_query_or_hash(const char *u, char *out, size_t cap) {
     size_t n = strlen(u), cut = n;
@@ -728,63 +643,8 @@ static int append_text(char *out, size_t cap, size_t *used, const char *text) {
     return append_bytes(out, cap, used, text, strlen(text));
 }
 
-/*
- * Candidate 3 Fix 10: marker-aware vertical whitespace normalization.
- *
- * Color/style/background state markers are zero-width. Closing a block can
- * leave: visible text + newline + zero-width POP markers. The old code saw
- * the final marker byte instead of the existing newline and added another
- * newline when the next block opened, creating a visually empty line.
- *
- * Normalize at line-break insertion time, not by collapsing the finished
- * text, so literal newlines inside <pre> remain untouched.
- */
-static int tail_after_last_newline_is_zero_width(const char *out, size_t used) {
-    size_t start = used;
-    while (start > 0 && out[start - 1] != '\n')
-        start--;
-
-    for (size_t i = start; i < used; ) {
-        unsigned char c = (unsigned char)out[i];
-
-        if (c >= 0x01 && c <= 0x09) {
-            i++;
-            continue;
-        }
-
-        if (c == ' ' || c == '\t' || c == '\r') {
-            i++;
-            continue;
-        }
-
-        if ((c & 0xF0) == 0xE0 && i + 2 < used) {
-            unsigned char c1 = (unsigned char)out[i + 1];
-            unsigned char c2 = (unsigned char)out[i + 2];
-            if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80) {
-                unsigned cp = ((unsigned)(c & 0x0F) << 12) |
-                              ((unsigned)(c1 & 0x3F) << 6) |
-                              (unsigned)(c2 & 0x3F);
-                if (cp >= 0xE400u && cp <= 0xE482u) {
-                    i += 3;
-                    continue;
-                }
-            }
-        }
-
-        return 0;
-    }
-
-    return 1;
-}
-
 static void append_line_break(char *out, size_t cap, size_t *used) {
-    if (!*used || out[*used - 1] == '\n')
-        return;
-
-    if (tail_after_last_newline_is_zero_width(out, *used))
-        return;
-
-    append_text(out, cap, used, "\n");
+    if (*used && out[*used - 1] != '\n') append_text(out, cap, used, "\n");
 }
 
 #define TEXT_BOLD_ON     0x01
@@ -1248,49 +1108,23 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                 char marker[2] = { TEXT_LINK_OFF, 0 };
                 append_text(template_text, template_cap, &used, marker);
             }
-            /*
-             * Fix 14: close block formatting state BEFORE emitting the block
-             * line break.  Fix 10 deliberately treats trailing formatting
-             * markers as zero-width.  Previously </p> produced:
-             *
-             *     text\n + POP markers
-             *
-             * so a following <img> saw the POP-only tail as zero-width and
-             * its [[MBIMGn]] marker was appended to that same logical line.
-             * The renderer only recognizes an image marker on a line by
-             * itself, so the image disappeared.
-             *
-             * The correct ordering is:
-             *
-             *     text + POP markers + \n
-             *
-             * This also avoids creating a visible marker-only blank line.
-             */
-            bool closing_block_break =
-                !strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
-                !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
-                !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
-                !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
-                !strcmp(tag, "tr") || !strcmp(tag, "table") ||
-                !strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
-                !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6");
-
-            if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
-                !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
+            else if (!strcmp(tag, "h1") || !strcmp(tag, "h2") || !strcmp(tag, "h3") ||
+                     !strcmp(tag, "h4") || !strcmp(tag, "h5") || !strcmp(tag, "h6")) {
                 char marker[2] = { TEXT_HEADING_OFF, 0 };
                 append_text(template_text, template_cap, &used, marker);
+                append_line_break(template_text, template_cap, &used);
             }
-
-            if (color_container_tag(tag))
-                append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
+            else if (!strcmp(tag, "p") || !strcmp(tag, "div") || !strcmp(tag, "section") ||
+                     !strcmp(tag, "article") || !strcmp(tag, "main") || !strcmp(tag, "header") ||
+                     !strcmp(tag, "footer") || !strcmp(tag, "nav") || !strcmp(tag, "aside") ||
+                     !strcmp(tag, "blockquote") || !strcmp(tag, "address") || !strcmp(tag, "li") ||
+                     !strcmp(tag, "tr") || !strcmp(tag, "table"))
+                append_line_break(template_text, template_cap, &used);
+            if (color_container_tag(tag)) append_utf8_cp(template_text, template_cap, &used, TEXT_COLOR_POP);
             if (style_container_tag(tag)) {
                 append_utf8_cp(template_text, template_cap, &used, TEXT_BG_POP);
                 append_utf8_cp(template_text, template_cap, &used, TEXT_STYLE_POP);
             }
-
-            if (closing_block_break)
-                append_line_break(template_text, template_cap, &used);
-
             cursor = after_tag;
             continue;
         }
@@ -1482,7 +1316,7 @@ static page_t *html_to_page(const char *html, const char *base_url) {
 
                 append_line_break(template_text, template_cap, &used);
 
-                if (!display_mode_has_images()) {
+                if (g_display_mode != DISPLAY_COLORS_IMAGES) {
                     char placeholder[160];
                     snprintf(placeholder, sizeof(placeholder),
                              "[Image: %s]",
@@ -1505,7 +1339,7 @@ static page_t *html_to_page(const char *html, const char *base_url) {
                     if (height_value[0])
                         image->requested_height = atoi(height_value);
 
-                    if (image_index < display_inline_image_limit()) {
+                    if (image_index < MAX_INLINE_IMAGES) {
                         char image_marker[32];
                         snprintf(image_marker, sizeof(image_marker),
                                  "[[MBIMG%d]]", image_index);
@@ -2795,12 +2629,11 @@ static int load_page_images(const page_t *page) {
     for (int i = 0; i < MAX_INLINE_IMAGES; i++)
         decoded_image_release(&g_inline_images[i]);
 
-    int inline_limit = display_inline_image_limit();
-    if (!page || inline_limit <= 0)
+    if (!page || g_display_mode != DISPLAY_COLORS_IMAGES)
         return 0;
 
     int count = page->image_count;
-    if (count > inline_limit) count = inline_limit;
+    if (count > MAX_INLINE_IMAGES) count = MAX_INLINE_IMAGES;
 
     int loaded = 0;
     for (int i = 0; i < count; i++) {
@@ -5082,76 +4915,13 @@ static int screenshot_wrapped_line_count(const char *content_wrapped) {
     return lines;
 }
 
-/*
- * Candidate 3 Fix 12a:
- * Pass the active page_t explicitly through the WHY+Z full-page screenshot
- * functions so image metadata is available without relying on a global.
- */
-/*
- * Candidate 3 Fix 12:
- * Full-page screenshots must use the same vertical layout rules as the
- * normal viewport renderer. An inline image marker occupies the rendered
- * image height, not one text line.
- */
-static int screenshot_full_page_height(const page_t *page,
-                                       const char *content_wrapped) {
+static int screenshot_full_page_height(const char *content_wrapped) {
+    int lines = screenshot_wrapped_line_count(content_wrapped);
+    int line_step = CH_H + LINE_SPACING;
     int height = PAD_TOP + PAD_BOTTOM;
 
-    if (content_wrapped && *content_wrapped) {
-        const char *p = content_wrapped;
-
-        while (p && *p) {
-            const char *nl = strchr(p, '\n');
-            int len = nl ? (int)(nl - p) : (int)strlen(p);
-            int image_index = -1;
-
-
-if (len >= 2 && p[0] == '[' && p[1] == '[') {
-    char dbg[64];
-    int dbg_len = len;
-    if (dbg_len > (int)sizeof(dbg) - 1)
-        dbg_len = (int)sizeof(dbg) - 1;
-
-    memcpy(dbg, p, (size_t)dbg_len);
-    dbg[dbg_len] = 0;
-
-    int dbg_index = -1;
-    int dbg_match = is_image_marker_line(p, len, &dbg_index);
-
-    printf("[mini_browser] WHY+Z height: len=%d text='%s' match=%d index=%d loaded=%d\n",
-           len,
-           dbg,
-           dbg_match,
-           dbg_index,
-           (dbg_index >= 0 && dbg_index < MAX_INLINE_IMAGES)
-               ? g_inline_images[dbg_index].loaded
-               : -1);
-}
-
-
-
-
-            if (is_image_marker_line(p, len, &image_index) &&
-                image_index >= 0 &&
-                image_index < MAX_INLINE_IMAGES &&
-                g_inline_images[image_index].loaded) {
-                int draw_w = 0;
-                int draw_h = 0;
-
-                image_draw_size(&page->images[image_index],
-                                &g_inline_images[image_index],
-                                VIEW_W - 2 * PAD_LR,
-                                IMAGE_DRAW_MAX_H,
-                                &draw_w,
-                                &draw_h);
-
-                height += draw_h + LINE_SPACING;
-            } else {
-                height += CH_H + LINE_SPACING;
-            }
-
-            p = nl ? nl + 1 : NULL;
-        }
+    if (lines > 0) {
+        height += lines * line_step;
     }
 
     if (height < VIEW_H) {
@@ -5162,7 +4932,6 @@ if (len >= 2 && p[0] == '[' && p[1] == '[') {
 }
 
 static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
-                                              const page_t *page,
                                               const char *bar_text,
                                               const char *content_wrapped,
                                               int slice_top,
@@ -5183,75 +4952,39 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
         return;
     }
 
+    const int line_step = CH_H + LINE_SPACING;
     const int slice_bottom = slice_top + slice_height;
     const char *p = content_wrapped;
-    int logical_y = PAD_TOP;
+    int line_index = 0;
 
     while (p && *p) {
         const char *nl = strchr(p, '\n');
         int len = nl ? (int)(nl - p) : (int)strlen(p);
-        int image_index = -1;
+        int logical_y = PAD_TOP + line_index * line_step;
 
-        if (is_image_marker_line(p, len, &image_index) &&
-            image_index >= 0 &&
-            image_index < MAX_INLINE_IMAGES &&
-            g_inline_images[image_index].loaded) {
-            int draw_w = 0;
-            int draw_h = 0;
-
-            image_draw_size(&page->images[image_index],
-                            &g_inline_images[image_index],
-                            VIEW_W - 2 * PAD_LR,
-                            IMAGE_DRAW_MAX_H,
-                            &draw_w,
-                            &draw_h);
-
-            /*
-             * Render the image for every screenshot slice it intersects.
-             * Coordinates outside the current 716-pixel renderer are clipped
-             * by SDL, so an image crossing a slice boundary is reconstructed
-             * correctly when the slices are concatenated by the receiver.
-             */
-            if (logical_y + draw_h > slice_top &&
-                logical_y < slice_bottom) {
-                draw_decoded_image(renderer,
-                                   &page->images[image_index],
-                                   &g_inline_images[image_index],
-                                   PAD_LR,
-                                   logical_y - slice_top,
-                                   VIEW_W - 2 * PAD_LR,
-                                   IMAGE_DRAW_MAX_H);
+        if (logical_y + CH_H > slice_top && logical_y < slice_bottom) {
+            char tmp[1024];
+            if (len > (int)sizeof(tmp) - 1) {
+                len = (int)sizeof(tmp) - 1;
             }
 
-            logical_y += draw_h + LINE_SPACING;
-        } else {
-            if (logical_y + CH_H > slice_top &&
-                logical_y < slice_bottom) {
-                char tmp[1024];
-                if (len > (int)sizeof(tmp) - 1) {
-                    len = (int)sizeof(tmp) - 1;
-                }
+            memcpy(tmp, p, (size_t)len);
+            tmp[len] = 0;
 
-                memcpy(tmp, p, (size_t)len);
-                tmp[len] = 0;
-
-                SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
-                draw_text(renderer,
-                          PAD_LR,
-                          logical_y - slice_top,
-                          tmp,
-                          VIEW_W - 2 * PAD_LR);
-            }
-
-            logical_y += CH_H + LINE_SPACING;
+            SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+            draw_text(renderer,
+                      PAD_LR,
+                      logical_y - slice_top,
+                      tmp,
+                      VIEW_W - 2 * PAD_LR);
         }
 
+        line_index++;
         p = nl ? nl + 1 : NULL;
     }
 }
 
 static bool screenshot_stream_full_page(SDL_Renderer *renderer,
-                                        const page_t *page,
                                         const char *bar_text,
                                         const char *content_wrapped) {
     if (!renderer) {
@@ -5260,7 +4993,7 @@ static bool screenshot_stream_full_page(SDL_Renderer *renderer,
         return false;
     }
 
-    int full_height = screenshot_full_page_height(page, content_wrapped);
+    int full_height = screenshot_full_page_height(content_wrapped);
     screenshot_stream_t stream;
 
     printf("[mini_browser] full-page screenshot height=%d\n", full_height);
@@ -5278,7 +5011,6 @@ static bool screenshot_stream_full_page(SDL_Renderer *renderer,
         }
 
         screenshot_render_full_page_slice(renderer,
-                                          page,
                                           bar_text,
                                           content_wrapped,
                                           slice_top,
@@ -5516,7 +5248,7 @@ int main(void) {
                                        ? "yes" : "no",
                                    url_buf);
                             decoded_image_release(&g_viewer_image);
-                            if (display_mode_has_images() &&
+                            if (g_display_mode == DISPLAY_COLORS_IMAGES &&
                                 load_image_url(url_buf, IMAGE_VIEW_MAX_W,
                                                IMAGE_VIEW_MAX_H,
                                                &g_viewer_image)) {
@@ -5528,7 +5260,7 @@ int main(void) {
                                 image_viewer_open = false;
                                 free(content_wrapped);
                                 content_wrapped = wrap_text(
-                                    display_mode_has_images()
+                                    g_display_mode == DISPLAY_COLORS_IMAGES
                                         ? "IMAGE UNAVAILABLE\n\nThe JPEG/PNG could not be decoded within the configured memory limits."
                                         : "IMAGE\n\nImages are disabled in the current display mode. Press WHY+O and select Colors + Images.",
                                     max_cols);
@@ -5731,21 +5463,16 @@ int main(void) {
             draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
 
-            snprintf(option_line, sizeof(option_line), "%s 3. Colors + Image (default)",
-                     g_display_mode == DISPLAY_COLORS_IMAGE ? "(*)" : "( )");
-            draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
-            oy += (CH_H + LINE_SPACING);
-
-            snprintf(option_line, sizeof(option_line), "%s 4. Colors + 5 Images",
-                     g_display_mode == DISPLAY_COLORS_IMAGES_EXPERIMENTAL ? "(*)" : "( )");
+            snprintf(option_line, sizeof(option_line), "%s 3. Colors + Images",
+                     g_display_mode == DISPLAY_COLORS_IMAGES ? "(*)" : "( )");
             draw_text(ren, PAD_LR, oy, option_line, VIEW_W - 2*PAD_LR);
             oy += 2 * (CH_H + LINE_SPACING);
 
-            draw_text(ren, PAD_LR, oy, "Mode 3: 1 inline, extra images as links", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "Phase 3 image support:", VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "Mode 4: 5 inline - EXPERIMENTAL / more memory", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "5 inline, extra images as links, JPEG/PNG", VIEW_W - 2*PAD_LR);
             oy += (CH_H + LINE_SPACING);
-            draw_text(ren, PAD_LR, oy, "JPEG/PNG - Press 1/2/3/4, Esc to cancel", VIEW_W - 2*PAD_LR);
+            draw_text(ren, PAD_LR, oy, "Press 1/2/3 to select, Esc to cancel", VIEW_W - 2*PAD_LR);
         } else {
             draw_ui(ren, barline);
             if (content_wrapped) {
@@ -5789,7 +5516,7 @@ int main(void) {
             }
         }
         if (full_screenshot_pending) {
-            screenshot_stream_full_page(ren, page, barline, content_wrapped);
+            screenshot_stream_full_page(ren, barline, content_wrapped);
             full_screenshot_pending = false;
 
             /*
@@ -5862,7 +5589,7 @@ int main(void) {
             if (ev.type == SDL_EVENT_KEY_DOWN) {
                 SDL_Scancode sc = ev.key.scancode;
 
-                /* Phase 3 Fix 15 options menu consumes ordinary 1/2/3/4/Escape. */
+                /* Phase 3 options menu consumes ordinary 1/2/3/Escape. */
                 if (options_open) {
                     display_mode_t selected = g_display_mode;
                     bool changed = false;
@@ -5872,9 +5599,7 @@ int main(void) {
                     } else if (sc == SDL_SCANCODE_2) {
                         selected = DISPLAY_COLORS; changed = true;
                     } else if (sc == SDL_SCANCODE_3) {
-                        selected = DISPLAY_COLORS_IMAGE; changed = true;
-                    } else if (sc == SDL_SCANCODE_4) {
-                        selected = DISPLAY_COLORS_IMAGES_EXPERIMENTAL; changed = true;
+                        selected = DISPLAY_COLORS_IMAGES; changed = true;
                     } else if (sc == SDL_SCANCODE_ESCAPE) {
                         options_open = false;
                         inhibit_text_once = true;
@@ -6245,7 +5970,7 @@ int main(void) {
                                     action_index < page->action_count) {
                                     int image_index = page->actions[action_index].image_index;
                                     if (image_index >= 0 && image_index < page->image_count &&
-                                        display_mode_has_images()) {
+                                        g_display_mode == DISPLAY_COLORS_IMAGES) {
                                         decoded_image_release(&g_viewer_image);
                                         if (load_image_url(page->images[image_index].src,
                                                            IMAGE_VIEW_MAX_W, IMAGE_VIEW_MAX_H,

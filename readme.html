@@ -31,7 +31,7 @@ shaping, bookmarks, history, GET/POST forms, cookies and complete-page screensho
 
 <p>
 ASCII uses the built-in bitmap font. Additional Unicode characters can be loaded from
-APPS:[mini_browser]unifont_cjk.bin. The tested 2.4 generated font contains 56,352
+APPS:[mini_browser]unifont_cjk.bin. The tested generated font contains 56,352
 usable glyphs across 101 ranges selected from GNU Unifont 17.0.02 Plane-0 and
 supplementary-plane sources. The MBCJ v1 range table is read from the file header
 at runtime rather than being hard-coded in the browser source.
@@ -64,9 +64,9 @@ a Unicode bullet.
 <h2>RTL/Bidi and Arabic shaping</h2>
 
 <p>
-Mini Browser 2.4 renders Hebrew and Arabic right-to-left and supports mixed LTR/RTL
+Mini Browser renders Hebrew and Arabic right-to-left and supports mixed LTR/RTL
 lines. Arabic letters are contextually shaped into their joining forms using glyphs
-included in the 2.4 Unicode font.
+included in the Unicode font.
 </p>
 
 <p>
@@ -230,7 +230,7 @@ one-line scrolling.
 <h2>Screenshots</h2>
 
 <p>
-Mini Browser 2.4 supports two screenshot modes. WHY+S captures the visible 716x716
+Mini Browser supports two screenshot modes. WHY+S captures the visible 716x716
 browser viewport. WHY+Z captures the complete rendered page, including content below
 the viewport. Full-page capture reuses the normal renderer as a slice-based scratch
 surface, so it does not allocate a giant 716xN framebuffer or change the current
@@ -522,7 +522,7 @@ a general-purpose modern browser graphics engine.
 <h2>Unicode font</h2>
 
 <p>
-The tested 2.4 font asset combines unifont_jp-17.0.02.hex and
+The tested font asset combines unifont_jp-17.0.02.hex and
 unifont_upper-17.0.02.hex into unifont_cjk.bin. The generated MBCJ v1 file contains
 56,352 usable glyphs across 101 ranges and is 1,804,488 bytes (about 1.72 MiB). GNU Unifont is dual-licensed under the
 SIL Open Font License 1.1 and GNU GPL version 2 or later with the GNU Font Embedding

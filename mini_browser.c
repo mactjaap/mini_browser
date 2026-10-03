@@ -1457,6 +1457,67 @@ static inline_style_t parse_inline_text_style(const char *style, bool allow_alig
     return st;
 }
 
+/* HTML align="..." value: 1 left, 2 center, 3 right, 0 anything else. */
+static unsigned char html_align_value(const char *value) {
+    size_t n = value ? strlen(value) : 0;
+    if (css_value_eq(value, n, "left")) return 1;
+    if (css_value_eq(value, n, "center")) return 2;
+    if (css_value_eq(value, n, "right")) return 3;
+    return 0;
+}
+
+/*
+ * Horizontal placement of an <img> from its own style="": the usual
+ * "display:block; margin: 0 auto" centering idiom (either the margin
+ * shorthand or margin-left/margin-right), and margin-left:auto alone to push
+ * it to the right.  Returns 0 (not set), 2 center or 3 right.
+ */
+static unsigned char css_image_margin_align(const char *style) {
+    bool left_auto = false, right_auto = false;
+    const char *p = style;
+    if (!p) return 0;
+    while (*p) {
+        while (*p == ';' || isspace((unsigned char)*p)) p++;
+        const char *name = p;
+        while (*p && *p != ':' && *p != ';') p++;
+        if (*p != ':') { while (*p && *p != ';') p++; continue; }
+        const char *name_end = p++;
+        while (name_end > name && isspace((unsigned char)name_end[-1])) name_end--;
+        const char *val = p;
+        while (*p && *p != ';') p++;
+        size_t nn = (size_t)(name_end - name), vn = (size_t)(p - val);
+
+        if (nn == 6 && !strncasecmp(name, "margin", 6)) {
+            /* margin: all | vertical horizontal | top horizontal bottom |
+             *         top right bottom left */
+            const char *tok[4];
+            size_t tok_len[4];
+            int count = 0;
+            const char *q = val, *end = val + vn;
+            while (q < end) {
+                while (q < end && isspace((unsigned char)*q)) q++;
+                if (q >= end) break;
+                const char *t = q;
+                while (q < end && !isspace((unsigned char)*q)) q++;
+                if (count < 4) { tok[count] = t; tok_len[count] = (size_t)(q - t); }
+                count++;
+            }
+            if (count < 1 || count > 4) continue;
+            int r = count == 1 ? 0 : 1;
+            int l = count == 4 ? 3 : r;
+            right_auto = css_value_eq(tok[r], tok_len[r], "auto");
+            left_auto = css_value_eq(tok[l], tok_len[l], "auto");
+        } else if (nn == 11 && !strncasecmp(name, "margin-left", 11)) {
+            left_auto = css_value_eq(val, vn, "auto");
+        } else if (nn == 12 && !strncasecmp(name, "margin-right", 12)) {
+            right_auto = css_value_eq(val, vn, "auto");
+        }
+    }
+    if (left_auto && right_auto) return 2;
+    if (left_auto) return 3;
+    return 0;
+}
+
 static int add_action(page_t *page, action_type_t type, int link_index,
                       int form_index, int field_index) {
     if (page->action_count >= MAX_ACTIONS) return -1;
@@ -1612,6 +1673,7 @@ static const html_tag_info_t g_html_tags[] = {
     {"article",    TF_BLOCKBOX}, {"main",    TF_BLOCKBOX}, {"header",  TF_BLOCKBOX},
     {"footer",     TF_BLOCKBOX}, {"nav",     TF_BLOCKBOX}, {"aside",   TF_BLOCKBOX},
     {"blockquote", TF_BLOCKBOX}, {"address", TF_BLOCKBOX},
+    {"center",     TF_BLOCKBOX},   /* obsolete, but still common: text-align:center */
     {"h1", TF_BLOCKBOX | TF_HEADING}, {"h2", TF_BLOCKBOX | TF_HEADING},
     {"h3", TF_BLOCKBOX | TF_HEADING}, {"h4", TF_BLOCKBOX | TF_HEADING},
     {"h5", TF_BLOCKBOX | TF_HEADING}, {"h6", TF_BLOCKBOX | TF_HEADING},
@@ -1763,6 +1825,17 @@ static bool parse_emit_push_markers(html_parser_t *ps, const char *tag, unsigned
         /* Phase 2A: compact text-style state; alignment only on block-like elements. */
         inline_style_t st = {0};
         if (has_style) st = parse_inline_text_style(style_value, (flags & TF_ALIGN) != 0);
+        /* Legacy alignment: <center> and align="left|center|right" on block
+         * elements and table cells.  style="text-align:..." wins. */
+        if ((flags & TF_ALIGN) && st.align == 0) {
+            if (!strcmp(tag, "center")) {
+                st.align = 2;
+            } else {
+                char align_value[16] = "";
+                if (tag_attribute(attributes, tag_end, "align", align_value, sizeof(align_value)) == 1)
+                    st.align = html_align_value(align_value);
+            }
+        }
         unsigned char f = 0;
         if (st.bold_set) f |= 0x80 | (st.bold ? 0x40 : 0);
         if (st.italic_set) f |= 0x20 | (st.italic ? 0x10 : 0);
@@ -2133,10 +2206,34 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
                 image->requested_height = parse_html_dimension(height_value);
 
                 if (image_index < display_inline_image_limit()) {
-                    char image_marker[32];
-                    snprintf(image_marker, sizeof(image_marker), "%c[[MBIMG%d]]",
-                             TEXT_IMAGE_MARK, image_index);
-                    sb_text(sb, image_marker);
+                    /* The image's own placement (align="left|center|right",
+                     * or style margin auto) wraps the marker in a style
+                     * push/pop.  Both are zero-width, so the line is still
+                     * an image line; the renderer reads the alignment from
+                     * the text state at the marker. */
+                    unsigned char img_align = 0;
+                    char img_style[192] = "";
+                    if (tag_attribute(attributes, tag_end, "style", img_style, sizeof(img_style)))
+                        img_align = css_image_margin_align(img_style);
+                    if (img_align == 0) {
+                        char align_value[16] = "";
+                        if (tag_attribute(attributes, tag_end, "align", align_value,
+                                          sizeof(align_value)) == 1)
+                            img_align = html_align_value(align_value);
+                    }
+
+                    char image_marker[48];
+                    size_t n = 0;
+                    if (img_align) {
+                        n += utf8_encode(TEXT_STYLE_START, image_marker + n);
+                        n += utf8_encode(TEXT_STYLE_NIBBLE, image_marker + n);
+                        n += utf8_encode(TEXT_STYLE_NIBBLE + img_align, image_marker + n);
+                    }
+                    n += (size_t)snprintf(image_marker + n, sizeof(image_marker) - n,
+                                          "%c[[MBIMG%d]]", TEXT_IMAGE_MARK, image_index);
+                    if (img_align)
+                        n += utf8_encode(TEXT_STYLE_POP, image_marker + n);
+                    sb_bytes(sb, image_marker, n);
                     sb_line_break(sb);
                 } else {
                     int action = add_action(page, ACTION_IMAGE, -1, -1, -1);
@@ -4863,6 +4960,28 @@ static void text_state_advance(text_state_t *st, const char *s, size_t len) {
     }
 }
 
+/*
+ * X position of an inline image on an image-marker line.  st is the state
+ * at the start of the line; markers on the line before the image record
+ * (the enclosing block's or the <img>'s own alignment) are applied to a
+ * copy, so st itself is not changed.
+ */
+static int image_line_x(const text_state_t *st, const char *line, int len, int draw_w) {
+    static text_state_t scratch;   /* large: keep it off the small app stack */
+    const int max_w = VIEW_W - 2 * PAD_LR;
+    if (!st || draw_w >= max_w) return PAD_LR;
+
+    scratch = *st;
+    const char *mark = memchr(line, TEXT_IMAGE_MARK, (size_t)len);
+    if (mark) text_state_advance(&scratch, line, (size_t)(mark - line));
+
+    switch (scratch.css.align) {
+        case 2:  return PAD_LR + (max_w - draw_w) / 2;
+        case 3:  return PAD_LR + max_w - draw_w;
+        default: return PAD_LR;
+    }
+}
+
 /* Draws s (which may contain several lines).  st carries formatting state
  * across calls; NULL starts from a clean state.  Returns the height used. */
 static int draw_text_ex(SDL_Renderer *r, int x, int y, const char *s, size_t L,
@@ -6123,7 +6242,7 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
                 draw_decoded_image(renderer,
                                    &page->images[image_index],
                                    &g_inline_images[image_index],
-                                   PAD_LR,
+                                   image_line_x(&state, p, len, draw_w),
                                    logical_y - slice_top,
                                    VIEW_W - 2 * PAD_LR,
                                    IMAGE_DRAW_MAX_H);
@@ -6727,10 +6846,15 @@ static void browser_render_page(browser_t *b) {
                 image_index < MAX_INLINE_IMAGES &&
                 image_index < b->page->image_count &&
                 g_inline_images[image_index].loaded) {
+                int draw_w = 0, draw_h = 0;
+                image_draw_size(&b->page->images[image_index],
+                                &g_inline_images[image_index],
+                                VIEW_W - 2 * PAD_LR, IMAGE_DRAW_MAX_H,
+                                &draw_w, &draw_h);
                 int image_h = draw_decoded_image(
                     ren, &b->page->images[image_index],
                     &g_inline_images[image_index],
-                    PAD_LR, y, VIEW_W - 2 * PAD_LR,
+                    image_line_x(&state, p, len, draw_w), y, VIEW_W - 2 * PAD_LR,
                     IMAGE_DRAW_MAX_H);
                 y += image_h + LINE_SPACING;
             } else {

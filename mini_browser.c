@@ -163,7 +163,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "3.0"
+#define MINI_BROWSER_VERSION "4.1-dev1"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -5662,6 +5662,313 @@ static int history_forward(char *out) {
 }
 
 
+/* ---------- 4.1 persistent history (visited pages) ----------
+ *
+ * Separate from the Back/Forward stack above: this is the "History" list a
+ * user browses (WHY+Y) and the source of omnibox suggestions.  Most recent
+ * first, one entry per URL, saved as "url<TAB>title" lines like bookmarks.
+ * Saving rewrites the file, so it happens every VISIT_SAVE_EVERY new visits
+ * and on exit instead of on every page load (flash wear, load time).
+ */
+#define VISIT_MAX         150
+#define VISIT_TITLE_MAX   96
+#define VISIT_SAVE_EVERY  5
+#define VISIT_FILE        "APPS:[mini_browser]history.txt"
+#define VISIT_TMP_FILE    "APPS:[mini_browser]history.tmp"
+
+typedef struct {
+    char url[URL_MAX];
+    char title[VISIT_TITLE_MAX];
+} visit_t;
+
+static visit_t g_visits[VISIT_MAX];   /* [0] = most recent */
+static int g_visit_count = 0;
+static int g_visit_unsaved = 0;
+/* Set by visit_record(); the main loop saves, never the page loader: file
+ * I/O deep inside browser_fetch() hung the app on the badge (small task
+ * stack).  The main loop is the shallowest point of the program. */
+static bool g_visit_save_due = false;
+
+static void visit_clean_field(char *s) {
+    for (; *s; s++)
+        if (*s == '\t' || *s == '\r' || *s == '\n') *s = ' ';
+}
+
+static bool visit_write_file(const char *path) {
+    FILE *file = fopen(path, "w");
+    if (!file) return false;
+    printf("[mini_browser] history: file opened\n");
+    bool ok = true;
+    /* fputs, not fprintf: far less stack, and nothing to format. */
+    for (int i = 0; i < g_visit_count && ok; i++) {
+        if (fputs(g_visits[i].url, file) < 0 || fputs("\t", file) < 0 ||
+            fputs(g_visits[i].title, file) < 0 || fputs("\n", file) < 0)
+            ok = false;
+    }
+    if (ferror(file)) ok = false;
+    if (fclose(file) != 0) ok = false;
+    printf("[mini_browser] history: file closed\n");
+    return ok;
+}
+
+__attribute__((noinline)) static void visit_save(void) {
+    /*
+     * Plain rewrite (no tmp file + rename): history is not precious, and
+     * every extra file operation is one more place to get stuck on the
+     * badge.  Each step is logged so a hang can be located from the serial
+     * log.  Like bookmark_save(), remove first: BadgeVMS fopen("w") does
+     * not always truncate.
+     */
+    g_visit_save_due = false;
+    printf("[mini_browser] history: saving %d entries\n", g_visit_count);
+    remove(VISIT_TMP_FILE);   /* left over from older builds */
+    remove(VISIT_FILE);
+    printf("[mini_browser] history: old file removed\n");
+    bool ok = visit_write_file(VISIT_FILE);
+    if (ok) {
+        g_visit_unsaved = 0;
+        printf("[mini_browser] history: saved %d entries\n", g_visit_count);
+    } else {
+        printf("[mini_browser] history: failed to save %s\n", VISIT_FILE);
+    }
+}
+
+__attribute__((noinline)) static void visit_load(void) {
+    FILE *file = fopen(VISIT_FILE, "r");
+    if (!file) {
+        printf("[mini_browser] history: none saved yet\n");
+        return;
+    }
+    static char line[URL_MAX + VISIT_TITLE_MAX + 8];
+    int r;
+    while (g_visit_count < VISIT_MAX && (r = bookmark_read_line(file, line, sizeof line)) != 0) {
+        if (r != 1) continue;                    /* over-long line: skip it */
+        char *tab = strchr(line, '\t');
+        if (tab) *tab = 0;
+        const char *title = tab ? tab + 1 : "";
+        if (!is_http_scheme(line) || strlen(line) >= URL_MAX) continue;
+        visit_t *v = &g_visits[g_visit_count++];
+        snprintf(v->url, sizeof v->url, "%.*s", URL_MAX - 1, line);
+        snprintf(v->title, sizeof v->title, "%s", title);
+    }
+    fclose(file);
+    printf("[mini_browser] history: loaded %d entries\n", g_visit_count);
+}
+
+/* Move url to the top of the history (adding it when new). */
+__attribute__((noinline)) static void visit_record(const char *url, const char *title) {
+    if (!url || !is_http_scheme(url) || strlen(url) >= URL_MAX) return;
+
+    int found = -1;
+    for (int i = 0; i < g_visit_count; i++) {
+        if (!strcmp(g_visits[i].url, url)) { found = i; break; }
+    }
+
+    static visit_t v;   /* static: keep it off the small app stack */
+    snprintf(v.url, sizeof v.url, "%s", url);
+    if (title && title[0])
+        snprintf(v.title, sizeof v.title, "%.*s", VISIT_TITLE_MAX - 1, title);
+    else if (found >= 0)
+        snprintf(v.title, sizeof v.title, "%s", g_visits[found].title);
+    else
+        v.title[0] = 0;
+    visit_clean_field(v.title);
+
+    int shift;
+    if (found >= 0) shift = found;                       /* entries above it */
+    else if (g_visit_count < VISIT_MAX) shift = g_visit_count++;
+    else shift = VISIT_MAX - 1;                          /* drop the oldest */
+    memmove(&g_visits[1], &g_visits[0], (size_t)shift * sizeof(visit_t));
+    g_visits[0] = v;
+
+    if (++g_visit_unsaved >= VISIT_SAVE_EVERY) g_visit_save_due = true;
+}
+
+static void visit_clear(void) {
+    g_visit_count = 0;
+    g_visit_unsaved = 0;
+    remove(VISIT_FILE);
+    printf("[mini_browser] history: cleared\n");
+}
+
+__attribute__((noinline)) static page_t *history_to_page(void) {
+    page_t *pg = (page_t *)calloc(1, sizeof(page_t));
+    if (!pg) return NULL;
+    snprintf(pg->base, URL_MAX, "history:");
+    snprintf(pg->title, sizeof(pg->title), "History");
+
+    size_t cap = 512 + (size_t)g_visit_count * (URL_MAX + VISIT_TITLE_MAX + 24);
+    char *text = (char *)malloc(cap);
+    if (!text) { free(pg); return NULL; }
+
+    size_t used = 0;
+    int n = snprintf(text, cap, "= HISTORY =\n\n");
+    if (n > 0) used = (size_t)n;
+
+    if (g_visit_count == 0) {
+        snprintf(text + used, cap - used,
+                 "No history yet.\n\nPages you visit appear here, most recent first.");
+        pg->text = text;
+        return pg;
+    }
+
+    n = snprintf(text + used, cap - used,
+                 "%d pages, most recent first. Type a number and Enter to open.\n"
+                 "WHY+Y returns to the page, WHY+X clears the history.\n\n",
+                 g_visit_count);
+    if (n > 0 && (size_t)n < cap - used) used += (size_t)n;
+
+    for (int i = 0; i < g_visit_count && i < MAX_LINKS; i++) {
+        visit_t *v = &g_visits[i];
+        long href_off = page_store_string(pg, v->url);
+        if (href_off < 0) break;
+        pg->links[pg->link_count].href = (uint32_t)href_off;
+        int link_index = pg->link_count++;
+        add_action(pg, ACTION_LINK, link_index, -1, -1);
+
+        n = snprintf(text + used, cap - used, "[%d] %s\n    %s\n\n",
+                     i + 1, v->title[0] ? v->title : "(no title)", v->url);
+        if (n < 0) break;
+        if ((size_t)n >= cap - used) { used = cap - 1; break; }
+        used += (size_t)n;
+    }
+    text[cap - 1] = 0;
+    pg->text = text;
+    return pg;
+}
+
+/* ---------- 4.1 omnibox: one bar for URLs and searches ---------- */
+#define SEARCH_URL_PREFIX "http://www.google.com/search?q="
+#define SUGGEST_MAX       5
+
+/* Case-insensitive substring test (no strcasestr in the BadgeVMS libc). */
+static bool ci_contains(const char *hay, const char *needle) {
+    size_t n = strlen(needle);
+    if (!n) return true;
+    for (; *hay; hay++)
+        if (!strncasecmp(hay, needle, n)) return true;
+    return false;
+}
+
+/* "https://example.org/x" -> "example.org/x"; other text unchanged. */
+static const char *omnibox_strip_scheme(const char *s) {
+    if (!strncasecmp(s, "https://", 8)) return s + 8;
+    if (!strncasecmp(s, "http://", 7)) return s + 7;
+    return s;
+}
+
+/* Does the text before the first '/', '?' or '#' look like a host name? */
+static bool omnibox_looks_like_host(const char *s) {
+    if (!*s) return false;
+    for (const char *p = s; *p; p++)
+        if (*p == ' ') return false;              /* words: a search */
+    size_t host_len = strcspn(s, "/?#");
+    if (host_len == 0) return false;
+    if (!strncasecmp(s, "localhost", 9) && (host_len == 9 || s[9] == ':')) return true;
+
+    int dots = 0;
+    bool all_numeric = true, has_port = false;
+    for (size_t i = 0; i < host_len; i++) {
+        char c = s[i];
+        if (c == '.') dots++;
+        else if (c == ':') { has_port = true; break; }
+        else if (!isdigit((unsigned char)c)) all_numeric = false;
+    }
+    if (dots == 0) return false;                  /* "esp32": a search */
+    if (all_numeric && dots != 3) return false;   /* "3.14": a search */
+    /* Last label must be non-empty: "foo." is not a host. */
+    size_t end = host_len;
+    if (has_port) end = strcspn(s, ":");
+    if (end == 0 || s[end - 1] == '.' || s[0] == '.') return false;
+    return true;
+}
+
+static void omnibox_url_encode(const char *in, char *out, size_t cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (; *in && o + 4 < cap; in++) {
+        unsigned char c = (unsigned char)*in;
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') out[o++] = (char)c;
+        else if (c == ' ') out[o++] = '+';
+        else { out[o++] = '%'; out[o++] = hex[c >> 4]; out[o++] = hex[c & 15]; }
+    }
+    out[o] = 0;
+}
+
+/*
+ * Turn what was typed in the omnibox into a URL.  Returns false when there
+ * is nothing to load (empty, or only the "https://" WHY+E seeds).
+ * *searched tells the caller whether it became a search.
+ */
+__attribute__((noinline)) static bool omnibox_resolve(const char *typed, char *out, size_t cap, bool *searched) {
+    static char s[URL_MAX];   /* static: 16 KB app stack */
+    snprintf(s, sizeof s, "%s", typed);
+    trim_inplace(s);
+    *searched = false;
+    if (!s[0]) return false;
+
+    const char *rest = omnibox_strip_scheme(s);
+    bool had_http = rest != s;
+    if (!had_http && has_scheme(s)) {             /* another scheme: leave it */
+        snprintf(out, cap, "%s", s);
+        return true;
+    }
+    if (!*rest) return false;
+
+    if (omnibox_looks_like_host(rest)) {
+        /* Local devices (localhost, a bare IPv4 address) rarely have TLS. */
+        size_t host_len = strcspn(rest, ":/?#");
+        bool local = !strncasecmp(rest, "localhost", 9) && host_len == 9;
+        if (!local) {
+            local = true;
+            for (size_t i = 0; i < host_len; i++)
+                if (!isdigit((unsigned char)rest[i]) && rest[i] != '.') { local = false; break; }
+        }
+        int n = had_http ? snprintf(out, cap, "%s", s)
+                         : snprintf(out, cap, "%s%s", local ? "http://" : "https://", rest);
+        return n > 0 && (size_t)n < cap;
+    }
+
+    static char q[URL_MAX * 3];
+    omnibox_url_encode(rest, q, sizeof q);
+    int n = snprintf(out, cap, "%s%s", SEARCH_URL_PREFIX, q);
+    if (n <= 0 || (size_t)n >= cap) return false;  /* query too long */
+    *searched = true;
+    return true;
+}
+
+typedef struct {
+    const char *url;
+    const char *title;
+    bool bookmark;
+} suggestion_t;
+
+/* Fill out[] with up to SUGGEST_MAX matches: bookmarks first, then history,
+ * matching the typed text (without its scheme) in the URL or the title. */
+__attribute__((noinline)) static int omnibox_suggest(const char *typed, suggestion_t *out) {
+    static char needle[URL_MAX];
+    snprintf(needle, sizeof needle, "%s", omnibox_strip_scheme(typed));
+    trim_inplace(needle);
+    if (strlen(needle) < 1) return 0;
+
+    int count = 0;
+    for (int i = 0; i < g_bookmark_count && count < SUGGEST_MAX; i++) {
+        const bookmark_t *bm = &g_bookmarks[i];
+        if (ci_contains(omnibox_strip_scheme(bm->url), needle) || ci_contains(bm->title, needle))
+            out[count++] = (suggestion_t){ bm->url, bm->title, true };
+    }
+    for (int i = 0; i < g_visit_count && count < SUGGEST_MAX; i++) {
+        const visit_t *v = &g_visits[i];
+        if (!ci_contains(omnibox_strip_scheme(v->url), needle) && !ci_contains(v->title, needle))
+            continue;
+        bool dup = false;
+        for (int k = 0; k < count; k++)
+            if (!strcmp(out[k].url, v->url)) { dup = true; break; }
+        if (!dup) out[count++] = (suggestion_t){ v->url, v->title, false };
+    }
+    return count;
+}
+
 /* ---------- Serial screenshot streaming ---------- */
 
 /*
@@ -6357,7 +6664,8 @@ typedef enum {
 typedef enum {
     VIEW_WEB,            /* an http(s) page or a message (error) page */
     VIEW_BOOKMARKS,      /* WHY+M */
-    VIEW_PAGE_INFO       /* WHY+I */
+    VIEW_PAGE_INFO,      /* WHY+I */
+    VIEW_HISTORY         /* WHY+Y */
 } view_kind_t;
 
 typedef struct {
@@ -6394,6 +6702,11 @@ typedef struct {
 
     char link_number_buf[8];
     int link_number_len;
+
+    /* Omnibox suggestions while editing the URL (bookmarks + history). */
+    suggestion_t sugg[SUGGEST_MAX];
+    int sugg_count;
+    int sugg_sel;               /* -1 = the typed text itself */
 
     char status_message[64];
     Uint64 status_message_until;
@@ -6505,6 +6818,42 @@ static void browser_reset_input(browser_t *b) {
     b->form_edit_field = -1;
     b->link_number_len = 0;
     b->link_number_buf[0] = 0;
+    b->sugg_count = 0;
+    b->sugg_sel = -1;
+}
+
+__attribute__((noinline)) static void browser_update_suggestions(browser_t *b) {
+    if (b->input != INPUT_URL) {
+        b->sugg_count = 0;
+        b->sugg_sel = -1;
+        return;
+    }
+    b->sugg_count = omnibox_suggest(b->url_buf, b->sugg);
+    if (b->sugg_sel >= b->sugg_count) b->sugg_sel = b->sugg_count - 1;
+}
+
+/* Enter in the omnibox: a chosen suggestion, a URL, or a search. */
+__attribute__((noinline)) static void browser_omnibox_go(browser_t *b) {
+    static char target[URL_MAX];   /* static: 16 KB app stack */
+    bool searched = false;
+    bool ok;
+    if (b->sugg_sel >= 0 && b->sugg_sel < b->sugg_count) {
+        snprintf(target, sizeof target, "%s", b->sugg[b->sugg_sel].url);
+        ok = true;
+        printf("[mini_browser] omnibox: suggestion -> %s\n", target);
+    } else {
+        ok = omnibox_resolve(b->url_buf, target, sizeof target, &searched);
+        if (ok && searched)
+            printf("[mini_browser] omnibox: search -> %s\n", target);
+    }
+    browser_reset_input(b);
+    if (!ok) {
+        /* Nothing to load (empty or only "https://"): back to the page. */
+        snprintf(b->url_buf, sizeof(b->url_buf), "%s", b->url_before_edit);
+        return;
+    }
+    snprintf(b->url_buf, sizeof(b->url_buf), "%s", target);
+    b->need_fetch = true;
 }
 
 static void browser_navigate(browser_t *b, const char *url) {
@@ -6598,6 +6947,7 @@ static void browser_fetch(browser_t *b) {
 #endif
     }
 
+    bool was_post = b->pending_post;
     int rc = fetch_url(b->url_buf, b->pending_post ? b->post_body : NULL, &m, &http_status);
 
     b->pending_post = false;
@@ -6690,6 +7040,7 @@ static void browser_fetch(browser_t *b) {
             browser_set_status(b, "Loaded", 1000);
 
             page_t *page = b->page;
+            if (!was_post) visit_record(b->url_buf, page->title);
             printf("[mini_browser] HTTP %ld, %u bytes, %d links from %s\n",
                    http_status, (unsigned)m.len, page->link_count, b->url_buf);
 
@@ -6720,7 +7071,7 @@ static void browser_fetch(browser_t *b) {
     free(m.buf);
 }
 
-static void browser_compose_bar(browser_t *b) {
+__attribute__((noinline)) static void browser_compose_bar(browser_t *b) {
     char *bar = b->barline;
     size_t cap = sizeof(b->barline);
     page_t *page = b->page;
@@ -6872,12 +7223,61 @@ static void browser_render_page(browser_t *b) {
     }
 }
 
-static void browser_render(browser_t *b) {
+/* Wrap s in a colour marker so draw_text() draws it in rgb. */
+static void colored_text(char *out, size_t cap, unsigned rgb, const char *s) {
+    char tmp[4 * 8];
+    size_t n = 0;
+    n += utf8_encode(TEXT_COLOR_START, tmp + n);
+    for (int i = 5; i >= 0; i--)
+        n += utf8_encode(TEXT_COLOR_NIBBLE + ((rgb >> (4 * i)) & 0x0F), tmp + n);
+    tmp[n] = 0;
+    char pop[4];
+    size_t pn = utf8_encode(TEXT_COLOR_POP, pop);
+    pop[pn] = 0;
+    snprintf(out, cap, "%s%s%s", tmp, s, pop);
+}
+
+/* Omnibox suggestion list, under the bar (WHY2025 style). */
+__attribute__((noinline)) static void browser_render_suggestions(browser_t *b) {
+    SDL_Renderer *ren = b->ren;
+    const int row_h = 2 * (CH_H + LINE_SPACING) + 8;
+    const int x = 4, w = VIEW_W - 8;
+    const int y0 = URLBAR_H + 4;
+    SDL_FRect panel = { (float)x, (float)y0, (float)w, (float)(b->sugg_count * row_h + 4) };
+    SDL_SetRenderDrawColor(ren, 0x11, 0x18, 0x26, 255);
+    SDL_RenderFillRect(ren, &panel);
+    SDL_SetRenderDrawColor(ren, 0x2A, 0x34, 0x46, 255);
+    SDL_RenderRect(ren, &panel);
+
+    static char line[URL_MAX + 160];   /* static: 16 KB app stack */
+    static char label[160];
+    for (int i = 0; i < b->sugg_count; i++) {
+        int y = y0 + 2 + i * row_h;
+        if (i == b->sugg_sel) {
+            SDL_FRect sel = { (float)(x + 2), (float)y, (float)(w - 4), (float)(row_h - 2) };
+            SDL_SetRenderDrawColor(ren, 0x18, 0x28, 0x3C, 255);
+            SDL_RenderFillRect(ren, &sel);
+            SDL_SetRenderDrawColor(ren, 0x64, 0xEF, 0xFE, 255);
+            SDL_RenderRect(ren, &sel);
+        }
+        snprintf(label, sizeof label, "%s %s", b->sugg[i].bookmark ? "*" : ">",
+                 b->sugg[i].title[0] ? b->sugg[i].title : omnibox_strip_scheme(b->sugg[i].url));
+        colored_text(line, sizeof line, b->sugg[i].bookmark ? 0xFFFB96 : 0xE5E7EB, label);
+        draw_text(ren, x + 10, y + 4, line, w - 20);
+        colored_text(line, sizeof line, 0x9CA3AF, omnibox_strip_scheme(b->sugg[i].url));
+        draw_text(ren, x + 10 + 2 * CH_W, y + 4 + CH_H + LINE_SPACING, line, w - 20 - 2 * CH_W);
+    }
+}
+
+__attribute__((noinline)) static void browser_render(browser_t *b) {
     browser_compose_bar(b);
 
     if (b->overlay == OVERLAY_IMAGE) draw_image_viewer(b->ren, &g_viewer_image);
     else if (b->overlay == OVERLAY_OPTIONS) browser_render_options(b);
     else browser_render_page(b);
+
+    if (b->input == INPUT_URL && b->sugg_count > 0 && b->overlay == OVERLAY_NONE)
+        browser_render_suggestions(b);
 
     if (b->full_screenshot_pending) {
         b->full_screenshot_pending = false;
@@ -6925,6 +7325,8 @@ static void browser_handle_text(browser_t *b, const char *t) {
         } else if (b->input == INPUT_URL) {
             browser_insert_char(b->url_buf, sizeof(b->url_buf), &b->url_cursor, (char)c);
             b->sel_action = -1;
+            b->sugg_sel = -1;
+            browser_update_suggestions(b);
         } else if (b->page && b->page->action_count > 0 && c >= '0' && c <= '9') {
             if (b->input != INPUT_LINK_NUMBER) {
                 b->input = INPUT_LINK_NUMBER;
@@ -7015,6 +7417,43 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
             b->url_cursor = strlen(b->url_buf);
             b->sel_action = -1;
             b->input = INPUT_URL;
+            break;
+
+        case SDL_SCANCODE_L:   /* omnibox, empty (Chrome: Ctrl+L) */
+            browser_reset_input(b);
+            snprintf(b->url_before_edit, sizeof(b->url_before_edit), "%s", b->url_buf);
+            b->url_buf[0] = 0;
+            b->url_cursor = 0;
+            b->sel_action = -1;
+            b->input = INPUT_URL;
+            break;
+
+        case SDL_SCANCODE_Y: { /* HISTORY */
+            if (b->view == VIEW_HISTORY) {
+                browser_return_from_local_page(b);
+            } else {
+                page_t *pg = history_to_page();
+                if (pg) {
+                    browser_show_local_page(b, pg, VIEW_HISTORY, "history:");
+                    b->last_http_status = 0;
+                    printf("[mini_browser] opened history: %d entries\n", g_visit_count);
+                    browser_log_content(b->content_wrapped);   /* for the regression suite */
+                }
+            }
+            break;
+        }
+
+        case SDL_SCANCODE_X:   /* clear history (only on the history page) */
+            if (b->view == VIEW_HISTORY) {
+                visit_clear();
+                page_t *pg = history_to_page();
+                if (pg) {
+                    char *wrapped = wrap_text(pg->text, k_max_cols);
+                    browser_set_page(b, pg);
+                    browser_set_content(b, wrapped);
+                }
+                browser_set_status(b, "HISTORY CLEARED", 1500);
+            }
             break;
 
         case SDL_SCANCODE_H:
@@ -7249,10 +7688,17 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
     /* Text editing in the URL bar or a form field. */
     if (b->input == INPUT_URL || b->input == INPUT_FORM) {
         bool url = b->input == INPUT_URL;
+        if (url && sc == SDL_SCANCODE_DOWN) {
+            if (b->sugg_sel < b->sugg_count - 1) b->sugg_sel++;
+            return;
+        }
+        if (url && sc == SDL_SCANCODE_UP) {
+            if (b->sugg_sel >= 0) b->sugg_sel--;
+            return;
+        }
         if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
             if (url) {
-                browser_reset_input(b);
-                b->need_fetch = true;
+                browser_omnibox_go(b);
             } else {
                 browser_commit_form_field(b);
             }
@@ -7267,7 +7713,13 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
         }
         if (browser_edit_key(url ? b->url_buf : b->form_edit_buf,
                              url ? &b->url_cursor : &b->form_edit_cursor, sc)) {
-            if (url) b->sel_action = -1;
+            if (url) {
+                b->sel_action = -1;
+                if (sc == SDL_SCANCODE_BACKSPACE || sc == SDL_SCANCODE_DELETE) {
+                    b->sugg_sel = -1;
+                    browser_update_suggestions(b);
+                }
+            }
         }
         return;
     }
@@ -7458,8 +7910,9 @@ int main(void) {
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
         printf("[mini_browser] curl_global_init failed\n");
 
-    /* Load persistent bookmarks from BadgeVMS storage. */
+    /* Load persistent bookmarks and history from BadgeVMS storage. */
     bookmark_load();
+    visit_load();
 
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
@@ -7482,6 +7935,11 @@ int main(void) {
     while (b->running) {
         if (b->need_fetch)
             browser_fetch(b);
+
+        /* History is saved here, at the top of the loop, never while a
+         * page is being loaded (see g_visit_save_due). */
+        if (g_visit_save_due)
+            visit_save();
 
         browser_clamp_scroll(b);
 
@@ -7507,6 +7965,7 @@ int main(void) {
     }
 
     SDL_StopTextInput(b->win);
+    if (g_visit_unsaved) visit_save();
     image_release_all();
     free_page(b->page);
     free(b->content_wrapped);

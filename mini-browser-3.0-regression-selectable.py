@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Configurable Mini Browser 3.0 / WHY2025 BadgeVMS full regression tester.
+Configurable Mini Browser 3.0 / 4.1 / WHY2025 BadgeVMS full regression tester.
 
 Edit only the CONFIG section for normal use.
 
@@ -14,7 +14,12 @@ Tests supported:
 - Verify Mini Browser 2.5 Phase 1 HTML/entity handling
 - Verify Mini Browser 2.5 Phase 2 parser torture/limits
 - Verify Mini Browser 2.6 Phase 1B bounded foreground colors
+- Verify Mini Browser 4.1 omnibox (search / URL / suggestions) and history
 - Print a PASS / NOT PASSED summary
+
+Viewing speed:
+    Every loaded page stays on screen for CONFIG["serial"]["view_delay"]
+    seconds so you can watch the badge.  --view N changes it, --fast sets 0.
 
 Serial keyboard protocol:
     E <scancode-hex> <down 0|1> <text-hex>
@@ -46,6 +51,25 @@ CONFIG = {
         "baudrate": 115200,
         "startup_delay": 2.0,
         "default_timeout": 1000,
+        # Seconds each loaded page stays visible before the next step.
+        # 0 = as fast as possible (the old behaviour). --view / --fast override.
+        "view_delay": 3.0,
+    },
+
+    # Mini Browser 4.1 omnibox + history tests.
+    "v41": {
+        # Pages on minibrowser.macip.net used to fill the history.
+        "history_pages": [
+            "phase1b-colors.html",
+            "phase5-info.php",
+        ],
+        # Page used for the suggestion test, and the text typed to find it.
+        "suggest_page": "phase2a-styles.html",
+        "suggest_typed": "phase2a",
+        "search_query": "esp32 badge",
+        # Destructive / app-restarting tests are opt-in.
+        "test_clear_history": False,   # WHY+X wipes your browsing history
+        "test_restart": False,         # quits Mini Browser and starts it again
     },
 
     # Mini Browser home page.
@@ -342,6 +366,7 @@ def detect_badge_device(explicit=None):
 DEVICE = detect_badge_device(CONFIG["serial"]["device"])
 BAUDRATE = CONFIG["serial"]["baudrate"]
 DEFAULT_TIMEOUT = CONFIG["serial"]["default_timeout"]
+VIEW_DELAY = CONFIG["serial"]["view_delay"]   # may be changed by --view/--fast
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +494,13 @@ class Badge:
     def settle(self, seconds=0.5):
         self.serial.flush()
         time.sleep(seconds)
+
+    def view(self, what="page"):
+        """Leave the current page on screen so a human can watch the run."""
+        if VIEW_DELAY > 0:
+            print(f"\n[VIEW] {what} on screen for {VIEW_DELAY:g}s", file=sys.stderr)
+            self.serial.flush()
+            time.sleep(VIEW_DELAY)
 
     def enter(self):
         self.press(0x28)
@@ -953,6 +985,7 @@ def activate_home_link(
     )
 
     badge.settle(1.0)
+    badge.view(f"home link [{action}]")
 
 
 def test_action_number_backspace(badge):
@@ -1074,6 +1107,7 @@ def open_direct_url(
             if wait_for_content:
                 badge.wait_for(r"^--- CONTENT END ---$", DEFAULT_TIMEOUT)
             badge.settle(1.0)
+            badge.view(url)
             return
 
         if transport_failure:
@@ -1145,6 +1179,7 @@ def perform_search(badge, config):
     )
 
     badge.settle(2.0)
+    badge.view(f"search results for {config['query']!r}")
 
     query = config["query"]
 
@@ -2150,6 +2185,7 @@ def phase4_open(badge, path, end_marker):
     )
     badge.wait_for(re.escape(end_marker), 15)
     badge.settle(0.5)
+    badge.view(path)
     return latest_content_block(badge)
 
 
@@ -2283,6 +2319,7 @@ def phase5_open(badge, path, end_marker):
     )
     badge.wait_for(re.escape(end_marker), 15)
     badge.settle(0.5)
+    badge.view(path)
     return latest_content_block(badge)
 
 
@@ -2362,6 +2399,293 @@ def phase5_return_from_info(badge):
         "Original page URL was restored",
         "Original page loaded successfully after return",
     ]
+
+
+
+# ---------------------------------------------------------------------------
+# MINI BROWSER 4.1: OMNIBOX + HISTORY
+# ---------------------------------------------------------------------------
+
+V41_SITE = "https://minibrowser.macip.net/"
+
+
+def v41_type_in_omnibox(badge, text, why_key="L"):
+    """WHY+L opens an empty omnibox (WHY+E seeds https://), then type text."""
+    badge.clear_log()
+    badge.why(why_key)
+    badge.settle(0.5)
+    badge.type_text(text)
+    badge.settle(0.4)
+
+
+def v41_open_page(badge, path, wait_content=True):
+    """Open a minibrowser.macip.net page through WHY+E (as the 3.0 tests do)."""
+    badge.clear_log()
+    badge.why("E")
+    badge.settle(0.5)
+    badge.type_text("minibrowser.macip.net/" + path)
+    badge.settle(0.2)
+    badge.enter()
+    badge.wait_for(
+        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path),
+        DEFAULT_TIMEOUT,
+    )
+    if wait_content:
+        badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.settle(0.8)
+    badge.view(path)
+
+
+def v41_open_history(badge):
+    """WHY+Y; returns (entry count, CONTENT lines of the history page)."""
+    badge.clear_log()
+    badge.why("Y")
+    line = badge.wait_for(r"\[mini_browser\] opened history: (\d+) entries", 15)
+    count = int(re.search(r"opened history: (\d+) entries", line).group(1))
+    badge.settle(0.5)
+    badge.view("history page")
+    return count, latest_content_block(badge)
+
+
+def v41_history_entries(content):
+    """[(number, title, url)] from the rendered history page, in order."""
+    entries = []
+    lines = [line.strip() for line in content]
+    for i, line in enumerate(lines):
+        m = re.match(r"^\[(\d+)\]\s*(.*)$", line)
+        if not m:
+            continue
+        url = ""
+        for probe in lines[i + 1:i + 4]:
+            if probe.startswith("http://") or probe.startswith("https://"):
+                url = probe
+                break
+        entries.append((int(m.group(1)), m.group(2), url))
+    return entries
+
+
+def v41_search_empty_bar(badge):
+    query = CONFIG["v41"]["search_query"]
+    encoded = re.escape(query.replace(" ", "+"))
+    v41_type_in_omnibox(badge, query, "L")
+    badge.enter()
+    badge.wait_for(
+        r"\[mini_browser\] omnibox: search -> http://www\.google\.com/search\?q=" + encoded,
+        15,
+    )
+    badge.wait_for(r"HTTP \d+.*google\.", DEFAULT_TIMEOUT)
+    badge.settle(1.5)
+    badge.view(f"search results for {query!r}")
+    return [
+        f"WHY+L opened an empty omnibox; typed {query!r}",
+        "Text without a host name became a Google search",
+        "Search request reached Google",
+    ]
+
+
+def v41_search_after_why_e(badge):
+    # WHY+E seeds "https://"; a single word without a dot must still search.
+    v41_type_in_omnibox(badge, "minibrowser", "E")
+    badge.enter()
+    badge.wait_for(
+        r"\[mini_browser\] omnibox: search -> http://www\.google\.com/search\?q=minibrowser$",
+        15,
+    )
+    badge.wait_for(r"HTTP \d+.*google\.", DEFAULT_TIMEOUT)
+    badge.settle(1.5)
+    badge.view("search results for 'minibrowser'")
+    return [
+        "WHY+E + 'minibrowser' (no dot) became a search",
+        "3.0 would have tried to load https://minibrowser and failed",
+    ]
+
+
+def v41_host_opens_https(badge):
+    path = CONFIG["v41"]["history_pages"][-1]
+    v41_type_in_omnibox(badge, "minibrowser.macip.net/" + path, "L")
+    badge.enter()
+    badge.wait_for(
+        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path),
+        DEFAULT_TIMEOUT,
+    )
+    badge.settle(1.0)
+    if any("omnibox: search" in line for line in badge.get_lines()):
+        raise RuntimeError("A host name was treated as a search")
+    badge.view(path)
+    return [
+        "WHY+L + host/path without scheme opened over https://",
+        "No search was triggered for a host name",
+    ]
+
+
+def v41_history_recorded(badge):
+    pages = CONFIG["v41"]["history_pages"]
+    for path in pages:
+        v41_open_page(badge, path)
+
+    count, content = v41_open_history(badge)
+    require_content(content, "= HISTORY =")
+    if count < len(pages):
+        raise RuntimeError(f"History has {count} entries, expected at least {len(pages)}")
+
+    entries = v41_history_entries(content)
+    if not entries:
+        raise RuntimeError("History page shows no numbered entries")
+
+    # Most recent first: the last page opened must be entry [1].
+    newest = entries[0]
+    if not newest[2].endswith(pages[-1]):
+        raise RuntimeError(f"Entry [1] is {newest[2]!r}, expected {V41_SITE + pages[-1]}")
+    previous = entries[1] if len(entries) > 1 else None
+    if not previous or not previous[2].endswith(pages[-2]):
+        raise RuntimeError(f"Entry [2] is {previous!r}, expected {V41_SITE + pages[-2]}")
+
+    badge.clear_log()
+    badge.why("Y")   # back to the page
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(pages[-1]), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    return [
+        f"Opened {len(pages)} pages, history shows {count} entries",
+        f"[1] {newest[1]} -> {newest[2]}",
+        f"[2] {previous[1]} -> {previous[2]}",
+        "WHY+Y again returned to the page",
+    ]
+
+
+def v41_history_open_entry(badge):
+    pages = CONFIG["v41"]["history_pages"]
+    for path in pages:
+        v41_open_page(badge, path)
+
+    count, content = v41_open_history(badge)
+    entries = v41_history_entries(content)
+    target = next((e for e in entries if e[2].endswith(pages[-2])), None)
+    if target is None:
+        raise RuntimeError(f"{pages[-2]} not found on the history page")
+
+    badge.clear_log()
+    badge.type_text(str(target[0]))
+    badge.settle(0.2)
+    badge.enter()
+    badge.wait_for(rf"activating link {target[0]}", 10)
+    badge.wait_for(
+        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(pages[-2]),
+        DEFAULT_TIMEOUT,
+    )
+    badge.settle(1.0)
+    badge.view(pages[-2])
+    return [
+        f"History entry [{target[0]}] {target[1]}",
+        f"Number + Enter reopened {pages[-2]}",
+    ]
+
+
+def v41_suggestion(badge):
+    page = CONFIG["v41"]["suggest_page"]
+    typed = CONFIG["v41"]["suggest_typed"]
+    v41_open_page(badge, page)
+
+    v41_type_in_omnibox(badge, typed, "L")
+    badge.view("omnibox suggestions")
+    badge.press(0x51)        # Down: first suggestion
+    badge.settle(0.6)
+    badge.view("first suggestion selected")
+    badge.enter()
+    badge.wait_for(
+        r"\[mini_browser\] omnibox: suggestion -> .*" + re.escape(page),
+        15,
+    )
+    badge.wait_for(
+        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(page),
+        DEFAULT_TIMEOUT,
+    )
+    badge.settle(1.0)
+    badge.view(page)
+    return [
+        f"Typed {typed!r}: suggestion list shown under the omnibox",
+        f"Down + Enter opened {page} from the suggestion",
+    ]
+
+
+def v41_omnibox_escape(badge):
+    page = CONFIG["v41"]["history_pages"][0]
+    v41_open_page(badge, page)
+    v41_type_in_omnibox(badge, "this text is never sent", "L")
+    badge.press(0x29)        # Esc
+    badge.settle(1.0)
+    lines = badge.get_lines()
+    if any("omnibox:" in line or "HTTP " in line for line in lines):
+        raise RuntimeError("Esc in the omnibox still loaded something")
+    # The page is still there: a reload must reload the same page.
+    badge.clear_log()
+    badge.why("R")
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(page), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    badge.view(page)
+    return [
+        "Esc closed the omnibox without loading anything",
+        f"WHY+R reloaded the original page {page}",
+    ]
+
+
+def v41_clear_history(badge):
+    page = CONFIG["v41"]["history_pages"][0]
+    v41_open_page(badge, page)
+    count, _ = v41_open_history(badge)
+    badge.clear_log()
+    badge.why("X")
+    badge.wait_for(r"\[mini_browser\] history: cleared", 10)
+    badge.settle(0.5)
+    badge.view("cleared history page")
+    # WHY+Y leaves the history page; open it again to read the new count.
+    badge.clear_log()
+    badge.why("Y")
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(page), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    count_after, content = v41_open_history(badge)
+    entries = v41_history_entries(content)
+    # Returning reloads the page, so it is the one and only new entry.
+    if count_after != 1 or not entries or not entries[0][2].endswith(page):
+        raise RuntimeError(f"Expected only {page} after WHY+X and one reload, found {count_after}: {entries}")
+    badge.why("Y")
+    return [f"WHY+X removed {count} entries", "History restarted with only the reloaded page"]
+
+
+def v41_restart_keeps_history(badge):
+    page = CONFIG["v41"]["history_pages"][0]
+    v41_open_page(badge, page)
+    badge.clear_log()
+    badge.why("Q")
+    badge.wait_for(r"\[mini_browser\] exit main", 20)
+    badge.settle(2.0)
+    badge.clear_log()
+    badge.enter()            # launcher: start Mini Browser again
+    line = badge.wait_for(r"\[mini_browser\] history: loaded (\d+) entries", 30)
+    loaded = int(re.search(r"loaded (\d+) entries", line).group(1))
+    badge.wait_for(CONFIG["home"]["url_pattern"], 60)
+    badge.settle(1.0)
+    count, content = v41_open_history(badge)
+    if not any(e[2].endswith(page) for e in v41_history_entries(content)):
+        raise RuntimeError(f"{page} missing from history after restart")
+    badge.why("Y")
+    return [f"History file loaded {loaded} entries at start", f"{page} survived the restart"]
+
+
+def v41_cases(badge):
+    cases = [
+        ("4.1 Omnibox: search from empty bar (WHY+L)", lambda: v41_search_empty_bar(badge)),
+        ("4.1 Omnibox: word without dot after WHY+E searches", lambda: v41_search_after_why_e(badge)),
+        ("4.1 Omnibox: host without scheme opens https", lambda: v41_host_opens_https(badge)),
+        ("4.1 Omnibox: Esc cancels without loading", lambda: v41_omnibox_escape(badge)),
+        ("4.1 History: pages recorded, newest first (WHY+Y)", lambda: v41_history_recorded(badge)),
+        ("4.1 History: open an entry by number", lambda: v41_history_open_entry(badge)),
+        ("4.1 Omnibox: suggestion from history (Down + Enter)", lambda: v41_suggestion(badge)),
+    ]
+    if CONFIG["v41"]["test_restart"]:
+        cases.append(("4.1 History: survives an app restart", lambda: v41_restart_keeps_history(badge)))
+    if CONFIG["v41"]["test_clear_history"]:
+        cases.append(("4.1 History: WHY+X clears the history", lambda: v41_clear_history(badge)))
+    return cases
 
 
 def show_final_result_page(badge, passed):
@@ -2473,23 +2797,29 @@ def test_catalog():
     names.extend(f"Website: {site['name']}" for site in CONFIG["sites"])
     names.extend(f"Search: {item['name']}" for item in CONFIG["searches"])
     names.extend(f"Badge command: {item['name']}" for item in CONFIG["badge_commands"])
+    names.extend(description for description, _ in v41_cases(None))
     return names
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Mini Browser 3.0 / WHY2025 BadgeVMS regression tester",
+        description="Mini Browser 3.0 / 4.1 / WHY2025 BadgeVMS regression tester",
         epilog=(
             "Examples:\n"
             "  %(prog)s                 Run all tests\n"
             "  %(prog)s --list          List tests and numbers\n"
             "  %(prog)s --test 30       Run only test 30\n"
             "  %(prog)s --test 30,31    Run tests 30 and 31\n"
-            "  %(prog)s --test 29-31    Run tests 29 through 31"
+            "  %(prog)s --test 29-31    Run tests 29 through 31\n"
+            "  %(prog)s --view 6        Keep every page 6 s on screen\n"
+            "  %(prog)s --fast          No viewing pauses"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--list", action="store_true", help="list all tests and exit")
     parser.add_argument("-t", "--test", metavar="N[,N|N-M...]", help="run only selected test number(s)")
+    parser.add_argument("--view", type=float, metavar="SECONDS",
+                        help=f"seconds each page stays on screen (default {CONFIG['serial']['view_delay']:g})")
+    parser.add_argument("--fast", action="store_true", help="no viewing pauses (same as --view 0)")
     return parser.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -2665,9 +2995,13 @@ def print_summary(results):
 # ---------------------------------------------------------------------------
 
 def main():
-    global SELECTED_TESTS
+    global SELECTED_TESTS, VIEW_DELAY
 
     args = parse_args()
+    if args.fast:
+        VIEW_DELAY = 0
+    elif args.view is not None:
+        VIEW_DELAY = max(0.0, args.view)
     catalog = test_catalog()
 
     if args.list:
@@ -2701,6 +3035,10 @@ def main():
     )
     print(
         f"Serial device: {DEVICE}",
+        file=sys.stderr,
+    )
+    print(
+        f"Viewing pause per page: {VIEW_DELAY:g}s",
         file=sys.stderr,
     )
 
@@ -2958,6 +3296,7 @@ def main():
                 )
 
                 badge.settle(0.8)
+                badge.view(f"after WHY+{command_config['command'].upper()}")
 
                 return [
                     (
@@ -2974,6 +3313,16 @@ def main():
                     f"{command_config['name']}"
                 ),
                 command_test,
+            )
+            number += 1
+
+        # Mini Browser 4.1: omnibox and history.
+        for description, test_func in v41_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
             )
             number += 1
 

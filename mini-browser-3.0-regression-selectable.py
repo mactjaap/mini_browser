@@ -15,6 +15,7 @@ Tests supported:
 - Verify Mini Browser 2.5 Phase 2 parser torture/limits
 - Verify Mini Browser 2.6 Phase 1B bounded foreground colors
 - Verify Mini Browser 4.1 omnibox (search / URL / suggestions) and history
+- Verify Mini Browser 4.1 tabs (new, switch, overview, close, limit)
 - Print a PASS / NOT PASSED summary
 
 Viewing speed:
@@ -501,6 +502,17 @@ class Badge:
             print(f"\n[VIEW] {what} on screen for {VIEW_DELAY:g}s", file=sys.stderr)
             self.serial.flush()
             time.sleep(VIEW_DELAY)
+
+    def why_key(self, scancode, text=0):
+        """WHY + any key by scancode (Tab = 0x2B, digit 1 = 0x1E, ...)."""
+        self.send_event(0xE3, True, 0)
+        time.sleep(0.15)
+        self.send_event(scancode, True, text)
+        time.sleep(0.15)
+        self.send_event(scancode, False, 0)
+        time.sleep(0.15)
+        self.send_event(0xE3, False, 0)
+        time.sleep(0.50)
 
     def enter(self):
         self.press(0x28)
@@ -2671,6 +2683,147 @@ def v41_restart_keeps_history(badge):
     return [f"History file loaded {loaded} entries at start", f"{page} survived the restart"]
 
 
+
+# ---------------------------------------------------------------------------
+# MINI BROWSER 4.1 PART 2: TABS
+# ---------------------------------------------------------------------------
+
+def tabs_reset_to_one(badge):
+    """Close extra tabs left by an earlier (failed) test: WHY+W until one is left."""
+    for _ in range(5):
+        badge.clear_log()
+        badge.why("W")
+        badge.settle(0.6)
+        lines = badge.get_lines()
+        if not any("tab: close" in line for line in lines):
+            break   # "LAST TAB": only one tab open
+
+
+def tabs_new_and_open(badge, path):
+    """WHY+T, then type a minibrowser.macip.net page in the new tab's omnibox."""
+    badge.clear_log()
+    badge.why("T")
+    line = badge.wait_for(r"\[mini_browser\] tab: new (\d+)/(\d+)", 10)
+    badge.wait_for(r"^--- CONTENT END ---$", 10)     # the new-tab page
+    content = latest_content_block(badge)
+    require_content(content, "= NEW TAB =")
+    badge.view("new tab page")
+    badge.type_text("minibrowser.macip.net/" + path)
+    badge.settle(0.3)
+    badge.enter()
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path), DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.settle(0.8)
+    badge.view(path)
+    m = re.search(r"tab: new (\d+)/(\d+)", line)
+    return int(m.group(1)), int(m.group(2))
+
+
+def tabs_new_tab(badge):
+    tabs_reset_to_one(badge)
+    v41_open_page(badge, CONFIG["v41"]["history_pages"][0])
+    pos, count = tabs_new_and_open(badge, CONFIG["v41"]["history_pages"][1])
+    if (pos, count) != (2, 2):
+        raise RuntimeError(f"Expected new tab 2/2, got {pos}/{count}")
+    return [
+        "WHY+T opened tab 2/2 with the new-tab page",
+        f"Omnibox in the new tab opened {CONFIG['v41']['history_pages'][1]}",
+    ]
+
+
+def tabs_switch_keeps_page(badge):
+    first, second = CONFIG["v41"]["history_pages"][0], CONFIG["v41"]["history_pages"][1]
+    tabs_reset_to_one(badge)
+    v41_open_page(badge, first)
+    tabs_new_and_open(badge, second)
+
+    # WHY+1: back to tab 1 without reloading it.
+    badge.clear_log()
+    badge.why_key(0x1E, ord("1"))
+    badge.wait_for(r"\[mini_browser\] tab: switch 1/2 url=https://minibrowser\.macip\.net/" + re.escape(first), 10)
+    badge.settle(1.5)
+    if any(re.search(r"HTTP 200.*" + re.escape(first), line) for line in badge.get_lines()):
+        raise RuntimeError("Switching tabs reloaded the page instead of keeping it")
+    badge.view(f"tab 1: {first}")
+
+    # WHY+Tab: next tab.
+    badge.clear_log()
+    badge.why_key(0x2B)
+    badge.wait_for(r"\[mini_browser\] tab: switch 2/2 url=https://minibrowser\.macip\.net/" + re.escape(second), 10)
+    badge.settle(0.8)
+    badge.view(f"tab 2: {second}")
+    tabs_reset_to_one(badge)
+    return [
+        "WHY+1 switched to tab 1 without a new page request",
+        "WHY+Tab switched to the next tab",
+    ]
+
+
+def tabs_overview_and_close(badge):
+    first, second = CONFIG["v41"]["history_pages"][0], CONFIG["v41"]["history_pages"][1]
+    tabs_reset_to_one(badge)
+    v41_open_page(badge, first)
+    tabs_new_and_open(badge, second)
+
+    badge.clear_log()
+    badge.why("A")
+    badge.wait_for(r"\[mini_browser\] tab: overview, 2 tabs, current 2", 10)
+    badge.settle(0.5)
+    badge.view("tab overview")
+    badge.press(0x52)        # Up: tab 1
+    badge.settle(0.3)
+    badge.enter()
+    badge.wait_for(r"\[mini_browser\] tab: switch 1/2", 10)
+    badge.settle(0.8)
+
+    badge.clear_log()
+    badge.why("W")           # close tab 1, tab 2 moves to the front
+    badge.wait_for(r"\[mini_browser\] tab: close 1/2 url=https://minibrowser\.macip\.net/" + re.escape(first), 10)
+    badge.settle(1.0)
+    badge.view(f"remaining tab: {second}")
+
+    badge.clear_log()
+    badge.why("W")           # last tab: must stay open
+    badge.settle(1.0)
+    if any("tab: close" in line for line in badge.get_lines()):
+        raise RuntimeError("WHY+W closed the last tab")
+    return [
+        "WHY+A showed the overview with 2 tabs",
+        "Up + Enter in the overview switched to tab 1",
+        "WHY+W closed tab 1; the other tab came to the front",
+        "WHY+W on the last tab was refused",
+    ]
+
+
+def tabs_limit(badge):
+    tabs_reset_to_one(badge)
+    for expected in range(2, 6):
+        badge.clear_log()
+        badge.why("T")
+        badge.wait_for(rf"\[mini_browser\] tab: new {expected}/{expected}", 10)
+        badge.settle(0.5)
+        badge.press(0x29)    # Esc: leave the omnibox of the new tab
+        badge.settle(0.3)
+    badge.clear_log()
+    badge.why("T")
+    badge.wait_for(r"\[mini_browser\] tab: new refused, 5 tabs open", 10)
+    badge.settle(0.5)
+    badge.why("A")
+    badge.settle(0.5)
+    badge.view("tab overview with 5 tabs")
+    badge.press(0x29)        # Esc: close the overview
+    tabs_reset_to_one(badge)
+    return ["Tabs 2..5 opened", "A sixth tab was refused", "Closed back to one tab"]
+
+
+def tabs_cases(badge):
+    return [
+        ("4.1 Tabs: WHY+T opens a new tab", lambda: tabs_new_tab(badge)),
+        ("4.1 Tabs: switching keeps the page (WHY+1, WHY+Tab)", lambda: tabs_switch_keeps_page(badge)),
+        ("4.1 Tabs: overview (WHY+A) and close (WHY+W)", lambda: tabs_overview_and_close(badge)),
+        ("4.1 Tabs: at most 5 tabs", lambda: tabs_limit(badge)),
+    ]
+
 def v41_cases(badge):
     cases = [
         ("4.1 Omnibox: search from empty bar (WHY+L)", lambda: v41_search_empty_bar(badge)),
@@ -2798,6 +2951,7 @@ def test_catalog():
     names.extend(f"Search: {item['name']}" for item in CONFIG["searches"])
     names.extend(f"Badge command: {item['name']}" for item in CONFIG["badge_commands"])
     names.extend(description for description, _ in v41_cases(None))
+    names.extend(description for description, _ in tabs_cases(None))
     return names
 
 def parse_args():
@@ -3318,6 +3472,16 @@ def main():
 
         # Mini Browser 4.1: omnibox and history.
         for description, test_func in v41_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 4.1 part 2: tabs.
+        for description, test_func in tabs_cases(badge):
             run_test(
                 results,
                 number,

@@ -163,7 +163,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.1-dev1"
+#define MINI_BROWSER_VERSION "4.1-dev2"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -6658,14 +6658,16 @@ typedef enum {
 typedef enum {
     OVERLAY_NONE,
     OVERLAY_OPTIONS,     /* WHY+O display mode menu */
-    OVERLAY_IMAGE        /* image viewer */
+    OVERLAY_IMAGE,       /* image viewer */
+    OVERLAY_TABS         /* WHY+A tab overview */
 } overlay_t;
 
 typedef enum {
     VIEW_WEB,            /* an http(s) page or a message (error) page */
     VIEW_BOOKMARKS,      /* WHY+M */
     VIEW_PAGE_INFO,      /* WHY+I */
-    VIEW_HISTORY         /* WHY+Y */
+    VIEW_HISTORY,        /* WHY+Y */
+    VIEW_NEWTAB          /* WHY+T: a new, empty tab */
 } view_kind_t;
 
 typedef struct {
@@ -6707,6 +6709,8 @@ typedef struct {
     suggestion_t sugg[SUGGEST_MAX];
     int sugg_count;
     int sugg_sel;               /* -1 = the typed text itself */
+
+    int tab_sel;                /* selected row in the tab overview */
 
     char status_message[64];
     Uint64 status_message_until;
@@ -6896,6 +6900,256 @@ static void browser_log_content(const char *wrapped) {
 #else
     (void)wrapped;
 #endif
+}
+
+/* ---------- 4.1 part 2: tabs ----------
+ *
+ * The active tab lives in browser_t and the globals, exactly as before
+ * tabs existed, so the rest of the browser does not know about tabs.
+ * g_tabs[] holds the saved state of every tab; the slot of the active tab
+ * is refreshed by tab_save() just before another tab becomes active.
+ * Background tabs keep their parsed page, wrapped text, scroll position,
+ * Back/Forward list and fetch metadata; their images are released and
+ * fetched again when the tab returns to the front.
+ */
+#define TAB_MAX 5
+
+typedef struct {
+    char url[URL_MAX];
+    page_t *page;
+    char *content_wrapped;
+    int content_lines;
+    int max_scroll;
+    int scroll_lines;
+    long last_http_status;
+    view_kind_t view;
+    char view_return_url[URL_MAX];
+    fetch_meta_t meta;
+    char hist[HISTORY_MAX][URL_MAX];
+    int hist_len;
+    int hist_pos;
+} tab_t;
+
+static tab_t g_tabs[TAB_MAX];
+static int g_tab_count = 1;
+static int g_tab_cur = 0;
+
+static const char *tab_title(const browser_t *b, int i) {
+    const page_t *pg = (i == g_tab_cur) ? b->page : g_tabs[i].page;
+    const char *url = (i == g_tab_cur) ? b->url_buf : g_tabs[i].url;
+    if (pg && pg->title[0]) return pg->title;
+    if (!strcmp(url, "newtab:")) return "New tab";
+    return url[0] ? omnibox_strip_scheme(url) : "(empty)";
+}
+
+static const char *tab_url(const browser_t *b, int i) {
+    return (i == g_tab_cur) ? b->url_buf : g_tabs[i].url;
+}
+
+/* Move the active tab's state out of the browser into g_tabs[i]. */
+__attribute__((noinline)) static void tab_save(browser_t *b, int i) {
+    tab_t *t = &g_tabs[i];
+    snprintf(t->url, sizeof t->url, "%s", b->url_buf);
+    t->page = b->page;
+    t->content_wrapped = b->content_wrapped;
+    t->content_lines = b->content_lines;
+    t->max_scroll = b->max_scroll;
+    t->scroll_lines = b->scroll_lines;
+    t->last_http_status = b->last_http_status;
+    t->view = b->view;
+    snprintf(t->view_return_url, sizeof t->view_return_url, "%s", b->view_return_url);
+    t->meta = g_fetch_meta;
+    memcpy(t->hist, g_hist, sizeof g_hist);
+    t->hist_len = g_hist_len;
+    t->hist_pos = g_hist_pos;
+
+    /* The browser no longer owns them: nothing may free them now. */
+    b->page = NULL;
+    b->content_wrapped = NULL;
+    for (int k = 0; k < MAX_INLINE_IMAGES; k++)
+        decoded_image_release(&g_inline_images[k]);
+    decoded_image_release(&g_viewer_image);
+    if (b->overlay == OVERLAY_IMAGE) b->overlay = OVERLAY_NONE;
+}
+
+/* Make g_tabs[i] the active tab. */
+__attribute__((noinline)) static void tab_load(browser_t *b, int i) {
+    tab_t *t = &g_tabs[i];
+    snprintf(b->url_buf, sizeof b->url_buf, "%s", t->url);
+    b->page = t->page;
+    b->content_wrapped = t->content_wrapped;
+    b->content_lines = t->content_lines;
+    b->max_scroll = t->max_scroll;
+    b->scroll_lines = t->scroll_lines;
+    b->last_http_status = t->last_http_status;
+    b->view = t->view;
+    snprintf(b->view_return_url, sizeof b->view_return_url, "%s", t->view_return_url);
+    g_fetch_meta = t->meta;
+    memcpy(g_hist, t->hist, sizeof g_hist);
+    g_hist_len = t->hist_len;
+    g_hist_pos = t->hist_pos;
+
+    t->page = NULL;               /* owned by the browser again */
+    t->content_wrapped = NULL;
+
+    browser_reset_input(b);
+    b->sel_action = -1;
+    b->scroll_cache_content = NULL;
+    g_tab_cur = i;
+
+    /* Images were released when this tab went to the background. */
+    if (b->page && b->view == VIEW_WEB && b->page->image_count > 0) {
+        load_page_images(b->page);
+        b->max_scroll = compute_max_scroll(b->page, b->content_wrapped, b->content_lines);
+    }
+    browser_clamp_scroll(b);
+    b->dirty = true;
+}
+
+static void tab_free_slot(tab_t *t) {
+    free_page(t->page);
+    free(t->content_wrapped);
+    memset(t, 0, sizeof *t);
+}
+
+/* "New tab" page: a short hint, bookmarks and recently visited pages. */
+__attribute__((noinline)) static page_t *newtab_to_page(void) {
+    page_t *pg = (page_t *)calloc(1, sizeof(page_t));
+    if (!pg) return NULL;
+    snprintf(pg->base, URL_MAX, "newtab:");
+    snprintf(pg->title, sizeof(pg->title), "New tab");
+
+    const int recent_max = 5;
+    size_t cap = 1024 + (size_t)(g_bookmark_count + recent_max) * (URL_MAX + 160);
+    char *text = (char *)malloc(cap);
+    if (!text) { free(pg); return NULL; }
+    size_t used = 0;
+
+#define NT_APPEND(...) do { \
+        int n_ = snprintf(text + used, cap - used, __VA_ARGS__); \
+        if (n_ > 0) used += ((size_t)n_ < cap - used) ? (size_t)n_ : cap - used - 1; \
+    } while (0)
+
+    NT_APPEND("= NEW TAB =\n\n"
+              "Type an address or search words in the bar and press Enter.\n"
+              "WHY+L opens the bar, WHY+A shows all tabs, WHY+W closes this tab.\n\n");
+
+    int number = 0;
+    NT_APPEND("Bookmarks\n\n");
+    if (g_bookmark_count == 0) NT_APPEND("No bookmarks yet (WHY+F on a page adds one).\n\n");
+    for (int i = 0; i < g_bookmark_count && pg->link_count < MAX_LINKS; i++) {
+        long off = page_store_string(pg, g_bookmarks[i].url);
+        if (off < 0) break;
+        pg->links[pg->link_count].href = (uint32_t)off;
+        add_action(pg, ACTION_LINK, pg->link_count++, -1, -1);
+        NT_APPEND("[%d] %s\n\n", ++number, g_bookmarks[i].title[0] ? g_bookmarks[i].title
+                                                                    : omnibox_strip_scheme(g_bookmarks[i].url));
+    }
+
+    NT_APPEND("Recently visited\n\n");
+    if (g_visit_count == 0) NT_APPEND("Nothing yet.\n");
+    for (int i = 0; i < g_visit_count && i < recent_max && pg->link_count < MAX_LINKS; i++) {
+        long off = page_store_string(pg, g_visits[i].url);
+        if (off < 0) break;
+        pg->links[pg->link_count].href = (uint32_t)off;
+        add_action(pg, ACTION_LINK, pg->link_count++, -1, -1);
+        NT_APPEND("[%d] %s\n\n", ++number, g_visits[i].title[0] ? g_visits[i].title
+                                                                 : omnibox_strip_scheme(g_visits[i].url));
+    }
+#undef NT_APPEND
+    text[cap - 1] = 0;
+    pg->text = text;
+    return pg;
+}
+
+/* Show the new-tab page in the (empty) active tab and open the omnibox. */
+static void tab_show_newtab_page(browser_t *b) {
+    page_t *pg = newtab_to_page();
+    if (pg) {
+        char *wrapped = wrap_text(pg->text, k_max_cols);
+        browser_set_page(b, pg);
+        browser_set_content(b, wrapped);
+    }
+    snprintf(b->url_buf, sizeof b->url_buf, "newtab:");
+    b->view = VIEW_NEWTAB;
+    b->view_return_url[0] = 0;
+    b->last_http_status = 0;
+    browser_log_content(b->content_wrapped);   /* for the regression suite */
+
+    browser_reset_input(b);
+    snprintf(b->url_before_edit, sizeof b->url_before_edit, "%s", b->url_buf);
+    b->url_buf[0] = 0;
+    b->url_cursor = 0;
+    b->input = INPUT_URL;
+}
+
+__attribute__((noinline)) static void tab_new(browser_t *b) {
+    if (g_tab_count >= TAB_MAX) {
+        browser_set_status(b, "MAXIMUM 5 TABS", 1500);
+        printf("[mini_browser] tab: new refused, %d tabs open\n", g_tab_count);
+        return;
+    }
+    b->overlay = OVERLAY_NONE;
+    tab_save(b, g_tab_cur);
+    int at = g_tab_cur + 1;              /* like Chrome: right of the current tab */
+    memmove(&g_tabs[at + 1], &g_tabs[at], (size_t)(g_tab_count - at) * sizeof(tab_t));
+    memset(&g_tabs[at], 0, sizeof(tab_t));
+    g_tab_count++;
+    g_tab_cur = at;
+
+    /* A fresh, empty tab. */
+    g_hist_len = 0;
+    g_hist_pos = -1;
+    memset(&g_fetch_meta, 0, sizeof g_fetch_meta);
+    b->content_lines = 0;
+    b->max_scroll = 0;
+    b->scroll_lines = 0;
+    b->sel_action = -1;
+    b->scroll_cache_content = NULL;
+    printf("[mini_browser] tab: new %d/%d\n", g_tab_cur + 1, g_tab_count);
+    tab_show_newtab_page(b);
+    b->dirty = true;
+}
+
+__attribute__((noinline)) static void tab_switch(browser_t *b, int i) {
+    if (i < 0 || i >= g_tab_count || i == g_tab_cur) return;
+    b->overlay = OVERLAY_NONE;
+    tab_save(b, g_tab_cur);
+    tab_load(b, i);
+    printf("[mini_browser] tab: switch %d/%d url=%s\n", g_tab_cur + 1, g_tab_count, b->url_buf);
+}
+
+/* Close tab i (the active one or a background one). */
+__attribute__((noinline)) static void tab_close(browser_t *b, int i) {
+    if (i < 0 || i >= g_tab_count) return;
+    if (g_tab_count == 1) {
+        browser_set_status(b, "LAST TAB - WHY+Q QUITS", 1500);
+        return;
+    }
+    printf("[mini_browser] tab: close %d/%d url=%s\n", i + 1, g_tab_count, tab_url(b, i));
+    if (i == g_tab_cur) {
+        /* Free the active tab's page through the browser, then promote a neighbour. */
+        browser_set_page(b, NULL);
+        free(b->content_wrapped);
+        b->content_wrapped = NULL;
+        memset(&g_tabs[i], 0, sizeof(tab_t));
+        memmove(&g_tabs[i], &g_tabs[i + 1], (size_t)(g_tab_count - i - 1) * sizeof(tab_t));
+        g_tab_count--;
+        memset(&g_tabs[g_tab_count], 0, sizeof(tab_t));
+        tab_load(b, i < g_tab_count ? i : g_tab_count - 1);
+    } else {
+        tab_free_slot(&g_tabs[i]);
+        memmove(&g_tabs[i], &g_tabs[i + 1], (size_t)(g_tab_count - i - 1) * sizeof(tab_t));
+        g_tab_count--;
+        memset(&g_tabs[g_tab_count], 0, sizeof(tab_t));
+        if (i < g_tab_cur) g_tab_cur--;
+    }
+    b->dirty = true;
+}
+
+static void tab_free_all_background(void) {
+    for (int i = 0; i < g_tab_count; i++)
+        if (i != g_tab_cur) tab_free_slot(&g_tabs[i]);
 }
 
 static void browser_fetch(browser_t *b) {
@@ -7114,8 +7368,12 @@ __attribute__((noinline)) static void browser_compose_bar(browser_t *b) {
         /*
          * Normal idle state: show the page title, not HTTP 200.
          * HTTP failures are already shown as readable page content.
+         * With several tabs open, "[2/3]" in front says which tab this is.
          */
-        snprintf(bar, cap, "%s", page->title);
+        if (g_tab_count > 1)
+            snprintf(bar, cap, "[%d/%d] %s", g_tab_cur + 1, g_tab_count, page->title);
+        else
+            snprintf(bar, cap, "%s", page->title);
     } else {
         snprintf(bar, cap, "%s", b->url_buf);
     }
@@ -7237,6 +7495,38 @@ static void colored_text(char *out, size_t cap, unsigned rgb, const char *s) {
     snprintf(out, cap, "%s%s%s", tmp, s, pop);
 }
 
+/* WHY+A tab overview (WHY2025 style). */
+__attribute__((noinline)) static void browser_render_tabs(browser_t *b) {
+    SDL_Renderer *ren = b->ren;
+    static char line[URL_MAX + 160];
+    static char label[200];
+    snprintf(label, sizeof label, "Tabs (%d of %d)", g_tab_count, TAB_MAX);
+    draw_ui(ren, label);
+
+    const int row_h = 2 * (CH_H + LINE_SPACING) + 12;
+    const int x = 8, w = VIEW_W - 16;
+    int y = PAD_TOP + 4;
+    for (int i = 0; i < g_tab_count; i++, y += row_h + 6) {
+        SDL_FRect box = { (float)x, (float)y, (float)w, (float)row_h };
+        SDL_SetRenderDrawColor(ren, i == b->tab_sel ? 0x18 : 0x11, i == b->tab_sel ? 0x28 : 0x18,
+                               i == b->tab_sel ? 0x3C : 0x26, 255);
+        SDL_RenderFillRect(ren, &box);
+        if (i == b->tab_sel) SDL_SetRenderDrawColor(ren, 0x64, 0xEF, 0xFE, 255);
+        else SDL_SetRenderDrawColor(ren, 0x2A, 0x34, 0x46, 255);
+        SDL_RenderRect(ren, &box);
+
+        snprintf(label, sizeof label, "%d%s %s", i + 1, i == g_tab_cur ? " *" : "  ", tab_title(b, i));
+        colored_text(line, sizeof line, i == g_tab_cur ? 0xFFFB96 : 0xE5E7EB, label);
+        draw_text(ren, x + 10, y + 6, line, w - 20);
+        colored_text(line, sizeof line, 0x9CA3AF, omnibox_strip_scheme(tab_url(b, i)));
+        draw_text(ren, x + 10 + 3 * CH_W, y + 6 + CH_H + LINE_SPACING, line, w - 20 - 3 * CH_W);
+    }
+    y += 8;
+    colored_text(line, sizeof line, 0x9CA3AF,
+                 "Up/Down select  Enter open  X close  Esc back  WHY+T new tab");
+    draw_text(ren, x + 4, y, line, w - 8);
+}
+
 /* Omnibox suggestion list, under the bar (WHY2025 style). */
 __attribute__((noinline)) static void browser_render_suggestions(browser_t *b) {
     SDL_Renderer *ren = b->ren;
@@ -7274,6 +7564,7 @@ __attribute__((noinline)) static void browser_render(browser_t *b) {
 
     if (b->overlay == OVERLAY_IMAGE) draw_image_viewer(b->ren, &g_viewer_image);
     else if (b->overlay == OVERLAY_OPTIONS) browser_render_options(b);
+    else if (b->overlay == OVERLAY_TABS) browser_render_tabs(b);
     else browser_render_page(b);
 
     if (b->input == INPUT_URL && b->sugg_count > 0 && b->overlay == OVERLAY_NONE)
@@ -7417,6 +7708,30 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
             b->url_cursor = strlen(b->url_buf);
             b->sel_action = -1;
             b->input = INPUT_URL;
+            break;
+
+        case SDL_SCANCODE_T:   /* new tab */
+            tab_new(b);
+            break;
+
+        case SDL_SCANCODE_W:   /* close tab */
+            tab_close(b, g_tab_cur);
+            break;
+
+        case SDL_SCANCODE_TAB: /* next tab */
+            if (g_tab_count > 1) tab_switch(b, (g_tab_cur + 1) % g_tab_count);
+            break;
+
+        case SDL_SCANCODE_A:   /* tab overview */
+            browser_reset_input(b);
+            b->tab_sel = g_tab_cur;
+            b->overlay = OVERLAY_TABS;
+            printf("[mini_browser] tab: overview, %d tabs, current %d\n", g_tab_count, g_tab_cur + 1);
+            break;
+
+        case SDL_SCANCODE_1: case SDL_SCANCODE_2: case SDL_SCANCODE_3:
+        case SDL_SCANCODE_4: case SDL_SCANCODE_5:   /* WHY+n: tab n */
+            tab_switch(b, (int)(sc - SDL_SCANCODE_1));
             break;
 
         case SDL_SCANCODE_L:   /* omnibox, empty (Chrome: Ctrl+L) */
@@ -7655,6 +7970,26 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
     /* Phase 3 Fix 15 options menu consumes ordinary 1/2/3/4/Escape. */
     if (b->overlay == OVERLAY_OPTIONS) {
         browser_handle_options_key(b, sc);
+        return;
+    }
+
+    /* Tab overview: Up/Down, Enter, digits, X/Delete closes, Esc. */
+    if (b->overlay == OVERLAY_TABS && sc != SC_ACCELERATOR && !b->accel_down) {
+        b->inhibit_text_once = true;
+        if (sc == SDL_SCANCODE_UP && b->tab_sel > 0) b->tab_sel--;
+        else if (sc == SDL_SCANCODE_DOWN && b->tab_sel < g_tab_count - 1) b->tab_sel++;
+        else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
+            b->overlay = OVERLAY_NONE;
+            tab_switch(b, b->tab_sel);
+        } else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_5) {
+            b->overlay = OVERLAY_NONE;
+            tab_switch(b, (int)(sc - SDL_SCANCODE_1));
+        } else if (sc == SDL_SCANCODE_X || sc == SDL_SCANCODE_DELETE || sc == SDL_SCANCODE_BACKSPACE) {
+            tab_close(b, b->tab_sel);
+            if (b->tab_sel >= g_tab_count) b->tab_sel = g_tab_count - 1;
+        } else if (sc == SDL_SCANCODE_ESCAPE) {
+            b->overlay = OVERLAY_NONE;
+        }
         return;
     }
 
@@ -7966,6 +8301,7 @@ int main(void) {
 
     SDL_StopTextInput(b->win);
     if (g_visit_unsaved) visit_save();
+    tab_free_all_background();
     image_release_all();
     free_page(b->page);
     free(b->content_wrapped);

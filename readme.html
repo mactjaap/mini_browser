@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mini Browser 3.0 - Documentation</title>
-  <meta name="description" content="Documentation for Mini Browser 3.0 on the WHY2025 badge">
+  <title>Mini Browser 4.1 - Documentation</title>
+  <meta name="description" content="Documentation for Mini Browser 4.1 on the WHY2025 badge">
 </head>
 <body>
 
-<h1>Mini Browser 3.0</h1>
+<h1>Mini Browser 4.1</h1>
 
 <p>
 Mini Browser is a compact, interactive web browser for the WHY2025 badge,
@@ -15,9 +15,15 @@ written in C using SDL3 and libcurl.
 </p>
 
 <p>
-Version 3.0 builds on the Unicode, forms, cookies and HTTP/TLS foundations of the 2.x
+Version 4.1 (in development, currently 4.1-dev1) is the first step towards a browser
+that feels more like a modern mobile browser while staying small. It adds an omnibox for
+addresses and searches with suggestions, and a persistent history of visited pages.
+</p>
+
+<p>
+Version 3.0 built on the Unicode, forms, cookies and HTTP/TLS foundations of the 2.x
 releases with PNG, JPEG and GIF image support, inline image rendering, image sizing and
-scaling, multiple display modes and fullscreen BadgeVMS operation. It retains the
+scaling, multiple display modes and fullscreen BadgeVMS operation. 4.1 retains the
 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering, contextual Arabic
 shaping, bookmarks, history, GET/POST forms, cookies and complete-page screenshots.
 </p>
@@ -191,6 +197,36 @@ images. This is a documented resource limitation for 3.0.
 <pre>
 </pre>
 
+<h2>Omnibox: addresses and searches (4.1)</h2>
+
+<p>
+Press WHY+L to open an empty address bar, like Ctrl+L in a desktop browser. Type a web
+address or a few words and press Enter:
+</p>
+
+<ul>
+  <li>A host name such as wiby.me or minibrowser.macip.net/readme.html opens over https.</li>
+  <li>A local address such as 192.168.1.10/status or localhost:8080 opens over http,
+      because devices on a local network rarely use TLS.</li>
+  <li>Text without a host name, such as esp32 badge or a single word, becomes a Google
+      search. The search uses http://www.google.com/search, which shows results directly
+      instead of the EU cookie-consent page that the https version shows.</li>
+</ul>
+
+<p>
+WHY+E still opens the bar with https:// already filled in, as before. A word without a dot
+typed after it, such as esp32, now also becomes a search instead of a failing address.
+</p>
+
+<p>
+While you type, up to five suggestions appear under the bar: bookmarks first (yellow,
+marked *), then visited pages, matching the address or the page title. Down and Up select a
+suggestion, Enter opens it, and Esc closes the bar and returns to the current page.
+</p>
+
+<pre>
+</pre>
+
 <h2>Navigation</h2>
 
 <p>
@@ -209,6 +245,7 @@ one-line scrolling.
 <h2>Browser shortcuts</h2>
 
 <ul>
+  <li>WHY+L - omnibox: type an address or a search (4.1)</li>
   <li>WHY+E - enter a new URL</li>
   <li>WHY+C - edit the current URL</li>
   <li>WHY+H - home</li>
@@ -217,6 +254,8 @@ one-line scrolling.
   <li>WHY+G - forward</li>
   <li>WHY+F - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
+  <li>WHY+Y - history of visited pages (4.1)</li>
+  <li>WHY+X - clear the history, on the history page (4.1)</li>
   <li>WHY+O - open display mode options</li>
   <li>WHY+S - capture and transmit the visible 716x716 viewport</li>
   <li>WHY+Z - capture and transmit the complete rendered page</li>
@@ -304,6 +343,18 @@ navigation, open configured websites, perform searches, exercise browser command
 automatically request and save screenshots after test steps. This provides repeatable
 regression testing without manually operating the badge for every page.
 </p>
+
+<p>
+The regression suite mini-browser-3.0-regression-selectable.py also covers the 4.1
+omnibox and history (tests 57-63). Each loaded page stays on screen for three seconds so
+the run can be followed on the badge; --view N changes the pause and --fast removes it.
+</p>
+
+<pre>
+./mini-browser-3.0-regression-selectable.py --list
+./mini-browser-3.0-regression-selectable.py --test 57-63
+./mini-browser-3.0-regression-selectable.py --fast
+</pre>
 
 <p>
 The custom firmware is optional for normal Mini Browser use and physical WHY+S
@@ -465,13 +516,27 @@ restarts.
 <h2>Bookmarks and history</h2>
 
 <p>
-Mini Browser stores up to 32 bookmarks and maintains up to 32 HTTP/HTTPS history
-entries. Going Back and then navigating somewhere new discards the old forward branch.
-Reloading does not create a duplicate history entry.
+Mini Browser stores up to 32 bookmarks and keeps up to 32 entries for Back and Forward.
+Going Back and then navigating somewhere new discards the old forward branch.
+Reloading does not create a duplicate Back/Forward entry.
+</p>
+
+<p>
+Since 4.1 Mini Browser also keeps a persistent history of visited pages: the last 150
+pages, newest first, each address once with its title. POST results are not recorded.
+Press WHY+Y to open the history page, type a number and press Enter to open a page, and
+press WHY+Y again to return. WHY+X on the history page clears the history.
+</p>
+
+<p>
+The history is saved every five new pages and when Mini Browser quits, so the last few
+pages can be missing after the badge is switched off without quitting the browser.
+Bookmarks and history are stored at:
 </p>
 
 <pre>
 APPS:[mini_browser]bookmarks.txt
+APPS:[mini_browser]history.txt
 </pre>
 
 <pre>
@@ -499,7 +564,9 @@ shown as readable browser pages.
   <li>form fields - 8 per form</li>
   <li>editable form value - 127 characters</li>
   <li>bookmarks - 32</li>
-  <li>history entries - 32</li>
+  <li>Back/Forward entries - 32</li>
+  <li>persistent history - 150 pages</li>
+  <li>omnibox suggestions - 5</li>
   <li>cookies - 12</li>
   <li>POST request body - 2048 bytes</li>
 </ul>
@@ -555,7 +622,7 @@ redistributing the generated font asset.
 <p><a href="https://minibrowser.macip.net/">Mini Browser project home</a></p>
 
 <hr>
-<p><b>Mini Browser 3.0</b> - WHY2025 BadgeVMS</p>
+<p><b>Mini Browser 4.1</b> (4.1-dev1) - WHY2025 BadgeVMS</p>
 <p><a href="/">Back to Mini Browser home</a></p>
 
 </body>

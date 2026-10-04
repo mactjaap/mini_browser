@@ -1,4 +1,4 @@
-# Mini Browser 3.0
+# Mini Browser 4.1
 
 ![Mini Browser logo Logo](Mini_Browser_Logo-small.jpg)
 
@@ -9,10 +9,15 @@ pages, converts them into readable text, extracts links and simple HTML
 forms, and provides a keyboard-driven browsing interface designed for
 the 720×720 WHY2025 badge display.
 
-Version **3.0** builds on the Unicode, forms, cookies and HTTP/TLS foundations
+Version **4.1** (in development, currently `4.1-dev1`) is the first step towards
+a browser that feels more like a modern mobile browser while staying small. It
+adds an omnibox for addresses and searches with suggestions, and a persistent
+history of visited pages.
+
+Version **3.0** built on the Unicode, forms, cookies and HTTP/TLS foundations
 of the 2.x releases with PNG, JPEG and GIF image support, inline image rendering,
 image sizing and scaling, multiple display modes and fullscreen BadgeVMS operation.
-It retains the 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering,
+4.1 retains the 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering,
 contextual Arabic shaping, bookmarks, history, GET/POST forms, cookies and
 complete-page screenshots.
 
@@ -28,6 +33,9 @@ lightweight and server-rendered websites.
 -   Up to 128 extracted links and 160 interactive actions
 -   Numbered navigation for links and form controls
 -   Editable action-number input with Backspace correction
+-   Omnibox (`WHY+L`): one bar for addresses and Google searches, with
+    suggestions from bookmarks and history while typing (4.1)
+-   Persistent history of the last 150 visited pages (`WHY+Y`) (4.1)
 -   Back and Forward browsing history
 -   Persistent bookmarks
 -   Bounded in-memory session cookie jar
@@ -177,6 +185,29 @@ Comments, doctypes, scripts, styles and document head content are
 ignored for normal page rendering. The page `<title>` is extracted for
 the top bar.
 
+## Omnibox: addresses and searches (4.1)
+
+Press `WHY+L` to open an empty address bar, like Ctrl+L in a desktop browser.
+Type a web address or a few words and press Enter:
+
+-   A host name such as `wiby.me` or `minibrowser.macip.net/readme.html` opens
+    over https.
+-   A local address such as `192.168.1.10/status` or `localhost:8080` opens
+    over http, because devices on a local network rarely use TLS.
+-   Text without a host name, such as `esp32 badge` or a single word, becomes a
+    Google search. The search uses `http://www.google.com/search`, which shows
+    results directly instead of the EU cookie-consent page that the https
+    version shows.
+
+`WHY+E` still opens the bar with `https://` already filled in, as before. A
+word without a dot typed after it, such as `esp32`, now also becomes a search
+instead of a failing address.
+
+While you type, up to five suggestions appear under the bar: bookmarks first
+(yellow, marked `*`), then visited pages, matching the address or the page
+title. `Down`/`Up` select a suggestion, `Enter` opens it, and `Esc` closes the
+bar and returns to the current page.
+
 ## Navigation
 
 Every usable link or visible form control receives an action number.
@@ -188,7 +219,8 @@ Type the number and press Enter to activate it.
   ------------------ ------------------------------------------------
   `0`--`9` + Enter   Activate a numbered link or form action
   `Enter`            Activate / accept editing
-  `Up` / `Down`      Scroll one line; hold for continuous scrolling
+  `Up` / `Down`      Scroll one line; hold for continuous scrolling;
+                     select a suggestion in the omnibox
   `J` / `K`          Scroll down / up one line
   `Left` / `Right`   Move cursor while editing
   `Backspace`        Delete while editing
@@ -197,6 +229,7 @@ The WHY2025 key acts as the browser accelerator:
 
   Shortcut   Action
   ---------- -------------------------------------------------
+  `WHY+L`    Omnibox: type an address or a search (4.1)
   `WHY+E`    Enter a new URL
   `WHY+C`    Edit the current URL
   `WHY+H`    Home
@@ -205,6 +238,8 @@ The WHY2025 key acts as the browser accelerator:
   `WHY+G`    Forward
   `WHY+F`    Add/remove current bookmark
   `WHY+M`    Open bookmarks
+  `WHY+Y`    Open the history of visited pages (4.1)
+  `WHY+X`    Clear the history, on the history page (4.1)
   `WHY+O`    Open display mode options
   `WHY+S`    Capture and transmit the visible viewport
   `WHY+Z`    Capture and transmit the complete rendered page
@@ -310,6 +345,17 @@ scripts. These can drive browser navigation, open configured websites,
 perform searches, exercise browser commands and automatically request
 and save screenshots after test steps. This is useful for repeatable
 regression testing without manually operating the badge for every page.
+
+The regression suite `mini-browser-3.0-regression-selectable.py` also
+covers the 4.1 omnibox and history (tests 57-63). Each loaded page stays on
+screen for three seconds so the run can be followed on the badge; `--view N`
+changes the pause and `--fast` removes it:
+
+``` sh
+./mini-browser-3.0-regression-selectable.py --list
+./mini-browser-3.0-regression-selectable.py --test 57-63
+./mini-browser-3.0-regression-selectable.py --fast
+```
 
 The custom firmware is optional for normal Mini Browser use and for
 screenshots triggered physically with `WHY+S`. It is required when the
@@ -435,17 +481,28 @@ kept only in memory and are not persisted across browser restarts.
 
 ## Bookmarks and history
 
-Mini Browser stores up to 32 bookmarks and keeps up to 32 HTTP/HTTPS
-history entries.
+Mini Browser stores up to 32 bookmarks and keeps up to 32 entries for
+Back and Forward.
 
 `WHY+B` moves backward and `WHY+G` moves forward. Navigating to a new
 page after going Back truncates the old forward branch. Reloading does
-not create a duplicate history entry, and GET and POST form submissions
-participate in the same history.
+not create a duplicate Back/Forward entry, and GET and POST form
+submissions participate in the same Back/Forward list.
 
-Bookmark data is stored at:
+Since 4.1 Mini Browser also keeps a persistent history of visited pages:
+the last 150 pages, newest first, each address once with its title. POST
+results are not recorded. Press `WHY+Y` to open the history page, type a
+number and press Enter to open a page, and press `WHY+Y` again to return.
+`WHY+X` on the history page clears the history.
+
+The history is saved every five new pages and when Mini Browser quits, so
+the last few pages can be missing after the badge is switched off without
+quitting the browser.
+
+Bookmarks and history are stored at:
 
     APPS:[mini_browser]bookmarks.txt
+    APPS:[mini_browser]history.txt
 
 ## Networking
 
@@ -469,7 +526,9 @@ shown as readable browser pages.
   Fields per form                       8
   Editable form value      127 characters
   Bookmarks                            32
-  History entries                      32
+  Back/Forward entries                 32
+  Persistent history            150 pages
+  Omnibox suggestions                   5
   Cookies                              12
   POST request body              2048 bytes
 
@@ -554,7 +613,12 @@ Home page:
 
 ## Version
 
-**Mini Browser 3.0**
+**Mini Browser 4.1** (development version `4.1-dev1`)
+
+Version 4.1-dev1 adds the omnibox (`WHY+L`) with Google search and
+suggestions, and a persistent history of visited pages (`WHY+Y`, `WHY+X`).
+Tabs, a toolbar and menu, a new tab page and a settings page are planned for
+the next 4.1 development steps.
 
 Version 3.0 adds PNG, JPEG and GIF image rendering, inline images, image sizing
 and scaling, multiple display modes and fullscreen BadgeVMS operation while

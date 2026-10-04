@@ -29,6 +29,12 @@ word-aware wrapping, RTL/Bidi text, Arabic shaping, monochrome emoji, real bold 
 HTTP/TLS page information and full-page screenshots.
 </p>
 
+<p>
+Mini Browser 4.1 is in development (4.1-dev1). It adds an omnibox: one bar for web
+addresses and searches, with suggestions from your bookmarks and history while you type.
+Visited pages are now kept in a persistent history that survives a restart.
+</p>
+
 <pre>
 </pre>
 
@@ -50,7 +56,7 @@ for Mini Browser.
 
 <h2>Search with Google</h2>
 
-<form action="https://www.google.com/search" method="get">
+<form action="http://www.google.com/search" method="get">
 
   <input type="search" name="q" value="">
 
@@ -95,12 +101,20 @@ Use Up and Down to scroll; hold an arrow for continuous scrolling.
 J and K also scroll one line at a time.
 </p>
 
+<p>
+Press WHY+L and type a web address or just some words. An address such as wiby.me
+opens directly; words such as esp32 badge become a Google search. While you type,
+matching bookmarks and visited pages appear under the bar: use Down and Up to pick one
+and Enter to open it, or Esc to cancel.
+</p>
+
 <pre>
 </pre>
 
 <h2>Browser keys</h2>
 
 <ul>
+  <li>WHY+L - omnibox: type an address or a search</li>
   <li>WHY+E - enter a new URL</li>
   <li>WHY+C - edit the current URL</li>
   <li>WHY+H - home</li>
@@ -110,6 +124,8 @@ J and K also scroll one line at a time.
   <li>WHY+I - page information</li>
   <li>WHY+F - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
+  <li>WHY+Y - history of visited pages</li>
+  <li>WHY+X - clear the history (on the history page)</li>
   <li>WHY+O - display mode options</li>
   <li>WHY+S - capture the visible 716x716 viewport</li>
   <li>WHY+Z - capture the complete rendered page</li>

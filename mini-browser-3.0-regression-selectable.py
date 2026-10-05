@@ -58,6 +58,18 @@ CONFIG = {
     },
 
     # Mini Browser 4.1 omnibox + history tests.
+    "v43": {
+        # Slow URL for the stop test: the server waits this long before it
+        # answers, so Esc arrives while the browser is still waiting.
+        "slow_url": "httpbin.org/delay/10",
+        # Compressed response for the gzip test (Content-Encoding: gzip).
+        "gzip_url": "httpbin.org/gzip",
+        # A host name that never resolves (.invalid is reserved, RFC 2606).
+        "bad_host": "nonexistent.invalid",
+        # A page that does not exist on minibrowser.macip.net.
+        "missing_page": "this-page-does-not-exist-43.html",
+    },
+
     "v41": {
         # Pages on minibrowser.macip.net used to fill the history.
         "history_pages": [
@@ -1103,7 +1115,9 @@ def open_direct_url(
                     transport_failure = "compositor rejected an injected event"
                     break
 
-                if "[mini_browser] fetch error 6 URL=" in line:
+                # 4.3 firmware reports DNS failures as curl 5 (resolve
+                # host); older firmware as 6 (connect).
+                if re.search(r"\[mini_browser\] fetch error [56] URL=", line):
                     transport_failure = f"URL/DNS failure after keyboard entry: {line}"
                     break
 
@@ -2824,6 +2838,137 @@ def tabs_cases(badge):
         ("4.1 Tabs: at most 5 tabs", lambda: tabs_limit(badge)),
     ]
 
+
+# ---------------------------------------------------------------------------
+# MINI BROWSER 4.3 PART 1: LOADING LINE, STOP, ERROR PAGES, BACK/FORWARD CACHE
+# (needs BadgeVMS 4.3 firmware for stop, gzip and the precise error codes)
+# ---------------------------------------------------------------------------
+
+def v43_bfcache(badge):
+    first, second = CONFIG["v41"]["history_pages"][:2]
+    v41_open_page(badge, first)
+    v41_open_page(badge, second)
+
+    badge.clear_log()
+    badge.why("B")
+    badge.wait_for(r"\[mini_browser\] bfcache: hit https://minibrowser\.macip\.net/" + re.escape(first), 15)
+    line = badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(first), 10)
+    badge.wait_for(r"^--- CONTENT END ---$", 10)
+    if "(bfcache)" not in line:
+        raise RuntimeError("Back loaded the page from the network instead of the cache")
+    badge.settle(0.8)
+    badge.view(first + " (from the cache)")
+
+    badge.clear_log()
+    badge.why("G")
+    badge.wait_for(r"\[mini_browser\] bfcache: hit https://minibrowser\.macip\.net/" + re.escape(second), 15)
+    badge.wait_for(r"^--- CONTENT END ---$", 10)
+    badge.settle(0.8)
+    badge.view(second + " (from the cache)")
+
+    # Reload always uses the network.
+    badge.clear_log()
+    badge.why("R")
+    line = badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(second), DEFAULT_TIMEOUT)
+    if "(bfcache)" in line:
+        raise RuntimeError("WHY+R showed the cached page instead of reloading it")
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.settle(0.8)
+    return [f"WHY+B showed {first} from the cache", f"WHY+G showed {second} from the cache",
+            "WHY+R reloaded from the network"]
+
+
+def v43_stop(badge):
+    page = CONFIG["v41"]["history_pages"][0]
+    v41_open_page(badge, page)
+    v41_type_in_omnibox(badge, CONFIG["v43"]["slow_url"], "L")
+    badge.enter()
+    badge.settle(3.0)                 # connected, waiting for the slow answer
+    badge.view("loading line")
+    badge.press(0x29)                 # Esc
+    badge.wait_for(r"\[mini_browser\] stop: Esc pressed", 10)
+    badge.wait_for(r"\[mini_browser\] stop: nothing received, staying on https://minibrowser\.macip\.net/"
+                   + re.escape(page), 10)
+    badge.settle(1.0)
+    lines = badge.get_lines()
+    if any(re.search(r"HTTP \d+.*httpbin", line) for line in lines):
+        raise RuntimeError("The slow page was shown although the load was stopped")
+    badge.view("page kept after stop")
+    # The address went back to the page that is still shown.
+    badge.clear_log()
+    badge.why("R")
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(page), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    return ["Esc stopped the slow load", f"{page} stayed on screen", "WHY+R reloaded that page"]
+
+
+def v43_error_dns(badge):
+    host = CONFIG["v43"]["bad_host"]
+    v41_type_in_omnibox(badge, host, "L")
+    badge.enter()
+    line = badge.wait_for(r"\[mini_browser\] fetch error (\d+) URL='https://" + re.escape(host), DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 10)
+    content = latest_content_block(badge)
+    require_content(content, "This site can't be reached", "Press R or Enter to reload")
+    code = re.search(r"fetch error (\d+)", line).group(1)
+    joined = "\n".join(content)
+    name = "ERR_NAME_NOT_RESOLVED" if "ERR_NAME_NOT_RESOLVED" in joined else "other error code"
+    badge.settle(0.8)
+    badge.view("DNS error page")
+
+    # R (no WHY) on an error page loads the address again.
+    badge.clear_log()
+    badge.press(0x15, ord("r"))
+    badge.wait_for(r"\[mini_browser\] error page: reload https://" + re.escape(host), 10)
+    badge.wait_for(r"\[mini_browser\] fetch error \d+ URL='https://" + re.escape(host), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    result = [f"curl {code}: {name}", "R reloaded the failed address"]
+    if code != "5":
+        result.append("(curl 5 needs BadgeVMS 4.3 firmware)")
+    return result
+
+
+def v43_error_404(badge):
+    path = CONFIG["v43"]["missing_page"]
+    badge.clear_log()
+    badge.why("E")
+    badge.settle(0.5)
+    badge.type_text("minibrowser.macip.net/" + path)
+    badge.settle(0.2)
+    badge.enter()
+    badge.wait_for(r"\[mini_browser\] HTTP 404 URL='https://minibrowser\.macip\.net/" + re.escape(path), DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 10)
+    content = latest_content_block(badge)
+    require_content(content, "This page can't be found", "HTTP ERROR 404")
+    badge.settle(0.8)
+    badge.view("404 page")
+    return ["HTTP 404 shown as 'This page can't be found'"]
+
+
+def v43_gzip(badge):
+    url = CONFIG["v43"]["gzip_url"]
+    v41_type_in_omnibox(badge, url, "L")
+    badge.enter()
+    line = badge.wait_for(r"\[mini_browser\] net: (\d+) bytes received, (\d+) bytes after decoding", DEFAULT_TIMEOUT)
+    badge.wait_for(r"HTTP 200.*https://" + re.escape(url), DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 15)
+    content = latest_content_block(badge)
+    require_content(content, "gzipped")
+    m = re.search(r"net: (\d+) bytes received, (\d+) bytes after decoding", line)
+    badge.settle(0.8)
+    badge.view("decoded gzip response")
+    return [f"{m.group(1)} compressed bytes decoded to {m.group(2)} bytes"]
+
+
+def v43_cases(badge):
+    return [
+        ("4.3 Back/Forward from the page cache, reload from the network", lambda: v43_bfcache(badge)),
+        ("4.3 Esc stops a slow page, the old page stays", lambda: v43_stop(badge)),
+        ("4.3 Error page: name not resolved, R reloads", lambda: v43_error_dns(badge)),
+        ("4.3 Error page: HTTP 404", lambda: v43_error_404(badge)),
+        ("4.3 gzip: compressed response decoded", lambda: v43_gzip(badge)),
+    ]
+
 def v41_cases(badge):
     cases = [
         ("4.1 Omnibox: search from empty bar (WHY+L)", lambda: v41_search_empty_bar(badge)),
@@ -2952,11 +3097,12 @@ def test_catalog():
     names.extend(f"Badge command: {item['name']}" for item in CONFIG["badge_commands"])
     names.extend(description for description, _ in v41_cases(None))
     names.extend(description for description, _ in tabs_cases(None))
+    names.extend(description for description, _ in v43_cases(None))
     return names
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Mini Browser 3.0 / 4.1 / WHY2025 BadgeVMS regression tester",
+        description="Mini Browser 3.0 / 4.1 / 4.3 / WHY2025 BadgeVMS regression tester",
         epilog=(
             "Examples:\n"
             "  %(prog)s                 Run all tests\n"
@@ -3482,6 +3628,16 @@ def main():
 
         # Mini Browser 4.1 part 2: tabs.
         for description, test_func in tabs_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 4.3 part 1: stop, error pages, back/forward cache, gzip.
+        for description, test_func in v43_cases(badge):
             run_test(
                 results,
                 number,

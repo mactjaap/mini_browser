@@ -163,7 +163,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.1-dev2"
+#define MINI_BROWSER_VERSION "4.3-dev1"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -2276,7 +2276,7 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
     }
 }
 
-static page_t *html_to_page(const char *html, const char *base_url) {
+__attribute__((noinline)) static page_t *html_to_page(const char *html, const char *base_url) {
     if (!html) return NULL;
     size_t length = strlen(html);
     page_t *page = (page_t*)calloc(1, sizeof(page_t));
@@ -3320,12 +3320,86 @@ static size_t cookie_header_cb(char *buffer, size_t size,
 
 /*
  * Note: BadgeVMS ships a small curl emulation on top of esp_http_client.
- * Only the options listed in its curl.h exist, the CURLOPT_* names are enum
- * values (so "#ifdef CURLOPT_X" is always false), and the write-callback
- * return value is ignored.  Everything below uses only that subset.
+ * Only the options listed in its curl.h exist and the CURLOPT_* names are
+ * enum values (so "#ifdef CURLOPT_X" is always false).
+ *
+ * 4.3: BadgeVMS 4.3 firmware adds what a browser needs: the write callback
+ * can stop a transfer, CURLOPT_XFERINFOFUNCTION reports progress (and stops
+ * on request), gzip/deflate bodies are decoded (CURLOPT_ACCEPT_ENCODING) and
+ * a handle keeps its connection open for the next request to the same host.
+ * The browser therefore uses one curl handle for everything.  On older
+ * firmware these options are refused; the browser then works as before,
+ * with a new handle per request (the old firmware also sends every cookie
+ * it ever saw on a reused handle, so reusing one there would be wrong).
  */
-static int fetch_one(const char *url, const char *post_body, mem_t *m, long *http_status) {
+static CURL *g_net_curl;          /* the shared handle (4.3 firmware) */
+static bool  g_net_modern;        /* firmware supports the 4.3 options */
+static bool  g_net_probed;
+
+/* Loading line / stop key state for the transfer in progress. */
+typedef struct {
+    struct browser_s *b;          /* NULL: no loading line (background work) */
+    bool stopped;                 /* Esc pressed: the transfer was stopped */
+    bool images;                  /* loading the images of the new page */
+    int image_index, image_count;
+    Uint64 next_draw;
+} load_state_t;
+static load_state_t g_load;
+
+static int load_progress_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                            curl_off_t ultotal, curl_off_t ulnow);
+
+static size_t null_header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
+    (void)buffer; (void)userdata;
+    return size * nitems;
+}
+
+/* A curl handle for one request.  With 4.3 firmware it is the shared,
+ * kept-alive handle; release it with net_release(). */
+static CURL *net_acquire(void) {
+    if (g_net_modern && g_net_curl) return g_net_curl;
     CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
+    if (!g_net_probed) {
+        g_net_probed = true;
+        g_net_modern = curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, load_progress_cb) == CURLE_OK;
+        printf("[mini_browser] net: %s\n", g_net_modern
+               ? "progress, stop, gzip and keep-alive available"
+               : "old firmware curl: no progress/stop/gzip/keep-alive");
+        if (g_net_modern) g_net_curl = curl;
+    }
+    return curl;
+}
+
+static void net_release(CURL *curl) {
+    if (!curl) return;
+    /* The slist given with CURLOPT_HTTPHEADER is freed by the caller. */
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, NULL);
+    if (curl != g_net_curl) curl_easy_cleanup(curl);
+}
+
+static void net_shutdown(void) {
+    if (g_net_curl) curl_easy_cleanup(g_net_curl);
+    g_net_curl = NULL;
+}
+
+/* Progress, stop key and (for pages) decoding: the same on every request. */
+static void net_common_options(CURL *curl, bool decode, struct browser_s *b) {
+    if (!g_net_modern) return;
+    /* The browser keeps its own cookies (per host and path, with expiry):
+     * curl's cookie store on the shared handle must not add any. */
+    curl_easy_setopt(curl, CURLOPT_COOKIELIST, "ALL");
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, load_progress_cb);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, (void *)b);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, decode ? "gzip, deflate" : NULL);
+}
+
+/* Last transfer: compressed bytes on the wire (0 = unknown). */
+static double g_net_wire_bytes;
+
+static int fetch_one(const char *url, const char *post_body, mem_t *m, long *http_status) {
+    CURL *curl = net_acquire();
     if (!curl) return -2;
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -3334,6 +3408,8 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(post_body));
+    } else {
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);   /* the shared handle may have POSTed */
     }
 
     /*
@@ -3342,19 +3418,15 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
      */
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 35L);
+    net_common_options(curl, true, g_load.b);
 
-    /*
-     * Explicit request headers.
-     *
-     * Accept-Encoding is deliberately "identity" because this tiny browser
-     * does not need compressed transfer encodings.
-     */
+    /* Explicit request headers. */
     struct curl_slist *hdrs = NULL;
 
     hdrs = curl_slist_append(hdrs,
         "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
         "Gecko/20100101 "
-        "(compatible; MiniBrowser/" MINI_BROWSER_VERSION "; +https://github.com/mactjaap/mini_browser/; HTTP/1.1; identity)");
+        "(compatible; MiniBrowser/" MINI_BROWSER_VERSION "; +https://github.com/mactjaap/mini_browser/; HTTP/1.1)");
 
     hdrs = curl_slist_append(hdrs,
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -3362,8 +3434,10 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
     hdrs = curl_slist_append(hdrs,
         "Accept-Language: en-US,en;q=0.5");
 
-    hdrs = curl_slist_append(hdrs,
-        "Accept-Encoding: identity");
+    /* With 4.3 firmware curl sends "Accept-Encoding: gzip, deflate" and
+     * decodes the body; older firmware cannot, so ask for plain bytes. */
+    if (!g_net_modern)
+        hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
 
     if (post_body) {
         hdrs = curl_slist_append(hdrs,
@@ -3391,9 +3465,7 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
 #endif
     }
 
-    if (hdrs) {
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
-    }
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
 
     snprintf(g_cookie_request_url, sizeof(g_cookie_request_url), "%s", url);
     g_redirect_location[0] = 0;
@@ -3419,15 +3491,24 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
         ctype && ctype[0])
         snprintf(g_fetch_meta.content_type, sizeof(g_fetch_meta.content_type), "%s", ctype);
 
-    /*
-     * CURLOPT_HTTPHEADER does not take ownership of the curl_slist,
-     * so we must release it ourselves after curl_easy_perform().
-     */
-    if (hdrs) curl_slist_free_all(hdrs);
-    curl_easy_cleanup(curl);
+    g_net_wire_bytes = 0;
+    if (g_net_modern) {
+        double wire = 0;
+        if (curl_easy_getinfo(curl, CURLINFO_SIZE_DOWNLOAD, &wire) == CURLE_OK)
+            g_net_wire_bytes = wire;
+    }
 
-    /* A body cut at our size cap is still a usable (partial) page. */
+    /* CURLOPT_HTTPHEADER does not take ownership of the curl_slist. */
+    net_release(curl);
+    if (hdrs) curl_slist_free_all(hdrs);
+
+    /* A body cut at our size cap is still a usable (partial) page, and so
+     * is the part received before the stop key was pressed. */
     if (res == CURLE_WRITE_ERROR && m->truncated) res = CURLE_OK;
+    if (res == CURLE_ABORTED_BY_CALLBACK && g_load.stopped && m->len > 0) {
+        m->truncated = true;
+        res = CURLE_OK;
+    }
     return (res == CURLE_OK) ? 0 : (int)res;
 }
 
@@ -3436,7 +3517,7 @@ static bool http_status_is_redirect(long status) {
            status == 307 || status == 308;
 }
 
-static int fetch_url(const char *url, const char *post_body, mem_t *m, long *http_status) {
+__attribute__((noinline)) static int fetch_url(const char *url, const char *post_body, mem_t *m, long *http_status) {
     if (!url || !m) return -1;
     m->buf = NULL;
     m->len = 0;
@@ -3452,7 +3533,7 @@ static int fetch_url(const char *url, const char *post_body, mem_t *m, long *htt
 
     if (http_status) *http_status = 0;
 
-    char hop[URL_MAX];
+    static char hop[URL_MAX];   /* static: keep the stack small under TLS */
     snprintf(hop, sizeof(hop), "%s", url);
     const char *body = post_body;
     long status = 0;
@@ -3466,10 +3547,10 @@ static int fetch_url(const char *url, const char *post_body, mem_t *m, long *htt
         status = 0;
 
         rc = fetch_one(hop, body, m, &status);
-        if (rc != 0 || !http_status_is_redirect(status) || !g_redirect_location[0])
+        if (rc != 0 || g_load.stopped || !http_status_is_redirect(status) || !g_redirect_location[0])
             break;
 
-        char next[URL_MAX];
+        static char next[URL_MAX];
         if (redirects >= MAX_REDIRECTS ||
             !resolve_url(hop, g_redirect_location, next, sizeof(next)) ||
             !is_http_scheme(next)) {
@@ -3544,13 +3625,17 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     /* Image URLs come from untrusted HTML: only ever fetch http(s). */
     if (!is_http_scheme(url)) return (int)CURLE_UNSUPPORTED_PROTOCOL;
 
-    CURL *curl = curl_easy_init();
+    if (g_load.stopped) return (int)CURLE_ABORTED_BY_CALLBACK;   /* Esc: no more images */
+
+    CURL *curl = net_acquire();
     if (!curl) return -2;
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
+    net_common_options(curl, false, g_load.b);   /* images are compressed already */
 
     struct curl_slist *hdrs = NULL;
     hdrs = curl_slist_append(hdrs,
@@ -3558,8 +3643,11 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     hdrs = curl_slist_append(hdrs,
         "Accept: image/jpeg,image/png,image/gif,image/*;q=0.5,*/*;q=0.1");
     hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
-    if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
 
+    /* Image responses must not set cookies or replace page metadata. */
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, null_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
 
@@ -3571,8 +3659,8 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
             *http_status = code;
     }
 
+    net_release(curl);
     if (hdrs) curl_slist_free_all(hdrs);
-    curl_easy_cleanup(curl);
 
     /* A compressed image over the cap cannot be decoded from its first
      * half; reject it instead of handing a cut-off file to stb. */
@@ -3764,12 +3852,16 @@ static int load_page_images(const page_t *page) {
     if (count > inline_limit) count = inline_limit;
 
     int loaded = 0;
-    for (int i = 0; i < count; i++) {
+    g_load.images = true;
+    g_load.image_count = count;
+    for (int i = 0; i < count && !g_load.stopped; i++) {
+        g_load.image_index = i;
         if (load_image_url(page_image_src(page, i),
                            IMAGE_DRAW_MAX_W, IMAGE_DRAW_MAX_H,
                            &g_inline_images[i]))
             loaded++;
     }
+    g_load.images = false;
     return loaded;
 }
 
@@ -5645,20 +5737,14 @@ static void history_push(const char *u) {
     }
 }
 
-static int history_back(char *out) {
-    if (g_hist_pos <= 0) return 0;  /* Can't go back from first entry */
-    g_hist_pos--;
-    strncpy(out, g_hist[g_hist_pos], URL_MAX);
-    out[URL_MAX - 1] = 0;
-    return 1;
-}
-
-static int history_forward(char *out) {
-    if (g_hist_pos < 0 || g_hist_pos + 1 >= g_hist_len) return 0;
-    g_hist_pos++;
-    strncpy(out, g_hist[g_hist_pos], URL_MAX);
-    out[URL_MAX - 1] = 0;
-    return 1;
+/* Back (-1) / Forward (+1): the URL and index of that entry, or -1.  The
+ * entry becomes current only when the page is shown (a stopped load leaves
+ * the history as it was). */
+static int history_peek(int delta, char *out) {
+    int pos = g_hist_pos + delta;
+    if (g_hist_pos < 0 || pos < 0 || pos >= g_hist_len) return -1;
+    snprintf(out, URL_MAX, "%s", g_hist[pos]);
+    return pos;
 }
 
 
@@ -6670,7 +6756,7 @@ typedef enum {
     VIEW_NEWTAB          /* WHY+T: a new, empty tab */
 } view_kind_t;
 
-typedef struct {
+typedef struct browser_s {
     SDL_Window *win;
     SDL_Renderer *ren;
     bool running;
@@ -6687,6 +6773,11 @@ typedef struct {
     int scroll_lines;
     bool need_fetch;
     bool history_navigation;    /* true when restoring from Back/Forward/Reload */
+    bool bf_navigation;         /* Back/Forward: the page may come from the bfcache */
+    int  hist_target;           /* Back/Forward: history entry to make current, or -1 */
+    bool error_page;            /* the page on screen is an error page (R reloads) */
+    bool page_from_post;        /* the page on screen is a POST result */
+    bool page_partial;          /* the load of the page on screen was stopped */
     int sel_action;
     bool pending_post;
     char post_body[POST_BODY_MAX];
@@ -6731,6 +6822,9 @@ typedef struct {
     const char *scroll_cache_ptr;
     text_state_t scroll_cache_state;
 } browser_t;
+
+static void bfcache_store(browser_t *b, const char *url, const fetch_meta_t *meta);
+static const char *shown_web_url(const browser_t *b);
 
 static const int k_max_cols = (VIEW_W - 2 * PAD_LR) / CH_W;
 static const int k_lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
@@ -6868,8 +6962,10 @@ static void browser_navigate(browser_t *b, const char *url) {
 
 /* Show a locally generated page (bookmarks / page info). */
 static void browser_show_local_page(browser_t *b, page_t *pg, view_kind_t kind, const char *pseudo_url) {
-    if ((b->view == VIEW_WEB) && is_http_scheme(b->url_buf))
+    if ((b->view == VIEW_WEB) && is_http_scheme(b->url_buf)) {
         snprintf(b->view_return_url, sizeof(b->view_return_url), "%s", b->url_buf);
+        bfcache_store(b, shown_web_url(b), &g_fetch_meta);   /* returning is then instant */
+    }
     char *wrapped = wrap_text(pg->text, k_max_cols);
     browser_set_page(b, pg);
     browser_set_content(b, wrapped);
@@ -6878,13 +6974,14 @@ static void browser_show_local_page(browser_t *b, page_t *pg, view_kind_t kind, 
     b->view = kind;
 }
 
-/* Leave bookmarks / page info: reload the page we came from. */
+/* Leave bookmarks / page info / history: back to the page we came from
+ * (from the Back/Forward cache when it is still there).  The view changes
+ * when that page is shown, so a stopped load leaves this page as it is. */
 static bool browser_return_from_local_page(browser_t *b) {
     if (b->view == VIEW_WEB || !b->view_return_url[0]) return false;
     snprintf(b->url_buf, sizeof(b->url_buf), "%s", b->view_return_url);
-    b->view_return_url[0] = 0;
-    b->view = VIEW_WEB;
     b->history_navigation = true;
+    b->bf_navigation = true;
     b->need_fetch = true;
     b->sel_action = -1;
     return true;
@@ -6928,6 +7025,9 @@ typedef struct {
     char hist[HISTORY_MAX][URL_MAX];
     int hist_len;
     int hist_pos;
+    bool error_page;
+    bool page_from_post;
+    bool page_partial;
 } tab_t;
 
 static tab_t g_tabs[TAB_MAX];
@@ -6962,6 +7062,9 @@ __attribute__((noinline)) static void tab_save(browser_t *b, int i) {
     memcpy(t->hist, g_hist, sizeof g_hist);
     t->hist_len = g_hist_len;
     t->hist_pos = g_hist_pos;
+    t->error_page = b->error_page;
+    t->page_from_post = b->page_from_post;
+    t->page_partial = b->page_partial;
 
     /* The browser no longer owns them: nothing may free them now. */
     b->page = NULL;
@@ -6988,6 +7091,9 @@ __attribute__((noinline)) static void tab_load(browser_t *b, int i) {
     memcpy(g_hist, t->hist, sizeof g_hist);
     g_hist_len = t->hist_len;
     g_hist_pos = t->hist_pos;
+    b->error_page = t->error_page;
+    b->page_from_post = t->page_from_post;
+    b->page_partial = t->page_partial;
 
     t->page = NULL;               /* owned by the browser again */
     t->content_wrapped = NULL;
@@ -7100,6 +7206,9 @@ __attribute__((noinline)) static void tab_new(browser_t *b) {
     /* A fresh, empty tab. */
     g_hist_len = 0;
     g_hist_pos = -1;
+    b->error_page = false;
+    b->page_from_post = false;
+    b->page_partial = false;
     memset(&g_fetch_meta, 0, sizeof g_fetch_meta);
     b->content_lines = 0;
     b->max_scroll = 0;
@@ -7152,11 +7261,398 @@ static void tab_free_all_background(void) {
         if (i != g_tab_cur) tab_free_slot(&g_tabs[i]);
 }
 
-static void browser_fetch(browser_t *b) {
+static void browser_render_page(browser_t *b);
+static void colored_text(char *out, size_t cap, unsigned rgb, const char *s);
+
+/* ---------- 4.3: loading line and stop key ----------
+ *
+ * While a page (or its images) loads, curl calls load_progress_cb() at least
+ * twice a second.  It redraws the bar as a loading line with a progress
+ * strip under it - over the page that is still shown, as Chrome does - and
+ * Esc stops the transfer.  Other keys stay queued for after the load.
+ */
+static void url_host(const char *url, char *out, size_t cap) {
+    out[0] = 0;
+    const char *p = url ? strstr(url, "://") : NULL;
+    if (!p) return;
+    p += 3;
+    size_t n = strcspn(p, "/?#");
+    const char *at = memchr(p, '@', n);
+    if (at) { n -= (size_t)(at + 1 - p); p = at + 1; }
+    if (n >= cap) n = cap - 1;
+    memcpy(out, p, n);
+    out[n] = 0;
+}
+
+static void format_kb(char *out, size_t cap, curl_off_t bytes) {
+    if (bytes < 1024) snprintf(out, cap, "%u bytes", (unsigned)bytes);
+    else snprintf(out, cap, "%u KB", (unsigned)((bytes + 1023) / 1024));
+}
+
+__attribute__((noinline)) static void browser_draw_loading(browser_t *b, curl_off_t total, curl_off_t now) {
+    static char host[96], amount[64], done[24], all[24];
+    url_host(b->url_buf, host, sizeof host);
+    if (now <= 0) {
+        snprintf(amount, sizeof amount, "waiting for %s", host[0] ? host : "the server");
+    } else {
+        format_kb(done, sizeof done, now);
+        if (total > 0) {
+            format_kb(all, sizeof all, total);
+            snprintf(amount, sizeof amount, "%s of %s", done, all);
+        } else {
+            snprintf(amount, sizeof amount, "%s", done);
+        }
+    }
+    if (g_load.images)
+        snprintf(b->barline, sizeof b->barline, "Image %d of %d: %s - Esc stops",
+                 g_load.image_index + 1, g_load.image_count, amount);
+    else
+        snprintf(b->barline, sizeof b->barline, "Loading %s - Esc stops", amount);
+
+    if (b->page && b->content_wrapped && b->overlay == OVERLAY_NONE)
+        browser_render_page(b);            /* the page stays visible */
+    else
+        draw_ui(b->ren, b->barline);
+
+    /* Progress strip on the line under the bar. */
+    SDL_FRect track = { 0, URLBAR_H + 1, VIEW_W, 2 };
+    SDL_SetRenderDrawColor(b->ren, 0x2A, 0x34, 0x46, 255);
+    SDL_RenderFillRect(b->ren, &track);
+    SDL_FRect bar = track;
+    if (total > 0 && now > 0) {
+        bar.w = (float)VIEW_W * (float)(now > total ? total : now) / (float)total;
+    } else {
+        /* Unknown size: a block that keeps moving. */
+        int span = VIEW_W + 160;
+        bar.x = (float)((int)((SDL_GetTicks() / 3) % (Uint64)span) - 160);
+        bar.w = 160;
+    }
+    SDL_SetRenderDrawColor(b->ren, 0x64, 0xEF, 0xFE, 255);
+    SDL_RenderFillRect(b->ren, &bar);
+    SDL_RenderPresent(b->ren);
+}
+
+static int load_progress_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                            curl_off_t ultotal, curl_off_t ulnow) {
+    (void)ultotal; (void)ulnow;
+    browser_t *b = (browser_t *)clientp;
+    if (!b) return 0;
+    if (screenshot_cancel_requested()) {   /* takes queued Esc presses only */
+        g_load.stopped = true;
+        printf("[mini_browser] stop: Esc pressed, %s stopped\n",
+               g_load.images ? "image loading" : "page load");
+        return 1;
+    }
+    Uint64 now = SDL_GetTicks();
+    if (now >= g_load.next_draw) {
+        g_load.next_draw = now + 150;
+        browser_draw_loading(b, dltotal, dlnow);
+    }
+    return 0;
+}
+
+/* ---------- 4.3: error pages in the style of Chrome ---------- */
+typedef struct {
+    const char *title;
+    const char *detail;     /* "%s" = host */
+    const char *code;
+} error_text_t;
+
+static error_text_t error_text_for(int rc, long http_status) {
+    if (rc == 0) {
+        if (http_status == 404 || http_status == 410)
+            return (error_text_t){ "This page can't be found",
+                "No web page was found at this address on %s.", NULL };
+        if (http_status == 401 || http_status == 403)
+            return (error_text_t){ "Access denied",
+                "You don't have permission to view this page on %s.", NULL };
+        if (http_status == 429)
+            return (error_text_t){ "Too many requests",
+                "%s asks to slow down. Wait a moment and try again.", NULL };
+        if (http_status >= 500)
+            return (error_text_t){ "This page isn't working",
+                "%s is currently unable to handle this request.", NULL };
+        return (error_text_t){ "This page isn't working", "%s returned an error.", NULL };
+    }
+    switch (rc) {
+        case CURLE_COULDNT_RESOLVE_HOST:
+            return (error_text_t){ "This site can't be reached",
+                "The server IP address of %s could not be found.", "ERR_NAME_NOT_RESOLVED" };
+        case CURLE_COULDNT_CONNECT:
+            return (error_text_t){ "This site can't be reached",
+                g_net_modern ? "%s refused to connect."
+                             : "%s could not be reached (address not found or connection refused).",
+                g_net_modern ? "ERR_CONNECTION_REFUSED" : "ERR_CONNECTION_FAILED" };
+        case CURLE_OPERATION_TIMEDOUT:
+            return (error_text_t){ "This site can't be reached",
+                "%s took too long to respond.", "ERR_TIMED_OUT" };
+        case CURLE_SSL_CONNECT_ERROR:
+            return (error_text_t){ "This site can't provide a secure connection",
+                "%s sent an invalid response, or the secure (TLS) connection failed.",
+                "ERR_SSL_PROTOCOL_ERROR" };
+        case CURLE_SSL_PEER_CERTIFICATE:
+#ifndef CURLE_SSL_CACERT   /* in libcurl both are aliases of one code */
+        case CURLE_SSL_CACERT:
+#endif
+            return (error_text_t){ "Your connection is not private",
+                "The certificate of %s could not be verified.", "ERR_CERT_INVALID" };
+        case CURLE_RECV_ERROR:
+        case CURLE_SEND_ERROR:
+        case CURLE_PARTIAL_FILE:
+            return (error_text_t){ "This page isn't working",
+                "%s closed the connection unexpectedly.", "ERR_CONNECTION_CLOSED" };
+        case CURLE_BAD_CONTENT_ENCODING:
+            return (error_text_t){ "This page isn't working",
+                "The compressed page from %s could not be decoded.", "ERR_CONTENT_DECODING_FAILED" };
+        case CURLE_TOO_MANY_REDIRECTS:
+            return (error_text_t){ "This page isn't working",
+                "%s redirected you too many times.", "ERR_TOO_MANY_REDIRECTS" };
+        case CURLE_OUT_OF_MEMORY:
+            return (error_text_t){ "Not enough memory",
+                "The page from %s did not fit in memory.", "ERR_OUT_OF_MEMORY" };
+        case CURLE_UNSUPPORTED_PROTOCOL:
+            return (error_text_t){ "This address is not supported",
+                "Only http:// and https:// pages can be opened.", "ERR_UNKNOWN_URL_SCHEME" };
+        default:
+            return (error_text_t){ "This site can't be reached", NULL, "ERR_FAILED" };
+    }
+}
+
+/* Show the error page for a failed load.  It is a message page (no
+ * page_t); R or Enter loads the URL again. */
+__attribute__((noinline)) static void browser_show_error(browser_t *b, int rc, long http_status) {
+    static char text[1024], host[96], detail[256], line[200], code[64];
+    url_host(b->url_buf, host, sizeof host);
+    error_text_t e = error_text_for(rc, http_status);
+
+    if (e.detail) snprintf(detail, sizeof detail, e.detail, host[0] ? host : "The server");
+    else snprintf(detail, sizeof detail, "%s", curl_easy_strerror((CURLcode)rc));
+    if (rc == 0) snprintf(code, sizeof code, "HTTP ERROR %ld", http_status);
+    else snprintf(code, sizeof code, "%s (curl %d)", e.code, rc);
+
+    size_t n = 0;
+    colored_text(line, sizeof line, 0x64EFFE, ":(");
+    n += (size_t)snprintf(text + n, sizeof text - n, "\n%s\n\n", line);
+    colored_text(line, sizeof line, 0xFFFB96, e.title);
+    n += (size_t)snprintf(text + n, sizeof text - n, "%s\n\n%s\n\n", line, detail);
+    if (rc != 0 && rc != CURLE_UNSUPPORTED_PROTOCOL && rc != CURLE_OUT_OF_MEMORY)
+        n += (size_t)snprintf(text + n, sizeof text - n,
+                              "Try:\n- checking the WiFi connection\n- checking the address for typos\n\n");
+    colored_text(line, sizeof line, 0x9CA3AF, code);
+    n += (size_t)snprintf(text + n, sizeof text - n, "%s\n\n", line);
+    colored_text(line, sizeof line, 0x9CA3AF, b->url_buf);
+    n += (size_t)snprintf(text + n, sizeof text - n, "%s\n\n", line);
+    if (n < sizeof text)
+        snprintf(text + n, sizeof text - n, "Press R or Enter to reload, WHY+B to go back.");
+
+    browser_show_message(b, text);
+    b->error_page = true;
+    browser_log_content(b->content_wrapped);   /* for the regression suite */
+}
+
+/* ---------- 4.3: back/forward cache ----------
+ *
+ * The last BFCACHE_MAX pages that were left by a navigation are kept as
+ * they were: parsed page, wrapped text, scroll position and - within an
+ * image memory budget - their decoded images.  Back/Forward (and leaving
+ * Bookmarks / History / Page info) to one of them shows it at once, without
+ * the network.  Reload (WHY+R) always fetches; POST results are not kept.
+ */
+#define BFCACHE_MAX           3
+#define BFCACHE_IMAGE_BUDGET  (3u * 1024u * 1024u)
+
+typedef struct {
+    bool used;
+    char url[URL_MAX];
+    page_t *page;
+    char *content_wrapped;
+    int content_lines;
+    int max_scroll;
+    int scroll_lines;
+    long http_status;
+    fetch_meta_t meta;
+    decoded_image_t images[MAX_INLINE_IMAGES];
+    size_t image_bytes;
+    Uint64 stamp;
+} bfcache_entry_t;
+
+static bfcache_entry_t g_bfcache[BFCACHE_MAX];
+static Uint64 g_bfcache_clock;
+
+static void bfcache_free(bfcache_entry_t *e) {
+    free_page(e->page);
+    free(e->content_wrapped);
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
+        decoded_image_release(&e->images[i]);
+    memset(e, 0, sizeof *e);
+}
+
+static void bfcache_clear(void) {
+    for (int i = 0; i < BFCACHE_MAX; i++)
+        if (g_bfcache[i].used) bfcache_free(&g_bfcache[i]);
+}
+
+static int bfcache_find(const char *url) {
+    for (int i = 0; i < BFCACHE_MAX; i++)
+        if (g_bfcache[i].used && !strcmp(g_bfcache[i].url, url)) return i;
+    return -1;
+}
+
+/* The URL of the web page on screen: the current Back/Forward entry. */
+static const char *shown_web_url(const browser_t *b) {
+    if (b->view != VIEW_WEB || g_hist_pos < 0 || g_hist_pos >= g_hist_len) return NULL;
+    return g_hist[g_hist_pos];
+}
+
+/* Move the page on screen into the cache (when it can be kept). */
+__attribute__((noinline)) static void bfcache_store(browser_t *b, const char *url,
+                                                     const fetch_meta_t *meta) {
+    if (!url || b->view != VIEW_WEB || !b->page || !b->content_wrapped || b->page_from_post ||
+        b->page_partial || b->error_page || !is_http_scheme(url) || !is_http_scheme(b->page->base) ||
+        b->last_http_status >= 400)
+        return;
+
+    int slot = bfcache_find(url);
+    if (slot < 0) {
+        for (int i = 0; i < BFCACHE_MAX; i++) {
+            if (!g_bfcache[i].used) { slot = i; break; }
+            if (slot < 0 || g_bfcache[i].stamp < g_bfcache[slot].stamp) slot = i;
+        }
+    }
+    if (g_bfcache[slot].used) bfcache_free(&g_bfcache[slot]);
+
+    bfcache_entry_t *e = &g_bfcache[slot];
+    e->used = true;
+    e->stamp = ++g_bfcache_clock;
+    snprintf(e->url, sizeof e->url, "%s", url);
+    e->page = b->page;
+    e->content_wrapped = b->content_wrapped;
+    e->content_lines = b->content_lines;
+    e->max_scroll = b->max_scroll;
+    e->scroll_lines = b->scroll_lines;
+    e->http_status = b->last_http_status;
+    e->meta = *meta;
+
+    /* Decoded images, if they fit in the budget next to the other entries. */
+    size_t others = 0, mine = 0;
+    for (int i = 0; i < BFCACHE_MAX; i++) others += g_bfcache[i].image_bytes;
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
+        if (g_inline_images[i].loaded)
+            mine += (size_t)g_inline_images[i].width * (size_t)g_inline_images[i].height * 2u;
+    int kept = 0;
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++) {
+        if (others + mine <= BFCACHE_IMAGE_BUDGET && g_inline_images[i].loaded) {
+            e->images[i] = g_inline_images[i];
+            memset(&g_inline_images[i], 0, sizeof g_inline_images[i]);
+            kept++;
+        } else {
+            decoded_image_release(&g_inline_images[i]);
+        }
+    }
+    if (kept) e->image_bytes = mine;
+
+    /* The cache owns them now. */
+    b->page = NULL;
+    b->content_wrapped = NULL;
+    b->scroll_cache_content = NULL;
+    printf("[mini_browser] bfcache: stored %s (%d images)\n", url, kept);
+}
+
+/* Show cache entry i (taking it out of the cache). */
+__attribute__((noinline)) static void bfcache_restore(browser_t *b, int i) {
+    bfcache_entry_t *e = &g_bfcache[i];
+    browser_set_page(b, e->page);          /* frees what was on screen */
+    for (int k = 0; k < MAX_INLINE_IMAGES; k++)
+        g_inline_images[k] = e->images[k];
+    free(b->content_wrapped);
+    b->content_wrapped = e->content_wrapped;
+    b->content_lines = e->content_lines;
+    b->max_scroll = e->max_scroll;
+    b->scroll_lines = e->scroll_lines;
+    b->last_http_status = e->http_status;
+    b->scroll_cache_content = NULL;
+    b->sel_action = -1;
+    g_fetch_meta = e->meta;
+    bool had_images = e->image_bytes > 0;
+    memset(e, 0, sizeof *e);
+
+    /* Images that did not fit in the cache are loaded again. */
+    if (!had_images && b->page->image_count > 0 && display_inline_image_limit() > 0) {
+        load_page_images(b->page);
+        b->max_scroll = compute_max_scroll(b->page, b->content_wrapped, b->content_lines);
+    }
+    browser_clamp_scroll(b);
+}
+
+/* ---------- page loading ---------- */
+
+/* The navigation is final: update Back/Forward and leave special pages. */
+static void browser_commit_navigation(browser_t *b, int hist_target, bool history_navigation) {
+    if (hist_target >= 0 && hist_target < g_hist_len)
+        g_hist_pos = hist_target;             /* Back / Forward */
+    else if (!history_navigation)
+        history_push(b->url_buf);
+    b->view = VIEW_WEB;
+    b->view_return_url[0] = 0;
+    b->error_page = false;
+    b->page_partial = false;
+}
+
+/* A load was stopped before anything arrived: the old page stays, and so
+ * does its address. */
+static void browser_restore_shown_url(browser_t *b) {
+    switch (b->view) {
+        case VIEW_WEB:
+            if (g_hist_pos >= 0 && g_hist_pos < g_hist_len)
+                snprintf(b->url_buf, sizeof b->url_buf, "%s", g_hist[g_hist_pos]);
+            break;
+        case VIEW_BOOKMARKS: snprintf(b->url_buf, sizeof b->url_buf, "bookmarks:"); break;
+        case VIEW_PAGE_INFO: snprintf(b->url_buf, sizeof b->url_buf, "page-info:"); break;
+        case VIEW_HISTORY:   snprintf(b->url_buf, sizeof b->url_buf, "history:"); break;
+        case VIEW_NEWTAB:    snprintf(b->url_buf, sizeof b->url_buf, "newtab:"); break;
+    }
+}
+
+/* The lines the regression suite reads after every page load. */
+__attribute__((noinline)) static void browser_log_page(browser_t *b, long http_status,
+                                                        unsigned bytes, const char *how) {
+    page_t *page = b->page;
+    printf("[mini_browser] HTTP %ld, %u bytes, %d links from %s%s\n",
+           http_status, bytes, page->link_count, b->url_buf, how);
+    /*
+     * Deterministic parser diagnostic.  Besides being useful while
+     * debugging, the 2.5 regression suite uses this to verify that
+     * HTML entities in <title> were decoded into page->title.
+     */
+    printf("[mini_browser] page title: %s\n", page->title[0] ? page->title : "(none)");
+    printf("[mini_browser] parser: links=%d actions=%d forms=%d\n",
+           page->link_count, page->action_count, page->form_count);
+    printf("[mini_browser] visual: explicit_colors=%d\n", page->explicit_color_count);
+    printf("[mini_browser] visual: explicit_styles=%d\n", page->explicit_style_count);
+    printf("[mini_browser] visual: explicit_backgrounds=%d\n", page->explicit_background_count);
+    int inline_loaded = 0;
+    for (int ii = 0; ii < MAX_INLINE_IMAGES; ii++)
+        if (g_inline_images[ii].loaded) inline_loaded++;
+    printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d images_loaded=%d\n",
+           display_mode_name(g_display_mode),
+           page->image_seen_count, page->image_count, inline_loaded);
+    printf("[mini_browser] cookies: count=%d\n", cookie_count());
+    browser_log_content(b->content_wrapped);
+}
+
+__attribute__((noinline)) static void browser_fetch(browser_t *b) {
     b->need_fetch = false;
     b->overlay = (b->overlay == OVERLAY_IMAGE) ? OVERLAY_NONE : b->overlay;
     decoded_image_release(&g_viewer_image);
     browser_reset_input(b);
+
+    /* How we got here: Back/Forward (may use the cache), Reload, or new. */
+    const bool bf_navigation = b->bf_navigation;
+    const bool history_navigation = b->history_navigation;
+    const int hist_target = b->hist_target;
+    b->bf_navigation = false;
+    b->history_navigation = false;
+    b->hist_target = -1;
 
     trim_inplace(b->url_buf);
     if (!b->url_buf[0]) return;
@@ -7172,27 +7668,24 @@ static void browser_fetch(browser_t *b) {
     }
     if (!is_http_scheme(b->url_buf)) return;
 
-    /* Any real page load leaves bookmarks / page info. */
-    b->view = VIEW_WEB;
-    b->view_return_url[0] = 0;
+    const bool was_post = b->pending_post;
+    b->dirty = true;
 
-    /* record in history just before fetching (unless reloading) */
-    if (!b->history_navigation)
-        history_push(b->url_buf);
-    b->history_navigation = false;
+    /* Back/Forward to a page that is still in the cache: no network. */
+    int cached = (bf_navigation && !was_post) ? bfcache_find(b->url_buf) : -1;
+    if (cached >= 0) {
+        bfcache_store(b, shown_web_url(b), &g_fetch_meta);
+        browser_commit_navigation(b, hist_target, history_navigation);
+        bfcache_restore(b, cached);
+        b->page_from_post = false;
+        printf("[mini_browser] bfcache: hit %s\n", b->url_buf);
+        visit_record(b->url_buf, b->page->title);
+        browser_set_status(b, "Loaded (from cache)", 1000);
+        browser_log_page(b, b->last_http_status, (unsigned)g_fetch_meta.downloaded_bytes, " (bfcache)");
+        return;
+    }
 
-    /*
-     * User-facing fetch state.  Keep HTTP status codes out of the
-     * normal title bar; detailed HTTP errors are rendered in the
-     * page itself.
-     */
-    draw_ui(b->ren, "Loading...");
-    SDL_RenderPresent(b->ren);
-
-    mem_t m = {0};
-    long http_status = 0;
-
-    if (b->pending_post) {
+    if (was_post) {
 #if MB_LOG_SENSITIVE
         printf("[mini_browser] POST %s body=%s\n", b->url_buf, b->post_body);
 #else
@@ -7201,42 +7694,61 @@ static void browser_fetch(browser_t *b) {
 #endif
     }
 
-    bool was_post = b->pending_post;
-    int rc = fetch_url(b->url_buf, b->pending_post ? b->post_body : NULL, &m, &http_status);
+    /* Loading line over the current page; Esc stops. */
+    memset(&g_load, 0, sizeof g_load);
+    g_load.b = b;
+    browser_draw_loading(b, 0, 0);
+    g_load.next_draw = SDL_GetTicks() + 150;
+
+    /* fetch_url() replaces g_fetch_meta: keep the shown page's copy. */
+    static fetch_meta_t shown_meta;
+    shown_meta = g_fetch_meta;
+
+    mem_t m = {0};
+    long http_status = 0;
+    int rc = fetch_url(b->url_buf, was_post ? b->post_body : NULL, &m, &http_status);
 
     b->pending_post = false;
     b->post_body[0] = 0;
+
+    if (rc != 0 && g_load.stopped) {
+        /* Stopped before anything arrived: keep the page on screen. */
+        browser_restore_shown_url(b);
+        g_fetch_meta = shown_meta;
+        printf("[mini_browser] stop: nothing received, staying on %s\n", b->url_buf);
+        browser_set_status(b, "STOPPED", 1500);
+        g_load.b = NULL;
+        free(m.buf);
+        return;
+    }
+
+    if (g_net_wire_bytes > 0 && m.len > 0 && (size_t)g_net_wire_bytes != m.len)
+        printf("[mini_browser] net: %.0f bytes received, %u bytes after decoding\n",
+               g_net_wire_bytes, (unsigned)m.len);
+
+    const bool image = rc == 0 && http_status < 400 &&
+                       (content_type_is_image(g_fetch_meta.content_type) ||
+                        buffer_is_supported_image((const unsigned char *)m.buf, m.len));
+
+    /* The page that was on screen goes to the Back/Forward cache, unless
+     * the result is shown over it (a direct image). */
+    const char *shown_url = shown_web_url(b);
+    if (!image && shown_url && strcmp(shown_url, b->url_buf) != 0)   /* not on reload */
+        bfcache_store(b, shown_url, &shown_meta);
+    browser_commit_navigation(b, hist_target, history_navigation);
+    int stale = bfcache_find(b->url_buf);   /* superseded by this load */
+    if (stale >= 0) bfcache_free(&g_bfcache[stale]);
     b->last_http_status = http_status;
-    b->dirty = true;
 
     if (rc != 0) {
         printf("[mini_browser] fetch error %d URL='%s'\n", rc, b->url_buf);
-
-        char error_text[512];
-        const char *curl_error = curl_easy_strerror((CURLcode)rc);
-        snprintf(error_text, sizeof(error_text),
-                 "CONNECTION FAILED\n\n"
-                 "Could not load:\n%s\n\n"
-                 "Reason:\n%s\n\n"
-                 "Press WHY+R to retry, WHY+B to go back, WHY+H for homepage",
-                 b->url_buf,
-                 curl_error ? curl_error : "Unknown network error");
-        browser_show_message(b, error_text);
+        browser_show_error(b, rc, 0);
 
     } else if (http_status >= 400) {
         printf("[mini_browser] HTTP %ld URL='%s'\n", http_status, b->url_buf);
+        browser_show_error(b, 0, http_status);
 
-        char error_text[512];
-        snprintf(error_text, sizeof(error_text),
-                 "HTTP ERROR %ld\n\n"
-                 "The server returned HTTP status %ld.\n\n"
-                 "URL:\n%s\n\n"
-                 "Press WHY+B to go back or WHY+R to retry.",
-                 http_status, http_status, b->url_buf);
-        browser_show_message(b, error_text);
-
-    } else if (content_type_is_image(g_fetch_meta.content_type) ||
-               buffer_is_supported_image((const unsigned char *)m.buf, m.len)) {
+    } else if (image) {
         printf("[mini_browser] direct image: content-type=%s magic=%s URL=%s\n",
                g_fetch_meta.content_type[0] ? g_fetch_meta.content_type : "(none)",
                buffer_is_supported_image((const unsigned char *)m.buf, m.len) ? "yes" : "no",
@@ -7284,44 +7796,29 @@ static void browser_fetch(browser_t *b) {
             debug_utf8("PAGE TEXT", pg->text);
 #endif
             browser_set_page(b, pg);   /* releases the old page and its images */
-            load_page_images(pg);
+            b->page_from_post = was_post;
+            b->page_partial = m.truncated && g_load.stopped;
 
             char *wrapped = wrap_text(pg->text, k_max_cols);
 #if MB_LOG_CONTENT
             debug_utf8("WRAPPED", wrapped);
 #endif
             browser_set_content(b, wrapped);
-            browser_set_status(b, "Loaded", 1000);
 
-            page_t *page = b->page;
-            if (!was_post) visit_record(b->url_buf, page->title);
-            printf("[mini_browser] HTTP %ld, %u bytes, %d links from %s\n",
-                   http_status, (unsigned)m.len, page->link_count, b->url_buf);
+            /* Text first, then the images: the loading line shows the new
+             * page while they arrive, and Esc skips the rest. */
+            if (pg->image_count > 0 && display_inline_image_limit() > 0) {
+                load_page_images(pg);
+                b->max_scroll = compute_max_scroll(pg, b->content_wrapped, b->content_lines);
+            }
+            browser_set_status(b, g_load.stopped ? "STOPPED" : "Loaded", 1000);
 
-            /*
-             * Deterministic parser diagnostic.  Besides being useful while
-             * debugging, the 2.5 regression suite uses this to verify that
-             * HTML entities in <title> were decoded into page->title.
-             */
-            printf("[mini_browser] page title: %s\n",
-                   page->title[0] ? page->title : "(none)");
-            printf("[mini_browser] parser: links=%d actions=%d forms=%d\n",
-                   page->link_count, page->action_count, page->form_count);
-            printf("[mini_browser] visual: explicit_colors=%d\n", page->explicit_color_count);
-            printf("[mini_browser] visual: explicit_styles=%d\n", page->explicit_style_count);
-            printf("[mini_browser] visual: explicit_backgrounds=%d\n", page->explicit_background_count);
-            int inline_loaded = 0;
-            for (int ii = 0; ii < MAX_INLINE_IMAGES; ii++)
-                if (g_inline_images[ii].loaded) inline_loaded++;
-            printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d images_loaded=%d\n",
-                   display_mode_name(g_display_mode),
-                   page->image_seen_count, page->image_count, inline_loaded);
-            printf("[mini_browser] cookies: count=%d\n", cookie_count());
-
-            browser_log_content(wrapped);
+            if (!was_post) visit_record(b->url_buf, pg->title);
+            browser_log_page(b, http_status, (unsigned)m.len, m.truncated && g_load.stopped ? " (stopped)" : "");
         }
     }
 
+    g_load.b = NULL;
     free(m.buf);
 }
 
@@ -7652,6 +8149,7 @@ static void browser_handle_options_key(browser_t *b, SDL_Scancode sc) {
     g_display_mode = selected;
     b->overlay = OVERLAY_NONE;
     image_release_all();
+    bfcache_clear();   /* cached pages were parsed for the old mode */
     if (is_http_scheme(b->url_buf)) {
         /* Re-fetch so <img> is re-parsed for the new mode. A POST result is
          * not re-submitted: the page is re-requested with GET as before. */
@@ -7815,20 +8313,26 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
                 b->overlay = OVERLAY_NONE;
                 decoded_image_release(&g_viewer_image);
             } else if (!browser_return_from_local_page(b)) {
-                char prev[URL_MAX];
-                if (history_back(prev)) {
+                static char prev[URL_MAX];
+                int target = history_peek(-1, prev);
+                if (target >= 0) {
                     browser_navigate(b, prev);
                     b->history_navigation = true;
+                    b->bf_navigation = true;
+                    b->hist_target = target;
                 }
             }
             break;
         }
 
         case SDL_SCANCODE_G: { /* FORWARD */
-            char next_url[URL_MAX];
-            if (history_forward(next_url)) {
+            static char next_url[URL_MAX];
+            int target = history_peek(+1, next_url);
+            if (target >= 0) {
                 browser_navigate(b, next_url);
                 b->history_navigation = true;
+                b->bf_navigation = true;
+                b->hist_target = target;
             }
             break;
         }
@@ -8062,10 +8566,22 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
     switch (sc) {
         case SDL_SCANCODE_RETURN:
         case SDL_SCANCODE_KP_ENTER:
-            if (b->page && (b->input == INPUT_LINK_NUMBER || b->sel_action >= 0))
+            if (b->page && (b->input == INPUT_LINK_NUMBER || b->sel_action >= 0)) {
                 browser_activate(b);
-            else
+            } else {
+                b->history_navigation = true;   /* reload: no new history entry */
                 b->need_fetch = true;
+            }
+            break;
+
+        case SDL_SCANCODE_R:   /* error page: reload (as Chrome's Reload button) */
+            if (b->error_page && b->view == VIEW_WEB) {
+                printf("[mini_browser] error page: reload %s\n", b->url_buf);
+                b->history_navigation = true;
+                b->need_fetch = true;
+            } else if (b->input == INPUT_LINK_NUMBER) {
+                browser_reset_input(b);
+            }
             break;
 
         case SDL_SCANCODE_BACKSPACE:
@@ -8256,6 +8772,7 @@ int main(void) {
 #endif
 
     snprintf(b->url_buf, sizeof(b->url_buf), "%s", HOME_URL);
+    b->hist_target = -1;
     b->running = true;
     b->need_fetch = true;
     b->dirty = true;
@@ -8302,9 +8819,11 @@ int main(void) {
     SDL_StopTextInput(b->win);
     if (g_visit_unsaved) visit_save();
     tab_free_all_background();
+    bfcache_clear();
     image_release_all();
     free_page(b->page);
     free(b->content_wrapped);
+    net_shutdown();
     SDL_DestroyRenderer(b->ren);
     SDL_DestroyWindow(b->win);
     free(b);

@@ -1,4 +1,4 @@
-# Mini Browser 4.1
+# Mini Browser 4.3
 
 ![Mini Browser logo Logo](Mini_Browser_Logo-small.jpg)
 
@@ -9,15 +9,17 @@ pages, converts them into readable text, extracts links and simple HTML
 forms, and provides a keyboard-driven browsing interface designed for
 the 720×720 WHY2025 badge display.
 
-Version **4.1** (in development, currently `4.1-dev1`) is the first step towards
-a browser that feels more like a modern mobile browser while staying small. It
-adds an omnibox for addresses and searches with suggestions, and a persistent
-history of visited pages.
+Version **4.3** (in development, currently `4.3-dev1`) continues the road
+towards a browser that feels like a modern mobile browser while staying small.
+Version 4.1 added an omnibox for addresses and searches with suggestions, a
+persistent history of visited pages and up to five tabs. Version 4.3 adds a
+loading line with progress, a stop key, clear error pages, an instant
+Back/Forward cache, compressed (gzip) pages and connection reuse.
 
 Version **3.0** built on the Unicode, forms, cookies and HTTP/TLS foundations
 of the 2.x releases with PNG, JPEG and GIF image support, inline image rendering,
 image sizing and scaling, multiple display modes and fullscreen BadgeVMS operation.
-4.1 retains the 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering,
+4.x retains the 56,352-glyph Unicode font, word-aware wrapping, RTL/Bidi rendering,
 contextual Arabic shaping, bookmarks, history, GET/POST forms, cookies and
 complete-page screenshots.
 
@@ -36,6 +38,14 @@ lightweight and server-rendered websites.
 -   Omnibox (`WHY+L`): one bar for addresses and Google searches, with
     suggestions from bookmarks and history while typing (4.1)
 -   Persistent history of the last 150 visited pages (`WHY+Y`) (4.1)
+-   Up to five tabs with a new tab page and a tab overview (`WHY+T`,
+    `WHY+A`) (4.1)
+-   Loading line with progress; `Esc` stops loading (4.3)
+-   Clear error pages ("This site can't be reached", "HTTP ERROR 404");
+    `R` or `Enter` reloads (4.3)
+-   Back/Forward cache: the last three pages return instantly (4.3)
+-   Compressed (gzip/deflate) pages and connection reuse with BadgeVMS 4.3
+    firmware (4.3)
 -   Back and Forward browsing history
 -   Persistent bookmarks
 -   Bounded in-memory session cookie jar
@@ -208,6 +218,47 @@ While you type, up to five suggestions appear under the bar: bookmarks first
 title. `Down`/`Up` select a suggestion, `Enter` opens it, and `Esc` closes the
 bar and returns to the current page.
 
+## Tabs (4.1)
+
+Mini Browser can keep up to five pages open in tabs. `WHY+T` opens a new tab
+next to the current one with a new tab page that lists your bookmarks and
+recently visited pages, and opens the omnibox. Each tab keeps its own page,
+scroll position and Back/Forward list. With more than one tab open, the bar
+shows which tab you are on, for example `[2/3] Page title`.
+
+-   `WHY+Tab` goes to the next tab, `WHY+1` ... `WHY+5` to a tab by number.
+-   `WHY+A` opens the tab overview: `Up`/`Down` select, `Enter` opens,
+    `X` closes the selected tab and `Esc` returns.
+-   `WHY+W` closes the current tab. The last tab is never closed; `WHY+Q`
+    quits the browser.
+
+Tabs in the background keep their text; their images are loaded again when
+the tab returns to the front.
+
+## Loading, stopping and error pages (4.3)
+
+While a page loads, the bar shows how much has arrived (for example
+`Loading 12 KB of 40 KB - Esc stops`) with a progress strip under it. The
+current page stays visible until the new one is ready, as in Chrome. When the
+page has images, the bar shows `Image 2 of 5` while they arrive.
+
+Press `Esc` to stop loading:
+
+-   If nothing has arrived yet, the old page and its address stay.
+-   If part of the page has arrived, that part is shown.
+-   While images load, the remaining images are skipped.
+
+A page that cannot be loaded is shown as a clear error page with what went
+wrong, for example *This site can't be reached - the server IP address could
+not be found*, *refused to connect*, *took too long to respond*, a secure
+connection or certificate problem, *This page can't be found* (HTTP 404) or
+*This page isn't working* (HTTP 5xx), with a code such as
+`ERR_NAME_NOT_RESOLVED` or `HTTP ERROR 404`. Press `R` or `Enter` to try again,
+or `WHY+B` to go back.
+
+Stop and the precise error messages need the BadgeVMS 4.3 firmware (see
+Networking); on older firmware pages load as before.
+
 ## Navigation
 
 Every usable link or visible form control receives an action number.
@@ -224,6 +275,8 @@ Type the number and press Enter to activate it.
   `J` / `K`          Scroll down / up one line
   `Left` / `Right`   Move cursor while editing
   `Backspace`        Delete while editing
+  `Esc`              Stop loading (4.3); close the omnibox or an overlay
+  `R`                On an error page: reload (4.3)
 
 The WHY2025 key acts as the browser accelerator:
 
@@ -234,8 +287,13 @@ The WHY2025 key acts as the browser accelerator:
   `WHY+C`    Edit the current URL
   `WHY+H`    Home
   `WHY+R`    Reload
-  `WHY+B`    Back
-  `WHY+G`    Forward
+  `WHY+B`    Back (from the Back/Forward cache when possible)
+  `WHY+G`    Forward (from the Back/Forward cache when possible)
+  `WHY+T`    Open a new tab (4.1)
+  `WHY+W`    Close the current tab (4.1)
+  `WHY+Tab`  Next tab (4.1)
+  `WHY+1-5`  Go to tab 1-5 (4.1)
+  `WHY+A`    Tab overview (4.1)
   `WHY+F`    Add/remove current bookmark
   `WHY+M`    Open bookmarks
   `WHY+Y`    Open the history of visited pages (4.1)
@@ -347,13 +405,16 @@ and save screenshots after test steps. This is useful for repeatable
 regression testing without manually operating the badge for every page.
 
 The regression suite `mini-browser-3.0-regression-selectable.py` also
-covers the 4.1 omnibox and history (tests 57-63). Each loaded page stays on
+covers the 4.1 omnibox and history (tests 57-63), tabs (tests 64-67) and the
+4.3 Back/Forward cache, stop key, error pages and gzip (tests 68-72). Each
+loaded page stays on
 screen for three seconds so the run can be followed on the badge; `--view N`
 changes the pause and `--fast` removes it:
 
 ``` sh
 ./mini-browser-3.0-regression-selectable.py --list
 ./mini-browser-3.0-regression-selectable.py --test 57-63
+./mini-browser-3.0-regression-selectable.py --test 68-72
 ./mini-browser-3.0-regression-selectable.py --fast
 ```
 
@@ -467,8 +528,7 @@ Content-Type, plus the current cookie-jar usage and browser limits.
 The trimmed BadgeVMS libcurl exposes only a small set of `CURLINFO` fields.
 Connection address/port, negotiated HTTP version, certificate details and
 certificate-verification result are therefore reported as unavailable rather
-than guessed. Effective/final URL and redirect metadata are also reported as
-unavailable because they are not reliable in this environment.
+than guessed.
 
 `WHY+B` or `WHY+I` returns to the page.
 
@@ -484,7 +544,12 @@ kept only in memory and are not persisted across browser restarts.
 Mini Browser stores up to 32 bookmarks and keeps up to 32 entries for
 Back and Forward.
 
-`WHY+B` moves backward and `WHY+G` moves forward. Navigating to a new
+`WHY+B` moves backward and `WHY+G` moves forward. Since 4.3 the last three
+pages you left are kept in a Back/Forward cache, with their scroll position
+and (up to 3 MB) their images: going Back or Forward to one of them, or
+leaving the bookmarks, history or Page Information page, shows it at once
+without loading it again. `WHY+R` always reloads from the network, and POST
+results are not cached. Navigating to a new
 page after going Back truncates the old forward branch. Reloading does
 not create a duplicate Back/Forward entry, and GET and POST form
 submissions participate in the same Back/Forward list.
@@ -506,13 +571,23 @@ Bookmarks and history are stored at:
 
 ## Networking
 
-Mini Browser uses libcurl and requests HTTP/1.1 where available. It
-requests uncompressed transfer data with:
-
-    Accept-Encoding: identity
-
+Mini Browser uses libcurl and requests HTTP/1.1 where available.
 Redirect following is bounded. Network failures and HTTP errors are
-shown as readable browser pages.
+shown as readable error pages.
+
+The BadgeVMS 4.3 firmware (https://github.com/mactjaap/firmware) extends its
+curl with what a browser needs: progress reporting and stopping a transfer,
+gzip/deflate decoding (using the inflater in the ESP32-P4 ROM), keeping the
+connection open between requests to the same site, and distinct errors for
+name resolution, connection, TLS, certificate and timeout failures. With that
+firmware Mini Browser asks for compressed pages with:
+
+    Accept-Encoding: gzip, deflate
+
+and reuses one connection for a page and its images, which saves a TLS
+handshake per request. On older firmware Mini Browser requests uncompressed
+data (`Accept-Encoding: identity`) and works as before, without the loading
+progress and stop key.
 
 ## Limits
 
@@ -529,6 +604,9 @@ shown as readable browser pages.
   Back/Forward entries                 32
   Persistent history            150 pages
   Omnibox suggestions                   5
+  Tabs                                  5
+  Back/Forward cache                3 pages
+  Cached images                      3 MiB
   Cookies                              12
   POST request body              2048 bytes
 
@@ -613,12 +691,17 @@ Home page:
 
 ## Version
 
-**Mini Browser 4.1** (development version `4.1-dev1`)
+**Mini Browser 4.3** (development version `4.3-dev1`)
 
-Version 4.1-dev1 adds the omnibox (`WHY+L`) with Google search and
-suggestions, and a persistent history of visited pages (`WHY+Y`, `WHY+X`).
-Tabs, a toolbar and menu, a new tab page and a settings page are planned for
-the next 4.1 development steps.
+Version 4.3-dev1 adds a loading line with progress, the `Esc` stop key, clear
+error pages with `R` to reload, a Back/Forward cache of three pages, gzip pages
+and connection reuse (the last three need the BadgeVMS 4.3 firmware). Cookies
+saved across restarts, a disk cache and downloads are planned for the next
+4.3 development step.
+
+Version 4.1 added the omnibox (`WHY+L`) with Google search and suggestions, a
+persistent history of visited pages (`WHY+Y`, `WHY+X`) and tabs (`WHY+T`,
+`WHY+W`, `WHY+Tab`, `WHY+1-5`, `WHY+A`).
 
 Version 3.0 adds PNG, JPEG and GIF image rendering, inline images, image sizing
 and scaling, multiple display modes and fullscreen BadgeVMS operation while

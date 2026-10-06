@@ -13,6 +13,14 @@
 #include <string.h>
 #include <strings.h>   /* for strncasecmp */
 #include <time.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <stdint.h>
+#if defined(__riscv)
+#include "badgevms/pathfuncs.h"   /* mkdir_p() */
+#else
+static bool mkdir_p(const char *path) { (void)path; return true; }   /* host test build */
+#endif
 
 /*
  * Diagnostic logging switches (compile-time, default on).
@@ -163,7 +171,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.3-dev1"
+#define MINI_BROWSER_VERSION "4.3-dev2"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -187,13 +195,13 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
  * Cookie storage and scratch buffers are static/global on purpose:
  * BadgeVMS gives the application task a tight stack budget.
  */
-#define MAX_COOKIES          12
-#define COOKIE_NAME_MAX      31
-#define COOKIE_VALUE_MAX     95
+#define MAX_COOKIES          32
+#define COOKIE_NAME_MAX      63
+#define COOKIE_VALUE_MAX    255
 #define COOKIE_DOMAIN_MAX    95
 #define COOKIE_PATH_MAX      95
-#define COOKIE_HEADER_MAX   768
-#define COOKIE_SET_MAX      384
+#define COOKIE_HEADER_MAX  1536
+#define COOKIE_SET_MAX      768
 
 /* --- Scroll repeat constants for hold-to-scroll --- */
 #define SCROLL_REPEAT_DELAY_MS 300
@@ -401,6 +409,12 @@ static bool bytes_look_like_image(const unsigned char *b, size_t n) {
  * All strings are bounded/static so Page Information does not add large
  * automatic buffers to the ESP32 task stack.
  */
+typedef enum {
+    FETCH_FROM_NETWORK = 0,
+    FETCH_FROM_CACHE,          /* fresh copy on flash, no request */
+    FETCH_FROM_CACHE_304       /* server said "Not Modified" */
+} fetch_source_t;
+
 typedef struct {
     char effective_url[URL_MAX];
     char content_type[96];
@@ -411,15 +425,164 @@ typedef struct {
     char request_method[5];       /* "GET" or "POST" */
     size_t request_body_bytes;
     int cookies_sent;
+
+    fetch_source_t source;        /* 4.3: network or disk cache */
 } fetch_meta_t;
 
 static fetch_meta_t g_fetch_meta;
+
+/* ---------- 4.3 part 2: clock ----------
+ *
+ * BadgeVMS has no network time: time() counts from boot.  Cookie expiry and
+ * cache freshness need the real time, so it is taken from the Date header
+ * every web server sends.  0 = not known yet.
+ */
+static long long g_clock_offset;
+static bool g_clock_valid;
+
+static long long clock_now(void) {
+    time_t t = time(NULL);
+    if (t > (time_t)1577836800) return (long long)t;           /* a real clock (2020+) */
+    if (!g_clock_valid) return 0;
+    return g_clock_offset + (long long)(SDL_GetTicks() / 1000);
+}
+
+/* "Sun, 06 Nov 1994 08:49:37 GMT" (also "06-Nov-94" cookie style) ->
+ * seconds since 1970 (UTC), or 0 when it cannot be read. */
+static long long http_date_parse(const char *value) {
+    static const char months[] = "janfebmaraprmayjunjulaugsepoctnovdec";
+    int day = 0, year = 0, hh = 0, mm = 0, ss = 0;
+    char mon[4] = "";
+    if (!value) return 0;
+    const char *p = strchr(value, ',');
+    p = p ? p + 1 : value;
+    if (sscanf(p, " %d%*[ -]%3s%*[ -]%d %d:%d:%d", &day, mon, &year, &hh, &mm, &ss) < 3)
+        return 0;
+    if (year < 100) year += year < 70 ? 2000 : 1900;
+    for (int i = 0; mon[i]; i++) mon[i] = (char)tolower((unsigned char)mon[i]);
+    const char *m = strlen(mon) == 3 ? strstr(months, mon) : NULL;
+    if (!m || (m - months) % 3) return 0;
+    int month = (int)(m - months) / 3;
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 60 || day < 1 || day > 31)
+        return 0;
+    /* Days since 1970-01-01 (days-from-civil), UTC. */
+    int y = year - (month < 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    long yoe = y - era * 400;
+    long doy = (153 * (month + (month < 2 ? 10 : -2)) + 2) / 5 + day - 1;
+    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long long days = era * 146097LL + doe - 719468;
+    long long t = days * 86400LL + (long long)hh * 3600 + (long long)mm * 60 + ss;
+    return t > 0 ? t : 1;   /* 1970 itself still means "in the past" */
+}
+
+static void clock_learn(long long server_now) {
+    if (server_now < 1577836800LL) return;
+    if (!g_clock_valid)
+        printf("[mini_browser] clock: set from the server Date header\n");
+    g_clock_offset = server_now - (long long)(SDL_GetTicks() / 1000);
+    g_clock_valid = true;
+}
+
+/* ---------- 4.3 part 2: response headers ----------
+ * Filled by the header callbacks of every request (page, image, download). */
+typedef struct {
+    char etag[96];
+    char last_modified[48];
+    char disposition[192];         /* Content-Disposition */
+    long long date;                /* Date */
+    long long expires;             /* Expires */
+    long max_age;                  /* Cache-Control: max-age (-1: none) */
+    bool no_store;
+    bool no_cache;
+    long long content_length;      /* -1: unknown */
+    bool download;                 /* 4.3: a file to download, not a page */
+} resp_headers_t;
+
+static resp_headers_t g_resp;
+static CURL *g_net_active;          /* handle of the transfer in progress */
+static bool g_fetch_is_page;        /* page fetch: may turn into a download */
+
+static void resp_reset(void) {
+    memset(&g_resp, 0, sizeof g_resp);
+    g_resp.max_age = -1;
+    g_resp.content_length = -1;
+}
+
+static void resp_copy(char *dst, size_t cap, const char *v, size_t n) {
+    if (n >= cap) n = cap - 1;
+    memcpy(dst, v, n);
+    dst[n] = 0;
+}
+
+/* Header value after "Name:" with surrounding whitespace/CRLF removed. */
+static bool header_value(const char *buffer, size_t n, const char *name,
+                         const char **value, size_t *value_len);
+
+/* The headers every request records (cache, download, clock). */
+static void resp_parse_header(const char *buffer, size_t n) {
+    const char *v;
+    size_t len;
+    static char tmp[128];
+    if (header_value(buffer, n, "ETag", &v, &len)) {
+        if (len < sizeof g_resp.etag) resp_copy(g_resp.etag, sizeof g_resp.etag, v, len);
+    } else if (header_value(buffer, n, "Last-Modified", &v, &len)) {
+        if (len < sizeof g_resp.last_modified)
+            resp_copy(g_resp.last_modified, sizeof g_resp.last_modified, v, len);
+    } else if (header_value(buffer, n, "Content-Disposition", &v, &len)) {
+        resp_copy(g_resp.disposition, sizeof g_resp.disposition, v, len);
+    } else if (header_value(buffer, n, "Content-Length", &v, &len)) {
+        resp_copy(tmp, sizeof tmp, v, len);
+        g_resp.content_length = atoll(tmp);
+    } else if (header_value(buffer, n, "Date", &v, &len)) {
+        resp_copy(tmp, sizeof tmp, v, len);
+        g_resp.date = http_date_parse(tmp);
+        clock_learn(g_resp.date);
+    } else if (header_value(buffer, n, "Expires", &v, &len)) {
+        resp_copy(tmp, sizeof tmp, v, len);
+        g_resp.expires = http_date_parse(tmp);
+    } else if (header_value(buffer, n, "Cache-Control", &v, &len)) {
+        resp_copy(tmp, sizeof tmp, v, len);
+        for (char *c = tmp; *c; c++) *c = (char)tolower((unsigned char)*c);
+        if (strstr(tmp, "no-store")) g_resp.no_store = true;
+        if (strstr(tmp, "no-cache")) g_resp.no_cache = true;
+        const char *ma = strstr(tmp, "max-age=");
+        if (ma) g_resp.max_age = atol(ma + 8);
+    } else if (header_value(buffer, n, "Pragma", &v, &len)) {
+        if (len >= 8 && !strncasecmp(v, "no-cache", 8)) g_resp.no_cache = true;
+    }
+}
+
+/* Can the browser show this response, or is it a file to download? */
+static bool content_type_is_viewable(const char *ct) {
+    if (!ct || !*ct) return true;               /* unknown: try to show it */
+    if (!strncasecmp(ct, "text/", 5)) return true;
+    if (!strncasecmp(ct, "image/png", 9) || !strncasecmp(ct, "image/jpeg", 10) ||
+        !strncasecmp(ct, "image/jpg", 9) || !strncasecmp(ct, "image/gif", 9))
+        return true;
+    return strstr(ct, "html") || strstr(ct, "xml") || strstr(ct, "json") ||
+           strstr(ct, "javascript");
+}
+
+static void response_check_download(void) {
+    long code = 0;
+    if (!g_fetch_is_page || !g_net_active) return;
+    curl_easy_getinfo(g_net_active, CURLINFO_RESPONSE_CODE, &code);
+    if (code < 200 || code >= 300) return;
+    bool attachment = !strncasecmp(g_resp.disposition, "attachment", 10);
+    if (attachment || !content_type_is_viewable(g_fetch_meta.content_type))
+        g_resp.download = true;
+}
 
 static size_t wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
     size_t n = sz * nm;
     mem_t *m = (mem_t*)ud;
     if (!m || !n) return n;
     if (m->truncated) return 0;
+
+    /* 4.3: a file to download is not read into memory: stop here and ask. */
+    if (m->len == 0 && !g_resp.download) response_check_download();
+    if (g_resp.download) return 0;
 
     if (!m->limit) {
         /* A page fetch that turns out to be a JPEG/PNG/GIF may use the image
@@ -2842,6 +3005,8 @@ typedef struct {
     bool secure;
     bool host_only;
     unsigned long age;
+    long long expires;           /* 4.3: 0 = session cookie (kept in memory only) */
+    long pending_age;            /* 4.3: Max-Age seen before the clock was known */
     char name[COOKIE_NAME_MAX + 1];
     char value[COOKIE_VALUE_MAX + 1];
     char domain[COOKIE_DOMAIN_MAX + 1];
@@ -3035,42 +3200,121 @@ static int cookie_store_slot(const char *name,
 }
 
 /*
- * Expires=<HTTP-date> -> true when the date is in the past.  The badge
- * often has no real-time clock, so when time() is not plausible only dates
- * before 2000 (the usual "Thu, 01 Jan 1970 00:00:00 GMT" logout idiom)
- * count as past.
+ * Expires=<HTTP-date> -> true when the date is in the past.  Without a
+ * known clock only dates before 2000 (the usual "Thu, 01 Jan 1970 00:00:00
+ * GMT" logout idiom) count as past.
  */
 static bool cookie_expires_in_past(const char *value) {
-    static const char months[] = "janfebmaraprmayjunjulaugsepoctnovdec";
-    int day = 0, year = 0, hh = 0, mm = 0, ss = 0;
-    char mon[4] = "";
-    const char *p = strchr(value, ',');
-    p = p ? p + 1 : value;
-    if (sscanf(p, " %d%*[ -]%3s%*[ -]%d %d:%d:%d", &day, mon, &year, &hh, &mm, &ss) < 3)
-        return false;
-    if (year < 100) year += year < 70 ? 2000 : 1900;
-    const char *m = NULL;
-    for (int i = 0; mon[i]; i++) mon[i] = (char)tolower((unsigned char)mon[i]);
-    if (strlen(mon) == 3) m = strstr(months, mon);
-    if (!m || (m - months) % 3) return false;
-    int month = (int)(m - months) / 3;
+    long long t = http_date_parse(value);
+    if (!t) return false;
+    long long now = clock_now();
+    if (!now) return t < 946684800LL;
+    return t <= now;
+}
 
-    time_t now = time(NULL);
-    if (now < (time_t)1577836800) /* before 2020: clock not set */
-        return year < 2000;
+/* ---------- 4.3 part 2: cookies saved across restarts ----------
+ *
+ * Cookies with Max-Age or Expires are written to COOKIE_FILE; session
+ * cookies stay in memory, as in other browsers.  The file is rewritten only
+ * when a saved cookie changes, from the main loop (never during a load).
+ */
+#define COOKIE_FILE "APPS:[mini_browser]cookies.txt"
+static bool g_cookie_dirty;
 
-    /* Days since epoch (civil-from-days inverse), UTC. */
-    int y = year - (month < 2);
-    long era = (y >= 0 ? y : y - 399) / 400;
-    long yoe = y - era * 400;
-    long doy = (153 * (month + (month < 2 ? 10 : -2)) + 2) / 5 + day - 1;
-    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    long long days = era * 146097LL + doe - 719468;
-    if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 60 ||
-        day < 1 || day > 31)
-        return false;
-    long long t = days * 86400LL + (long long)hh * 3600 + (long long)mm * 60 + ss;
-    return t <= (long long)now;
+static bool cookie_is_persistent(const mb_cookie_t *c) {
+    return c->used && (c->expires > 0 || c->pending_age > 0);
+}
+
+static bool cookie_expired(const mb_cookie_t *c, long long now) {
+    return c->expires > 0 && now > 0 && now >= c->expires;
+}
+
+/* Max-Age arrived before any Date header: count it from now on. */
+static void cookie_resolve_pending(void) {
+    long long now = clock_now();
+    if (!now) return;
+    for (int i = 0; i < MAX_COOKIES; i++) {
+        mb_cookie_t *c = &g_cookie_jar[i];
+        if (c->used && c->pending_age > 0) {
+            c->expires = now + c->pending_age;
+            c->pending_age = 0;
+            g_cookie_dirty = true;
+        }
+    }
+}
+
+__attribute__((noinline)) static void cookie_save(void) {
+    long long now = clock_now();
+    int saved = 0;
+    g_cookie_dirty = false;
+    remove(COOKIE_FILE);
+    FILE *f = NULL;
+    for (int i = 0; i < MAX_COOKIES; i++) {
+        mb_cookie_t *c = &g_cookie_jar[i];
+        if (!c->used || c->expires <= 0 || cookie_expired(c, now)) continue;
+        if (!f) f = fopen(COOKIE_FILE, "w");
+        if (!f) break;
+        fprintf(f, "%s\t%s\t%s\t%s\t%lld\t%d\t%d\n", c->domain, c->path, c->name, c->value,
+                c->expires, c->secure ? 1 : 0, c->host_only ? 1 : 0);
+        saved++;
+    }
+    if (f) fclose(f);
+    printf("[mini_browser] cookies: saved %d of %d\n", saved, cookie_count());
+}
+
+__attribute__((noinline)) static void cookie_load(void) {
+    static char line[COOKIE_DOMAIN_MAX + COOKIE_PATH_MAX + COOKIE_NAME_MAX + COOKIE_VALUE_MAX + 64];
+    FILE *f = fopen(COOKIE_FILE, "r");
+    if (!f) {
+        printf("[mini_browser] cookies: none saved\n");
+        return;
+    }
+    int loaded = 0, slot = 0;
+    while (fgets(line, sizeof line, f) && slot < MAX_COOKIES) {
+        line[strcspn(line, "\r\n")] = 0;
+        char *field[7];
+        int nf = 0;
+        for (char *p = line; nf < 7; ) {
+            field[nf++] = p;
+            char *tab = strchr(p, '\t');
+            if (!tab) break;
+            *tab = 0;
+            p = tab + 1;
+        }
+        if (nf != 7 || !field[0][0] || !field[2][0] || field[1][0] != '/' ||
+            strlen(field[0]) > COOKIE_DOMAIN_MAX || strlen(field[1]) > COOKIE_PATH_MAX ||
+            strlen(field[2]) > COOKIE_NAME_MAX || strlen(field[3]) > COOKIE_VALUE_MAX)
+            continue;
+        mb_cookie_t *c = &g_cookie_jar[slot++];
+        memset(c, 0, sizeof *c);
+        c->used = true;
+        snprintf(c->domain, sizeof c->domain, "%s", field[0]);
+        snprintf(c->path, sizeof c->path, "%s", field[1]);
+        snprintf(c->name, sizeof c->name, "%s", field[2]);
+        snprintf(c->value, sizeof c->value, "%s", field[3]);
+        c->expires = atoll(field[4]);
+        c->secure = atoi(field[5]) != 0;
+        c->host_only = atoi(field[6]) != 0;
+        c->age = g_cookie_age++;
+        loaded++;
+    }
+    fclose(f);
+    printf("[mini_browser] cookies: loaded %d saved\n", loaded);
+}
+
+static int cookie_persistent_count(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_COOKIES; i++)
+        if (cookie_is_persistent(&g_cookie_jar[i])) n++;
+    return n;
+}
+
+static void cookie_clear_all(void) {
+    int n = cookie_count();
+    memset(g_cookie_jar, 0, sizeof g_cookie_jar);
+    remove(COOKIE_FILE);
+    g_cookie_dirty = false;
+    printf("[mini_browser] cookies: cleared %d\n", n);
 }
 
 static void cookie_store_header(const char *value, size_t value_len) {
@@ -3078,6 +3322,9 @@ static void cookie_store_header(const char *value, size_t value_len) {
     bool secure = false;
     bool host_only = true;
     bool remove = false;
+    long long expires = 0;        /* 4.3: from Expires= */
+    long max_age = 0;             /* 4.3: from Max-Age= (wins over Expires) */
+    bool has_max_age = false;
 
     if (!value || !cookie_url_parts(g_cookie_request_url, &request_secure))
         return;
@@ -3165,8 +3412,10 @@ static void cookie_store_header(const char *value, size_t value_len) {
                 char *ep = NULL;
                 long age = strtol(av, &ep, 10);
                 if (ep != av && age <= 0) remove = true;
+                if (ep != av && age > 0) { max_age = age; has_max_age = true; }
             } else if (!strcasecmp(a, "expires")) {
                 if (cookie_expires_in_past(av)) remove = true;
+                else expires = http_date_parse(av);
             }
         } else {
             char saved = *end;
@@ -3194,8 +3443,10 @@ static void cookie_store_header(const char *value, size_t value_len) {
                            g_cookie_tmp_path);
 
     if (remove) {
-        if (slot >= 0)
+        if (slot >= 0) {
+            if (cookie_is_persistent(&g_cookie_jar[slot])) g_cookie_dirty = true;
             memset(&g_cookie_jar[slot], 0, sizeof(g_cookie_jar[slot]));
+        }
         printf("[mini_browser] cookie delete: %s count=%d\n",
                g_cookie_tmp_name, cookie_count());
         return;
@@ -3205,8 +3456,17 @@ static void cookie_store_header(const char *value, size_t value_len) {
                              g_cookie_tmp_domain,
                              g_cookie_tmp_path);
     mb_cookie_t *c = &g_cookie_jar[slot];
+    if (cookie_is_persistent(c)) g_cookie_dirty = true;   /* replaced or evicted */
     memset(c, 0, sizeof(*c));
     c->used = true;
+    if (has_max_age) {
+        long long now = clock_now();
+        if (now) c->expires = now + max_age;
+        else c->pending_age = max_age;
+    } else if (expires > 0) {
+        c->expires = expires;
+    }
+    if (cookie_is_persistent(c)) g_cookie_dirty = true;
     c->secure = secure;
     c->host_only = host_only;
     c->age = g_cookie_age++;
@@ -3234,9 +3494,15 @@ static bool cookie_make_request_header(const char *url) {
     g_cookie_header_value[0] = 0;
     if (!cookie_url_parts(url, &request_secure)) return false;
 
+    long long now = clock_now();
     for (int i = 0; i < MAX_COOKIES; i++) {
         mb_cookie_t *c = &g_cookie_jar[i];
         if (!c->used) continue;
+        if (cookie_expired(c, now)) {          /* 4.3: expired since it was stored */
+            memset(c, 0, sizeof *c);
+            g_cookie_dirty = true;
+            continue;
+        }
         if (c->secure && !request_secure) continue;
 
         bool domain_ok = c->host_only
@@ -3293,6 +3559,7 @@ static size_t cookie_header_cb(char *buffer, size_t size,
     const char *value;
     size_t len;
 
+    resp_parse_header(buffer, n);   /* 4.3: Date, cache and download headers */
     if (header_value(buffer, n, "Set-Cookie", &value, &len)) {
         /* g_cookie_request_url is the URL of this hop: redirects are
          * followed one request at a time by fetch_url(). */
@@ -3312,6 +3579,302 @@ static size_t cookie_header_cb(char *buffer, size_t size,
     return n;
 }
 
+
+/* ---------- 4.3 part 2: disk cache on FLASH0 ----------
+ *
+ * Pages and images are kept in CACHE_DIR, one file per URL, with the
+ * validators the server sent (ETag, Last-Modified) and its freshness
+ * (Cache-Control max-age / Expires).  On the next load:
+ *   - still fresh: the copy on flash is used, no request at all;
+ *   - otherwise the request carries If-None-Match / If-Modified-Since and a
+ *     "304 Not Modified" answer means the copy on flash is used.
+ * Only 200 responses to GET are stored, never POST results, error pages,
+ * "no-store" responses or bodies cut at a size limit.  Responses without a
+ * validator or freshness are not stored either (nothing to check them with).
+ *
+ * The total is CACHE_BUDGET bytes counted in whole 4 KB FAT clusters; the
+ * least recently used entries are removed first.  The index (hash, size,
+ * last use) is a small text file, saved from the main loop.
+ *
+ * Entry file: "MBC1\n" url "\n" etag "\n" last-modified "\n" content-type "\n"
+ *             stored-time "\n" max-age "\n" body-length "\n\n" body
+ */
+#define CACHE_DIR          "FLASH0:[MBCACHE]"
+#define CACHE_INDEX        CACHE_DIR "index.txt"
+#define CACHE_BUDGET       (2L * 1024 * 1024)
+#define CACHE_MAX_ENTRIES  160
+#define CACHE_CLUSTER      4096L
+#define CACHE_TOUCH_SAVE   10      /* save the index after this many uses */
+
+typedef struct {
+    uint32_t hash;
+    uint32_t size;          /* file size in bytes */
+    uint32_t stamp;         /* last use (higher = more recent) */
+} cache_entry_t;
+
+typedef struct {
+    char url[URL_MAX];
+    char etag[96];
+    char last_modified[48];
+    char content_type[96];
+    long long stored;       /* clock_now() when stored (0: unknown) */
+    long max_age;           /* seconds fresh after stored (-1: revalidate) */
+    long length;            /* body bytes */
+} cache_meta_t;
+
+static cache_entry_t g_cache[CACHE_MAX_ENTRIES];
+static int g_cache_count;
+static uint32_t g_cache_clock;
+static bool g_cache_ready;
+static bool g_cache_index_dirty;
+static int g_cache_touches;
+static bool g_cache_revalidate;     /* reload: never use a copy without asking */
+
+static uint32_t cache_hash(const char *url) {
+    uint32_t h = 2166136261u;                  /* FNV-1a */
+    for (const unsigned char *p = (const unsigned char *)url; *p; p++)
+        h = (h ^ *p) * 16777619u;
+    return h;
+}
+
+static void cache_path(uint32_t hash, char *out, size_t cap) {
+    snprintf(out, cap, CACHE_DIR "C%08lX.DAT", (unsigned long)hash);
+}
+
+static long cache_clusters(uint32_t size) {
+    return ((long)size + CACHE_CLUSTER - 1) / CACHE_CLUSTER * CACHE_CLUSTER;
+}
+
+static long cache_total(void) {
+    long total = 0;
+    for (int i = 0; i < g_cache_count; i++) total += cache_clusters(g_cache[i].size);
+    return total;
+}
+
+static int cache_find(uint32_t hash) {
+    for (int i = 0; i < g_cache_count; i++)
+        if (g_cache[i].hash == hash) return i;
+    return -1;
+}
+
+static void cache_drop(int i, bool delete_file) {
+    if (delete_file) {
+        char path[64];
+        cache_path(g_cache[i].hash, path, sizeof path);
+        remove(path);
+    }
+    g_cache[i] = g_cache[--g_cache_count];
+    g_cache_index_dirty = true;
+}
+
+__attribute__((noinline)) static void cache_save_index(void) {
+    g_cache_index_dirty = false;
+    g_cache_touches = 0;
+    FILE *f = fopen(CACHE_INDEX, "w");
+    if (!f) {
+        printf("[mini_browser] cache: cannot write %s\n", CACHE_INDEX);
+        return;
+    }
+    fprintf(f, "MBCI1 %lu\n", (unsigned long)g_cache_clock);
+    for (int i = 0; i < g_cache_count; i++)
+        fprintf(f, "%08lX %lu %lu\n", (unsigned long)g_cache[i].hash,
+                (unsigned long)g_cache[i].size, (unsigned long)g_cache[i].stamp);
+    fclose(f);
+}
+
+/* Files in the cache folder that the index does not know (after a power
+ * cut, for example) would use flash for nothing: remove them. */
+static void cache_remove_orphans(void) {
+#if defined(__riscv)
+    DIR *dir = opendir(CACHE_DIR);
+    if (!dir) return;
+    static char path[96];
+    int removed = 0;
+    struct dirent *e;
+    while ((e = readdir(dir)) != NULL) {
+        unsigned long h = 0;
+        char tail[8] = "";
+        if (sscanf(e->d_name, "C%8lX.%3s", &h, tail) != 2 || strcasecmp(tail, "DAT")) continue;
+        if (cache_find((uint32_t)h) >= 0) continue;
+        snprintf(path, sizeof path, CACHE_DIR "%s", e->d_name);
+        if (remove(path) == 0) removed++;
+    }
+    closedir(dir);
+    if (removed) printf("[mini_browser] cache: removed %d unlisted files\n", removed);
+#endif
+}
+
+__attribute__((noinline)) static void cache_init(void) {
+    if (!mkdir_p(CACHE_DIR)) {
+        printf("[mini_browser] cache: cannot create %s, cache off\n", CACHE_DIR);
+        return;
+    }
+    g_cache_ready = true;
+    FILE *f = fopen(CACHE_INDEX, "r");
+    if (f) {
+        static char line[64];
+        unsigned long clock = 0;
+        if (fgets(line, sizeof line, f) && sscanf(line, "MBCI1 %lu", &clock) == 1) {
+            g_cache_clock = (uint32_t)clock;
+            while (g_cache_count < CACHE_MAX_ENTRIES && fgets(line, sizeof line, f)) {
+                unsigned long h, size, stamp;
+                if (sscanf(line, "%lx %lu %lu", &h, &size, &stamp) != 3) continue;
+                if (cache_find((uint32_t)h) >= 0) continue;
+                g_cache[g_cache_count++] = (cache_entry_t){ (uint32_t)h, (uint32_t)size, (uint32_t)stamp };
+            }
+        }
+        fclose(f);
+    }
+    cache_remove_orphans();
+    printf("[mini_browser] cache: %d entries, %ld KB of %ld KB\n",
+           g_cache_count, cache_total() / 1024, CACHE_BUDGET / 1024);
+}
+
+static void cache_read_line(FILE *f, char *out, size_t cap) {
+    out[0] = 0;
+    if (!fgets(out, (int)cap, f)) return;
+    out[strcspn(out, "\r\n")] = 0;
+}
+
+/* Read the header of the entry for url; false when there is none. The file
+ * is left open at the start of the body in *fp when fp is not NULL. */
+__attribute__((noinline)) static bool cache_open(const char *url, cache_meta_t *meta, FILE **fp) {
+    static char path[64], line[URL_MAX + 8];
+    if (!g_cache_ready || !url) return false;
+    uint32_t h = cache_hash(url);
+    int i = cache_find(h);
+    if (i < 0) return false;
+    cache_path(h, path, sizeof path);
+    FILE *f = fopen(path, "rb");
+    if (!f) {                                  /* gone: forget it */
+        cache_drop(i, false);
+        return false;
+    }
+    cache_read_line(f, line, sizeof line);
+    bool ok = !strcmp(line, "MBC1");
+    if (ok) {
+        cache_read_line(f, meta->url, sizeof meta->url);
+        ok = !strcmp(meta->url, url);          /* another URL with the same hash */
+    }
+    if (ok) {
+        cache_read_line(f, meta->etag, sizeof meta->etag);
+        cache_read_line(f, meta->last_modified, sizeof meta->last_modified);
+        cache_read_line(f, meta->content_type, sizeof meta->content_type);
+        cache_read_line(f, line, sizeof line); meta->stored = atoll(line);
+        cache_read_line(f, line, sizeof line); meta->max_age = atol(line);
+        cache_read_line(f, line, sizeof line); meta->length = atol(line);
+        cache_read_line(f, line, sizeof line);
+        ok = !line[0] && meta->length >= 0 && meta->length <= IMAGE_DOWNLOAD_MAX;
+    }
+    if (!ok || !fp) fclose(f);
+    if (ok && fp) *fp = f;
+    return ok;
+}
+
+static bool cache_is_fresh(const cache_meta_t *meta) {
+    long long now = clock_now();
+    return !g_cache_revalidate && meta->max_age > 0 && meta->stored > 0 && now > 0 &&
+           now >= meta->stored && now < meta->stored + meta->max_age;
+}
+
+/* The body of the entry for url into m (replacing what it held). */
+__attribute__((noinline)) static bool cache_read_body(const char *url, cache_meta_t *meta, mem_t *m) {
+    FILE *f = NULL;
+    if (!cache_open(url, meta, &f)) return false;
+    char *buf = (char *)malloc((size_t)meta->length + 1);
+    bool ok = buf && fread(buf, 1, (size_t)meta->length, f) == (size_t)meta->length;
+    fclose(f);
+    if (!ok) {
+        free(buf);
+        int i = cache_find(cache_hash(url));
+        if (i >= 0) cache_drop(i, true);
+        return false;
+    }
+    buf[meta->length] = 0;
+    free(m->buf);
+    m->buf = buf;
+    m->len = (size_t)meta->length;
+    m->cap = (size_t)meta->length + 1;
+    m->truncated = false;
+    int i = cache_find(cache_hash(url));
+    if (i >= 0) {
+        g_cache[i].stamp = ++g_cache_clock;
+        if (++g_cache_touches >= CACHE_TOUCH_SAVE) g_cache_index_dirty = true;
+    }
+    return true;
+}
+
+/* Store a 200 response just received (g_resp holds its headers). */
+__attribute__((noinline)) static void cache_store(const char *url, const char *content_type,
+                                                  const char *body, size_t len) {
+    static char path[64];
+    if (!g_cache_ready || !url || !body || g_resp.no_store) return;
+    if (!g_resp.etag[0] && !g_resp.last_modified[0] && g_resp.max_age <= 0 &&
+        !(g_resp.expires > 0 && g_resp.date > 0 && g_resp.expires > g_resp.date))
+        return;                                /* nothing to validate it with */
+    if (strlen(url) >= URL_MAX || len > IMAGE_DOWNLOAD_MAX) return;
+
+    long max_age = -1;
+    if (!g_resp.no_cache) {
+        if (g_resp.max_age >= 0) max_age = g_resp.max_age;
+        else if (g_resp.expires > 0 && g_resp.date > 0 && g_resp.expires > g_resp.date)
+            max_age = (long)(g_resp.expires - g_resp.date);
+    }
+    long long stored = clock_now();
+
+    uint32_t h = cache_hash(url);
+    int old = cache_find(h);
+    if (old >= 0) cache_drop(old, true);
+
+    /* Room for it: oldest entries go first. */
+    long need = cache_clusters((uint32_t)(len + strlen(url) + 512));
+    while (g_cache_count > 0 && (cache_total() + need > CACHE_BUDGET || g_cache_count >= CACHE_MAX_ENTRIES)) {
+        int oldest = 0;
+        for (int i = 1; i < g_cache_count; i++)
+            if (g_cache[i].stamp < g_cache[oldest].stamp) oldest = i;
+        cache_drop(oldest, true);
+    }
+    if (need > CACHE_BUDGET) return;
+
+    cache_path(h, path, sizeof path);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    int hn = fprintf(f, "MBC1\n%s\n%s\n%s\n%s\n%lld\n%ld\n%lu\n\n", url, g_resp.etag,
+                     g_resp.last_modified, content_type ? content_type : "",
+                     stored, max_age, (unsigned long)len);
+    bool ok = hn > 0 && fwrite(body, 1, len, f) == len;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) {                                 /* flash full? */
+        remove(path);
+        printf("[mini_browser] cache: could not write %s\n", url);
+        return;
+    }
+    g_cache[g_cache_count++] = (cache_entry_t){ h, (uint32_t)(hn + len), ++g_cache_clock };
+    g_cache_index_dirty = true;
+    printf("[mini_browser] cache: stored %s (%u bytes, %ld KB used, %d entries)\n",
+           url, (unsigned)len, cache_total() / 1024, g_cache_count);
+}
+
+/* Request headers that ask "only send it when it changed". */
+static struct curl_slist *cache_conditional_headers(struct curl_slist *hdrs, const cache_meta_t *meta) {
+    static char line1[128], line2[80];
+    if (meta->etag[0]) {
+        snprintf(line1, sizeof line1, "If-None-Match: %s", meta->etag);
+        hdrs = curl_slist_append(hdrs, line1);
+    }
+    if (meta->last_modified[0]) {
+        snprintf(line2, sizeof line2, "If-Modified-Since: %s", meta->last_modified);
+        hdrs = curl_slist_append(hdrs, line2);
+    }
+    return hdrs;
+}
+
+static void cache_clear_all(void) {
+    int n = g_cache_count;
+    while (g_cache_count > 0) cache_drop(0, true);
+    cache_save_index();
+    printf("[mini_browser] cache: cleared %d entries\n", n);
+}
 
 /* ---------- curl fetch (tolerant to trimmed-down libcurl) ---------- */
 /* ---------- v1.2: proper HTTP status/error handling ---------- */
@@ -3341,6 +3904,7 @@ typedef struct {
     struct browser_s *b;          /* NULL: no loading line (background work) */
     bool stopped;                 /* Esc pressed: the transfer was stopped */
     bool images;                  /* loading the images of the new page */
+    const char *download_name;    /* 4.3: saving a download */
     int image_index, image_count;
     Uint64 next_draw;
 } load_state_t;
@@ -3349,8 +3913,10 @@ static load_state_t g_load;
 static int load_progress_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                             curl_off_t ultotal, curl_off_t ulnow);
 
-static size_t null_header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
-    (void)buffer; (void)userdata;
+/* Images: only the cache and clock headers (no cookies, no page metadata). */
+static size_t image_header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
+    (void)userdata;
+    resp_parse_header(buffer, size * nitems);
     return size * nitems;
 }
 
@@ -3399,6 +3965,19 @@ static void net_common_options(CURL *curl, bool decode, struct browser_s *b) {
 static double g_net_wire_bytes;
 
 static int fetch_one(const char *url, const char *post_body, mem_t *m, long *http_status) {
+    /* 4.3: a copy on flash that is still fresh needs no request at all. */
+    static cache_meta_t cached;
+    bool have_cached = !post_body && cache_open(url, &cached, NULL);
+    resp_reset();
+    if (have_cached && cache_is_fresh(&cached) && cache_read_body(url, &cached, m)) {
+        if (http_status) *http_status = 200;
+        snprintf(g_fetch_meta.content_type, sizeof g_fetch_meta.content_type, "%s", cached.content_type);
+        g_fetch_meta.source = FETCH_FROM_CACHE;
+        g_net_wire_bytes = 0;
+        printf("[mini_browser] cache: fresh %s (%u bytes)\n", url, (unsigned)m->len);
+        return 0;
+    }
+
     CURL *curl = net_acquire();
     if (!curl) return -2;
 
@@ -3443,6 +4022,7 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
         hdrs = curl_slist_append(hdrs,
             "Content-Type: application/x-www-form-urlencoded");
     }
+    if (have_cached) hdrs = cache_conditional_headers(hdrs, &cached);
 
     if (cookie_make_request_header(url)) {
         snprintf(g_cookie_header_line, sizeof(g_cookie_header_line),
@@ -3476,15 +4056,19 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
 
+    g_net_active = curl;
+    g_fetch_is_page = true;
     CURLcode res = curl_easy_perform(curl);
+    g_fetch_is_page = false;
+    g_net_active = NULL;
+    cookie_resolve_pending();
 
     /*
      * Even when the HTTP server returns 404/500, curl itself can still
      * return CURLE_OK. Therefore keep the HTTP status separately.
      */
     long code = 0;
-    if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code) == CURLE_OK && http_status)
-        *http_status = code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
 
     char *ctype = NULL;
     if (curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ctype) == CURLE_OK &&
@@ -3502,6 +4086,13 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
     net_release(curl);
     if (hdrs) curl_slist_free_all(hdrs);
 
+    /* A file to download: the transfer was stopped on purpose. */
+    if (g_resp.download) {
+        mem_reset(m);
+        if (http_status) *http_status = code;
+        return 0;
+    }
+
     /* A body cut at our size cap is still a usable (partial) page, and so
      * is the part received before the stop key was pressed. */
     if (res == CURLE_WRITE_ERROR && m->truncated) res = CURLE_OK;
@@ -3509,6 +4100,19 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
         m->truncated = true;
         res = CURLE_OK;
     }
+
+    /* 4.3: "304 Not Modified": the copy on flash is still right. */
+    if (res == CURLE_OK && code == 304 && have_cached) {
+        if (cache_read_body(url, &cached, m)) {
+            code = 200;
+            snprintf(g_fetch_meta.content_type, sizeof g_fetch_meta.content_type, "%s", cached.content_type);
+            g_fetch_meta.source = FETCH_FROM_CACHE_304;
+            printf("[mini_browser] cache: 304 not modified %s (%u bytes)\n", url, (unsigned)m->len);
+        }
+    } else if (res == CURLE_OK && code == 200 && !post_body && !m->truncated && m->len > 0) {
+        cache_store(url, g_fetch_meta.content_type, m->buf, m->len);
+    }
+    if (http_status) *http_status = code;
     return (res == CURLE_OK) ? 0 : (int)res;
 }
 
@@ -3627,6 +4231,16 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
 
     if (g_load.stopped) return (int)CURLE_ABORTED_BY_CALLBACK;   /* Esc: no more images */
 
+    /* 4.3: images are what the disk cache saves most on. */
+    static cache_meta_t cached;
+    bool have_cached = cache_open(url, &cached, NULL);
+    resp_reset();
+    if (have_cached && cache_is_fresh(&cached) && cache_read_body(url, &cached, m)) {
+        if (http_status) *http_status = 200;
+        printf("[mini_browser] cache: fresh %s (%u bytes)\n", url, (unsigned)m->len);
+        return 0;
+    }
+
     CURL *curl = net_acquire();
     if (!curl) return -2;
 
@@ -3643,10 +4257,11 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     hdrs = curl_slist_append(hdrs,
         "Accept: image/jpeg,image/png,image/gif,image/*;q=0.5,*/*;q=0.1");
     hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
+    if (have_cached) hdrs = cache_conditional_headers(hdrs, &cached);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
 
     /* Image responses must not set cookies or replace page metadata. */
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, null_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, image_header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, wr_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, m);
@@ -3674,6 +4289,16 @@ static int fetch_image_bytes(const char *url, mem_t *m, long *http_status) {
     if (res != CURLE_OK) {
         mem_reset(m);
         return (int)res;
+    }
+
+    long code = http_status ? *http_status : 0;
+    if (code == 304 && have_cached) {
+        if (cache_read_body(url, &cached, m)) {
+            *http_status = 200;
+            printf("[mini_browser] cache: 304 not modified %s (%u bytes)\n", url, (unsigned)m->len);
+        }
+    } else if (code == 200 && m->len > 0) {
+        cache_store(url, "", m->buf, m->len);
     }
     return 0;
 }
@@ -5617,6 +6242,7 @@ static page_t *page_info_to_page(const page_t *source,
 
              "RESPONSE\n"
              "Status: %ld\n"
+             "Loaded from: %s\n"
              "Content-Type: %s\n"
              "Effective URL:\n%s\n"
              "Redirects followed: %ld\n"
@@ -5632,7 +6258,10 @@ static page_t *page_info_to_page(const page_t *source,
              "Certificate verification result: not available\n\n"
 
              "COOKIE JAR\n"
-             "Stored: %d / %d\n\n"
+             "Stored: %d / %d (%d kept after a restart)\n\n"
+
+             "DISK CACHE\n"
+             "Used: %ld KB of %ld KB, %d files\n\n"
 
              "LIBCURL NOTES\n"
              "Available CURLINFO: response code,\n"
@@ -5640,6 +6269,7 @@ static page_t *page_info_to_page(const page_t *source,
              "Content type and redirects come from\n"
              "the response headers.\n\n"
 
+             "WHY+X clears all cookies and the disk cache.\n"
              "Press WHY+B or WHY+I to return.",
              title,
              (unsigned)g_fetch_meta.downloaded_bytes,
@@ -5653,12 +6283,17 @@ static page_t *page_info_to_page(const page_t *source,
              (unsigned)g_fetch_meta.request_body_bytes,
              g_fetch_meta.cookies_sent,
              http_status,
+             g_fetch_meta.source == FETCH_FROM_CACHE ? "disk cache (still fresh)" :
+             g_fetch_meta.source == FETCH_FROM_CACHE_304 ? "disk cache (checked: not modified)" :
+                                                           "network",
              ctype,
              final_url,
              g_fetch_meta.redirect_count,
              is_https ? "yes" : (is_http ? "no" : "(unknown)"),
              cookie_count(),
-             MAX_COOKIES);
+             MAX_COOKIES,
+             cookie_persistent_count(),
+             cache_total() / 1024, CACHE_BUDGET / 1024, g_cache_count);
 
     text[cap - 1] = 0;
     pg->text = text;
@@ -6745,7 +7380,8 @@ typedef enum {
     OVERLAY_NONE,
     OVERLAY_OPTIONS,     /* WHY+O display mode menu */
     OVERLAY_IMAGE,       /* image viewer */
-    OVERLAY_TABS         /* WHY+A tab overview */
+    OVERLAY_TABS,        /* WHY+A tab overview */
+    OVERLAY_DOWNLOAD     /* 4.3: "Download this file?" */
 } overlay_t;
 
 typedef enum {
@@ -6753,7 +7389,8 @@ typedef enum {
     VIEW_BOOKMARKS,      /* WHY+M */
     VIEW_PAGE_INFO,      /* WHY+I */
     VIEW_HISTORY,        /* WHY+Y */
-    VIEW_NEWTAB          /* WHY+T: a new, empty tab */
+    VIEW_NEWTAB,         /* WHY+T: a new, empty tab */
+    VIEW_DOWNLOADS       /* 4.3: WHY+D */
 } view_kind_t;
 
 typedef struct browser_s {
@@ -6802,6 +7439,12 @@ typedef struct browser_s {
     int sugg_sel;               /* -1 = the typed text itself */
 
     int tab_sel;                /* selected row in the tab overview */
+
+    /* 4.3: the file offered for download */
+    char dl_url[URL_MAX];
+    char dl_name[64];
+    char dl_type[64];
+    long long dl_size;          /* -1: unknown */
 
     char status_message[64];
     Uint64 status_message_until;
@@ -7303,7 +7946,10 @@ __attribute__((noinline)) static void browser_draw_loading(browser_t *b, curl_of
             snprintf(amount, sizeof amount, "%s", done);
         }
     }
-    if (g_load.images)
+    if (g_load.download_name)
+        snprintf(b->barline, sizeof b->barline, "Saving %s: %s - Esc stops",
+                 g_load.download_name, amount);
+    else if (g_load.images)
         snprintf(b->barline, sizeof b->barline, "Image %d of %d: %s - Esc stops",
                  g_load.image_index + 1, g_load.image_count, amount);
     else
@@ -7340,7 +7986,7 @@ static int load_progress_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
     if (screenshot_cancel_requested()) {   /* takes queued Esc presses only */
         g_load.stopped = true;
         printf("[mini_browser] stop: Esc pressed, %s stopped\n",
-               g_load.images ? "image loading" : "page load");
+               g_load.download_name ? "download" : g_load.images ? "image loading" : "page load");
         return 1;
     }
     Uint64 now = SDL_GetTicks();
@@ -7610,6 +8256,7 @@ static void browser_restore_shown_url(browser_t *b) {
         case VIEW_PAGE_INFO: snprintf(b->url_buf, sizeof b->url_buf, "page-info:"); break;
         case VIEW_HISTORY:   snprintf(b->url_buf, sizeof b->url_buf, "history:"); break;
         case VIEW_NEWTAB:    snprintf(b->url_buf, sizeof b->url_buf, "newtab:"); break;
+        case VIEW_DOWNLOADS: snprintf(b->url_buf, sizeof b->url_buf, "downloads:"); break;
     }
 }
 
@@ -7638,6 +8285,313 @@ __attribute__((noinline)) static void browser_log_page(browser_t *b, long http_s
            page->image_seen_count, page->image_count, inline_loaded);
     printf("[mini_browser] cookies: count=%d\n", cookie_count());
     browser_log_content(b->content_wrapped);
+}
+
+/* ---------- 4.3 part 2: downloads ----------
+ *
+ * A response the browser cannot show (zip, pdf, mp3, a binary...) or one
+ * sent with "Content-Disposition: attachment" is not read into memory: the
+ * load stops at its first bytes and the browser asks whether to save it.
+ * The file is then fetched again and written straight to DOWNLOAD_DIR, with
+ * the loading line and Esc to stop; a file that is not complete is removed.
+ * The list of saved files (WHY+D) is kept in DOWNLOAD_LIST.
+ */
+#define DOWNLOAD_DIR       "FLASH0:[DOWNLOADS]"
+#define DOWNLOAD_LIST      "APPS:[mini_browser]downloads.txt"
+#define DOWNLOAD_MAX       (4LL * 1024 * 1024)
+#define DOWNLOAD_LIST_MAX  50
+
+/* BadgeVMS file names: letters, digits, '_', '-', '$' and '.'. */
+static void download_sanitize(const char *in, size_t n, char *out, size_t cap) {
+    size_t o = 0;
+    for (size_t i = 0; i < n && in[i] && o + 1 < cap; i++) {
+        unsigned char c = (unsigned char)in[i];
+        bool ok = isalnum(c) || c == '_' || c == '-' || c == '$' || c == '.';
+        char ch = ok ? (char)c : '_';
+        if (ch == '_' && o > 0 && out[o - 1] == '_') continue;
+        if (ch == '.' && o == 0) continue;            /* no hidden names */
+        out[o++] = ch;
+    }
+    while (o > 0 && (out[o - 1] == '_' || out[o - 1] == '.')) o--;
+    out[o] = 0;
+    if (!o) snprintf(out, cap, "download");
+}
+
+/* Name from Content-Disposition, else from the last part of the URL path. */
+static void download_name_from(const char *url, const char *disposition, char *out, size_t cap) {
+    const char *v = NULL;
+    size_t n = 0;
+    const char *star = disposition ? strstr(disposition, "filename*=") : NULL;
+    const char *plain = disposition ? strstr(disposition, "filename=") : NULL;
+    if (star) {
+        v = star + 10;
+        const char *q = strstr(v, "''");             /* UTF-8''name */
+        if (q) v = q + 2;
+        n = strcspn(v, "; ");
+    } else if (plain) {
+        v = plain + 9;
+        if (*v == '"') { v++; n = strcspn(v, "\""); }
+        else n = strcspn(v, "; ");
+    }
+    if (!v || !n) {
+        const char *p = strstr(url, "://");
+        p = p ? p + 3 : url;
+        size_t path_len = strcspn(p, "?#");
+        const char *last = NULL;
+        for (const char *q = p; q < p + path_len; q++)
+            if (*q == '/') last = q;
+        v = last ? last + 1 : "";
+        n = last ? (size_t)(p + path_len - v) : 0;
+    }
+    download_sanitize(v, n, out, cap);
+}
+
+static bool file_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+/* DOWNLOAD_DIR + name, with -2, -3, ... before the extension when taken. */
+static void download_unique_path(const char *name, char *path, size_t cap) {
+    snprintf(path, cap, DOWNLOAD_DIR "%s", name);
+    if (!file_exists(path)) return;
+    const char *dot = strrchr(name, '.');
+    int base_len = dot ? (int)(dot - name) : (int)strlen(name);
+    for (int i = 2; i < 100; i++) {
+        snprintf(path, cap, DOWNLOAD_DIR "%.*s-%d%s", base_len, name, i, dot ? dot : "");
+        if (!file_exists(path)) return;
+    }
+}
+
+typedef struct {
+    FILE *f;
+    long long written;
+    bool write_failed;
+    bool too_big;
+} download_sink_t;
+
+static size_t download_write_cb(void *ptr, size_t sz, size_t nm, void *ud) {
+    download_sink_t *d = (download_sink_t *)ud;
+    size_t n = sz * nm;
+    if (d->written + (long long)n > DOWNLOAD_MAX) {
+        d->too_big = true;
+        return 0;
+    }
+    if (fwrite(ptr, 1, n, d->f) != n) {
+        d->write_failed = true;
+        return 0;
+    }
+    d->written += (long long)n;
+    return n;
+}
+
+/* Newest first, at most DOWNLOAD_LIST_MAX lines "path<TAB>bytes<TAB>url". */
+__attribute__((noinline)) static void downloads_record(const char *path, long long bytes, const char *url) {
+    static char lines[DOWNLOAD_LIST_MAX][URL_MAX + 160];
+    int count = 0;
+    FILE *f = fopen(DOWNLOAD_LIST, "r");
+    if (f) {
+        while (count < DOWNLOAD_LIST_MAX - 1 && fgets(lines[count], sizeof lines[count], f)) {
+            lines[count][strcspn(lines[count], "\r\n")] = 0;
+            char *tab = strchr(lines[count], '\t');
+            if (!lines[count][0] || !tab) continue;
+            if ((size_t)(tab - lines[count]) == strlen(path) && !strncmp(lines[count], path, strlen(path)))
+                continue;                       /* same file saved again */
+            count++;
+        }
+        fclose(f);
+    }
+    remove(DOWNLOAD_LIST);
+    f = fopen(DOWNLOAD_LIST, "w");
+    if (!f) return;
+    fprintf(f, "%s\t%lld\t%s\n", path, bytes, url);
+    for (int i = 0; i < count; i++) fprintf(f, "%s\n", lines[i]);
+    fclose(f);
+}
+
+static void format_size(char *out, size_t cap, long long bytes) {
+    if (bytes < 0) snprintf(out, cap, "unknown size");
+    else if (bytes < 1024) snprintf(out, cap, "%lld bytes", bytes);
+    else if (bytes < 1024 * 1024) snprintf(out, cap, "%lld KB", (bytes + 1023) / 1024);
+    else snprintf(out, cap, "%lld.%lld MB", bytes / (1024 * 1024), (bytes % (1024 * 1024)) * 10 / (1024 * 1024));
+}
+
+/* Save b->dl_url to flash (after Enter on the download question). */
+__attribute__((noinline)) static void browser_download(browser_t *b) {
+    static char path[128], size_text[32], message[64];
+    if (b->dl_size > DOWNLOAD_MAX) {
+        browser_set_status(b, "FILE TOO BIG (MAX 4 MB)", 2000);
+        printf("[mini_browser] download: refused, %lld bytes is over the limit\n", b->dl_size);
+        return;
+    }
+    mkdir_p(DOWNLOAD_DIR);
+    download_unique_path(b->dl_name, path, sizeof path);
+    download_sink_t sink = { 0 };
+    sink.f = fopen(path, "wb");
+    if (!sink.f) {
+        browser_set_status(b, "CANNOT WRITE TO FLASH0", 2000);
+        printf("[mini_browser] download: cannot create %s\n", path);
+        return;
+    }
+
+    CURL *curl = net_acquire();
+    if (!curl) {
+        fclose(sink.f);
+        remove(path);
+        return;
+    }
+    curl_easy_setopt(curl, CURLOPT_URL, b->dl_url);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);       /* big files take time; idle timeout only */
+    net_common_options(curl, false, b);
+
+    struct curl_slist *hdrs = NULL;
+    hdrs = curl_slist_append(hdrs, "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
+                                   "(compatible; MiniBrowser/" MINI_BROWSER_VERSION ")");
+    hdrs = curl_slist_append(hdrs, "Accept: */*");
+    hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
+    if (cookie_make_request_header(b->dl_url)) {
+        snprintf(g_cookie_header_line, sizeof g_cookie_header_line, "Cookie: %s", g_cookie_header_value);
+        hdrs = curl_slist_append(hdrs, g_cookie_header_line);
+    }
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, image_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, download_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+
+    printf("[mini_browser] download: saving %s to %s\n", b->dl_url, path);
+    memset(&g_load, 0, sizeof g_load);
+    g_load.b = b;
+    g_load.download_name = b->dl_name;
+    browser_draw_loading(b, b->dl_size > 0 ? b->dl_size : 0, 0);
+    g_load.next_draw = SDL_GetTicks() + 150;
+
+    resp_reset();
+    CURLcode res = curl_easy_perform(curl);
+    long code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    net_release(curl);
+    curl_slist_free_all(hdrs);
+    if (fclose(sink.f) != 0) sink.write_failed = true;
+
+    const char *problem = NULL;
+    if (g_load.stopped) problem = "DOWNLOAD STOPPED";
+    else if (sink.too_big) problem = "FILE TOO BIG (MAX 4 MB)";
+    else if (sink.write_failed) problem = "FLASH FULL - DOWNLOAD REMOVED";
+    else if (res != CURLE_OK) problem = "DOWNLOAD FAILED";
+    else if (code < 200 || code >= 300) problem = "DOWNLOAD FAILED (HTTP ERROR)";
+
+    if (problem) {
+        remove(path);
+        printf("[mini_browser] download: %s (curl %d, HTTP %ld, %lld bytes), file removed\n",
+               problem, (int)res, code, sink.written);
+        browser_set_status(b, problem, 2500);
+    } else {
+        downloads_record(path, sink.written, b->dl_url);
+        format_size(size_text, sizeof size_text, sink.written);
+        printf("[mini_browser] download: saved %s (%lld bytes)\n", path, sink.written);
+        snprintf(message, sizeof message, "SAVED %s (%s)", b->dl_name, size_text);
+        browser_set_status(b, message, 3000);
+    }
+    g_load.b = NULL;
+    b->dirty = true;
+}
+
+/* "Download this file?" over the page. */
+__attribute__((noinline)) static void browser_render_download(browser_t *b) {
+    static char line[URL_MAX + 160], text[160], size_text[32], host[96];
+    SDL_Renderer *ren = b->ren;
+    const int x = 40, w = VIEW_W - 80, h = 9 * (CH_H + LINE_SPACING) + 24;
+    const int y = (VIEW_H - h) / 2;
+    SDL_FRect box = { (float)x, (float)y, (float)w, (float)h };
+    SDL_SetRenderDrawColor(ren, 0x11, 0x18, 0x26, 255);
+    SDL_RenderFillRect(ren, &box);
+    SDL_SetRenderDrawColor(ren, 0x64, 0xEF, 0xFE, 255);
+    SDL_RenderRect(ren, &box);
+
+    int ty = y + 12;
+    const int step = CH_H + LINE_SPACING;
+    colored_text(line, sizeof line, 0xFFFB96, "Download this file?");
+    draw_text(ren, x + 14, ty, line, w - 28); ty += 2 * step;
+    draw_text(ren, x + 14, ty, b->dl_name, w - 28); ty += step;
+    format_size(size_text, sizeof size_text, b->dl_size);
+    snprintf(text, sizeof text, "%s, %s", b->dl_type[0] ? b->dl_type : "unknown type", size_text);
+    colored_text(line, sizeof line, 0x9CA3AF, text);
+    draw_text(ren, x + 14, ty, line, w - 28); ty += step;
+    url_host(b->dl_url, host, sizeof host);
+    snprintf(text, sizeof text, "from %s", host);
+    colored_text(line, sizeof line, 0x9CA3AF, text);
+    draw_text(ren, x + 14, ty, line, w - 28); ty += 2 * step;
+    colored_text(line, sizeof line, 0x9CA3AF, "Saved to FLASH0:[DOWNLOADS] (WHY+D lists them)");
+    draw_text(ren, x + 14, ty, line, w - 28); ty += 2 * step;
+    colored_text(line, sizeof line, 0x64EFFE, b->dl_size > DOWNLOAD_MAX
+                     ? "Too big (max 4 MB) - Esc: back" : "Enter: download    Esc: cancel");
+    draw_text(ren, x + 14, ty, line, w - 28);
+}
+
+/* WHY+D: the files saved so far. */
+__attribute__((noinline)) static page_t *downloads_to_page(int *count_out) {
+    static char line[URL_MAX + 160], size_text[32], host[96];
+    page_t *pg = (page_t *)calloc(1, sizeof(page_t));
+    if (!pg) return NULL;
+    snprintf(pg->base, URL_MAX, "downloads:");
+    snprintf(pg->title, sizeof(pg->title), "Downloads");
+    size_t cap = 1024 + (size_t)DOWNLOAD_LIST_MAX * (URL_MAX + 200);
+    char *text = (char *)malloc(cap);
+    if (!text) { free(pg); return NULL; }
+    size_t used = 0;
+    int count = 0;
+#define DL_APPEND(...) do { \
+        int n_ = snprintf(text + used, cap - used, __VA_ARGS__); \
+        if (n_ > 0) used += ((size_t)n_ < cap - used) ? (size_t)n_ : cap - used - 1; \
+    } while (0)
+    DL_APPEND("= DOWNLOADS =\n\n");
+    FILE *f = fopen(DOWNLOAD_LIST, "r");
+    if (f) {
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            char *t1 = strchr(line, '\t');
+            char *t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
+            if (!t1 || !t2) continue;
+            *t1 = 0; *t2 = 0;
+            const char *name = strchr(line, ']');
+            name = name ? name + 1 : line;
+            format_size(size_text, sizeof size_text, atoll(t1 + 1));
+            url_host(t2 + 1, host, sizeof host);
+            DL_APPEND("%d. %s\n    %s, from %s%s\n\n", ++count, name, size_text, host,
+                      file_exists(line) ? "" : " (deleted)");
+        }
+        fclose(f);
+    }
+    if (!count) DL_APPEND("No downloads yet.\n\nA link to a file the browser cannot show\n(zip, pdf, mp3, ...) offers to save it.\n\n");
+    DL_APPEND("Saved in FLASH0:[DOWNLOADS], max 4 MB per file.\n"
+              "WHY+D returns, WHY+X deletes all downloaded files.\n");
+#undef DL_APPEND
+    text[cap - 1] = 0;
+    pg->text = text;
+    if (count_out) *count_out = count;
+    return pg;
+}
+
+/* WHY+X on the Downloads page. */
+static void downloads_delete_all(void) {
+    static char line[URL_MAX + 160];
+    int removed = 0;
+    FILE *f = fopen(DOWNLOAD_LIST, "r");
+    if (f) {
+        while (fgets(line, sizeof line, f)) {
+            char *tab = strchr(line, '\t');
+            if (!tab) continue;
+            *tab = 0;
+            if (!strncmp(line, DOWNLOAD_DIR, strlen(DOWNLOAD_DIR)) && remove(line) == 0) removed++;
+        }
+        fclose(f);
+    }
+    remove(DOWNLOAD_LIST);
+    printf("[mini_browser] downloads: deleted %d files\n", removed);
 }
 
 __attribute__((noinline)) static void browser_fetch(browser_t *b) {
@@ -7704,9 +8658,14 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     static fetch_meta_t shown_meta;
     shown_meta = g_fetch_meta;
 
+    /* Reload (WHY+R, Enter) asks the server even when the cached copy is
+     * still fresh; Back/Forward and new pages may use it directly. */
+    g_cache_revalidate = history_navigation && !bf_navigation;
+
     mem_t m = {0};
     long http_status = 0;
     int rc = fetch_url(b->url_buf, was_post ? b->post_body : NULL, &m, &http_status);
+    g_cache_revalidate = false;
 
     b->pending_post = false;
     b->post_body[0] = 0;
@@ -7717,6 +8676,23 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
         g_fetch_meta = shown_meta;
         printf("[mini_browser] stop: nothing received, staying on %s\n", b->url_buf);
         browser_set_status(b, "STOPPED", 1500);
+        g_load.b = NULL;
+        free(m.buf);
+        return;
+    }
+
+    if (rc == 0 && g_resp.download) {
+        /* A file, not a page: stay on the page and ask (Enter saves it). */
+        snprintf(b->dl_url, sizeof b->dl_url, "%s",
+                 g_fetch_meta.effective_url[0] ? g_fetch_meta.effective_url : b->url_buf);
+        snprintf(b->dl_type, sizeof b->dl_type, "%s", g_fetch_meta.content_type);
+        download_name_from(b->dl_url, g_resp.disposition, b->dl_name, sizeof b->dl_name);
+        b->dl_size = g_resp.content_length;
+        browser_restore_shown_url(b);
+        g_fetch_meta = shown_meta;
+        b->overlay = OVERLAY_DOWNLOAD;
+        printf("[mini_browser] download: offered %s (%s, %lld bytes) from %s\n",
+               b->dl_name, b->dl_type[0] ? b->dl_type : "unknown type", b->dl_size, b->dl_url);
         g_load.b = NULL;
         free(m.buf);
         return;
@@ -8062,6 +9038,7 @@ __attribute__((noinline)) static void browser_render(browser_t *b) {
     if (b->overlay == OVERLAY_IMAGE) draw_image_viewer(b->ren, &g_viewer_image);
     else if (b->overlay == OVERLAY_OPTIONS) browser_render_options(b);
     else if (b->overlay == OVERLAY_TABS) browser_render_tabs(b);
+    else if (b->overlay == OVERLAY_DOWNLOAD) { browser_render_page(b); browser_render_download(b); }
     else browser_render_page(b);
 
     if (b->input == INPUT_URL && b->sugg_count > 0 && b->overlay == OVERLAY_NONE)
@@ -8256,8 +9233,38 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
             break;
         }
 
-        case SDL_SCANCODE_X:   /* clear history (only on the history page) */
-            if (b->view == VIEW_HISTORY) {
+        case SDL_SCANCODE_D: { /* 4.3: DOWNLOADS */
+            if (b->view == VIEW_DOWNLOADS) {
+                browser_return_from_local_page(b);
+            } else {
+                int count = 0;
+                page_t *pg = downloads_to_page(&count);
+                if (pg) {
+                    browser_show_local_page(b, pg, VIEW_DOWNLOADS, "downloads:");
+                    b->last_http_status = 0;
+                    printf("[mini_browser] opened downloads: %d files\n", count);
+                    browser_log_content(b->content_wrapped);   /* for the regression suite */
+                }
+            }
+            break;
+        }
+
+        case SDL_SCANCODE_X:   /* clear: history / downloads / cookies + cache */
+            if (b->view == VIEW_DOWNLOADS) {
+                downloads_delete_all();
+                page_t *pg = downloads_to_page(NULL);
+                if (pg) {
+                    char *wrapped = wrap_text(pg->text, k_max_cols);
+                    browser_set_page(b, pg);
+                    browser_set_content(b, wrapped);
+                }
+                browser_set_status(b, "DOWNLOADS DELETED", 1500);
+            } else if (b->view == VIEW_PAGE_INFO) {
+                cookie_clear_all();
+                cache_clear_all();
+                bfcache_clear();
+                browser_set_status(b, "COOKIES AND CACHE CLEARED", 2000);
+            } else if (b->view == VIEW_HISTORY) {
                 visit_clear();
                 page_t *pg = history_to_page();
                 if (pg) {
@@ -8474,6 +9481,20 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
     /* Phase 3 Fix 15 options menu consumes ordinary 1/2/3/4/Escape. */
     if (b->overlay == OVERLAY_OPTIONS) {
         browser_handle_options_key(b, sc);
+        return;
+    }
+
+    /* 4.3: "Download this file?": Enter saves, Esc cancels. */
+    if (b->overlay == OVERLAY_DOWNLOAD && sc != SC_ACCELERATOR && !b->accel_down) {
+        b->inhibit_text_once = true;
+        if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER || sc == SDL_SCANCODE_Y) {
+            b->overlay = OVERLAY_NONE;
+            browser_download(b);
+        } else if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_N) {
+            b->overlay = OVERLAY_NONE;
+            printf("[mini_browser] download: cancelled %s\n", b->dl_name);
+            browser_set_status(b, "DOWNLOAD CANCELLED", 1500);
+        }
         return;
     }
 
@@ -8764,6 +9785,8 @@ int main(void) {
     /* Load persistent bookmarks and history from BadgeVMS storage. */
     bookmark_load();
     visit_load();
+    cookie_load();     /* 4.3 */
+    cache_init();      /* 4.3 */
 
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
@@ -8792,6 +9815,10 @@ int main(void) {
          * page is being loaded (see g_visit_save_due). */
         if (g_visit_save_due)
             visit_save();
+        if (g_cookie_dirty)           /* 4.3: saved cookies changed */
+            cookie_save();
+        if (g_cache_index_dirty)      /* 4.3: disk cache index */
+            cache_save_index();
 
         browser_clamp_scroll(b);
 
@@ -8818,6 +9845,8 @@ int main(void) {
 
     SDL_StopTextInput(b->win);
     if (g_visit_unsaved) visit_save();
+    if (g_cookie_dirty) cookie_save();
+    if (g_cache_index_dirty || g_cache_touches) cache_save_index();
     tab_free_all_background();
     bfcache_clear();
     image_release_all();

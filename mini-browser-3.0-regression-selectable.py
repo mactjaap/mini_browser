@@ -68,6 +68,17 @@ CONFIG = {
         "bad_host": "nonexistent.invalid",
         # A page that does not exist on minibrowser.macip.net.
         "missing_page": "this-page-does-not-exist-43.html",
+        # 4.3-dev2: a binary file (application/octet-stream) to download.
+        "download_url": "httpbin.org/bytes/20000",
+        "download_name": "20000",
+        "download_bytes": 20000,
+        # A JSON page sent with "Content-Disposition: attachment".
+        "attachment_url": "httpbin.org/response-headers?content-disposition=attachment",
+        # A cookie with Max-Age (kept after a restart) for the restart test.
+        "persistent_cookie_url": "httpbin.org/response-headers?set-cookie=mbkeep=43;max-age=3600",
+        "cookie_check_url": "httpbin.org/cookies",
+        # Quits and restarts Mini Browser, like CONFIG["v41"]["test_restart"].
+        "test_cookie_restart": False,
     },
 
     "v41": {
@@ -2969,6 +2980,155 @@ def v43_cases(badge):
         ("4.3 gzip: compressed response decoded", lambda: v43_gzip(badge)),
     ]
 
+
+# ---------------------------------------------------------------------------
+# MINI BROWSER 4.3 PART 2: DISK CACHE, DOWNLOADS, SAVED COOKIES
+# ---------------------------------------------------------------------------
+
+def v43_cache_page(badge):
+    page = CONFIG["v41"]["history_pages"][0]           # a static .html page
+    v41_open_page(badge, page)
+    badge.clear_log()
+    badge.why("R")                                      # reload: asks the server
+    line = badge.wait_for(
+        r"\[mini_browser\] cache: (304 not modified|stored) https://minibrowser\.macip\.net/" + re.escape(page),
+        DEFAULT_TIMEOUT)
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(page), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    if "stored" in line:
+        # First time on this badge: the reload stored it; a second reload must hit.
+        badge.clear_log()
+        badge.why("R")
+        badge.wait_for(r"\[mini_browser\] cache: 304 not modified https://minibrowser\.macip\.net/"
+                       + re.escape(page), DEFAULT_TIMEOUT)
+        badge.settle(0.8)
+    return [f"{page}: reload answered with 304, page shown from the disk cache"]
+
+
+def v43_cache_image(badge):
+    url = CONFIG["phase3final"]["url"]
+    image = CONFIG["phase3final"]["image_url_pattern"]
+    badge.clear_log()
+    badge.why("E")
+    badge.settle(0.5)
+    badge.type_text(url)
+    badge.settle(0.2)
+    badge.enter()
+    badge.wait_for(CONFIG["phase3final"]["url_pattern"], DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.settle(0.8)
+    badge.clear_log()
+    badge.why("R")
+    badge.wait_for(r"\[mini_browser\] cache: (304 not modified|fresh) " + image, DEFAULT_TIMEOUT)
+    badge.wait_for(CONFIG["phase3final"]["url_pattern"], DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    badge.view("images from the disk cache")
+    return ["mb.png came from the disk cache on reload"]
+
+
+def v43_download(badge):
+    cfg = CONFIG["v43"]
+    page = CONFIG["v41"]["history_pages"][0]
+    v41_open_page(badge, page)
+    v41_type_in_omnibox(badge, cfg["download_url"], "L")
+    badge.enter()
+    badge.wait_for(r"\[mini_browser\] download: offered " + re.escape(cfg["download_name"]), DEFAULT_TIMEOUT)
+    badge.settle(1.0)
+    badge.view("download question")
+    badge.clear_log()
+    badge.enter()
+    line = badge.wait_for(r"\[mini_browser\] download: (saved|.*file removed)", 60)
+    m = re.search(r"saved (\S+) \((\d+) bytes\)", line)
+    if not m:
+        raise RuntimeError(f"Download failed: {line}")
+    if int(m.group(2)) != cfg["download_bytes"]:
+        raise RuntimeError(f"Saved {m.group(2)} bytes, expected {cfg['download_bytes']}")
+    badge.settle(1.0)
+    badge.clear_log()
+    badge.why("D")
+    badge.wait_for(r"\[mini_browser\] opened downloads: (\d+) files", 15)
+    badge.wait_for(r"^--- CONTENT END ---$", 10)
+    content = latest_content_block(badge)
+    require_content(content, cfg["download_name"])
+    badge.view("downloads page")
+    badge.why("D")                                      # back to the page
+    badge.settle(1.0)
+    return [f"Saved {m.group(1)} ({m.group(2)} bytes)", "Listed on the Downloads page (WHY+D)"]
+
+
+def v43_download_cancel(badge):
+    cfg = CONFIG["v43"]
+    v41_type_in_omnibox(badge, cfg["attachment_url"], "L")
+    badge.enter()
+    line = badge.wait_for(r"\[mini_browser\] download: offered (\S+)", DEFAULT_TIMEOUT)
+    badge.settle(1.0)
+    badge.clear_log()
+    badge.press(0x29)                                   # Esc
+    badge.wait_for(r"\[mini_browser\] download: cancelled", 10)
+    badge.settle(0.5)
+    if any("download: saved" in l or "download: saving" in l for l in badge.get_lines()):
+        raise RuntimeError("Esc did not cancel the download")
+    name = re.search(r"offered (\S+)", line).group(1)
+    return ["Content-Disposition: attachment offered a download", name + ": Esc cancelled it"]
+
+
+def v43_clear_cookies_cache(badge):
+    page = CONFIG["v41"]["history_pages"][0]
+    v41_open_page(badge, page)
+    badge.clear_log()
+    badge.why("I")
+    badge.wait_for(r"\[mini_browser\] page info: status=", 15)
+    badge.settle(0.8)
+    badge.view("page information")
+    badge.clear_log()
+    badge.why("X")
+    badge.wait_for(r"\[mini_browser\] cookies: cleared \d+", 10)
+    line = badge.wait_for(r"\[mini_browser\] cache: cleared (\d+) entries", 10)
+    badge.why("B")
+    badge.wait_for(r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(page), DEFAULT_TIMEOUT)
+    badge.settle(0.8)
+    entries = re.search(r"(\d+) entries", line).group(1)
+    return ["WHY+X on Page Information cleared cookies and " + entries + " cache files"]
+
+
+def v43_cookie_restart(badge):
+    cfg = CONFIG["v43"]
+    v41_type_in_omnibox(badge, cfg["persistent_cookie_url"], "L")
+    badge.enter()
+    badge.wait_for(r"\[mini_browser\] cookie store: mbkeep=", DEFAULT_TIMEOUT)
+    badge.wait_for(r"HTTP 200", DEFAULT_TIMEOUT)
+    badge.settle(1.0)
+    badge.clear_log()
+    badge.why("Q")
+    badge.wait_for(r"\[mini_browser\] cookies: saved [1-9]\d* of", 20)
+    badge.wait_for(r"\[mini_browser\] exit main", 20)
+    badge.settle(2.0)
+    badge.clear_log()
+    badge.enter()                                       # launcher: start again
+    line = badge.wait_for(r"\[mini_browser\] cookies: loaded (\d+) saved", 30)
+    badge.wait_for(CONFIG["home"]["url_pattern"], 60)
+    badge.settle(1.0)
+    v41_type_in_omnibox(badge, cfg["cookie_check_url"], "L")
+    badge.enter()
+    badge.wait_for(r"HTTP 200.*https://" + re.escape(cfg["cookie_check_url"]), DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 15)
+    require_content(latest_content_block(badge), "mbkeep")
+    loaded = re.search(r"loaded (\d+)", line).group(1)
+    return [loaded + " saved cookie(s) loaded at start", "mbkeep sent again after the restart"]
+
+
+def v43_dev2_cases(badge):
+    cases = [
+        ("4.3 Disk cache: reload of a page answered with 304", lambda: v43_cache_page(badge)),
+        ("4.3 Disk cache: images from the cache on reload", lambda: v43_cache_image(badge)),
+        ("4.3 Download: save a file, Downloads page (WHY+D)", lambda: v43_download(badge)),
+        ("4.3 Download: attachment offered, Esc cancels", lambda: v43_download_cancel(badge)),
+        ("4.3 Page Information: WHY+X clears cookies and cache", lambda: v43_clear_cookies_cache(badge)),
+    ]
+    if CONFIG["v43"]["test_cookie_restart"]:
+        cases.append(("4.3 Cookies: Max-Age cookie survives a restart", lambda: v43_cookie_restart(badge)))
+    return cases
+
 def v41_cases(badge):
     cases = [
         ("4.1 Omnibox: search from empty bar (WHY+L)", lambda: v41_search_empty_bar(badge)),
@@ -3098,6 +3258,7 @@ def test_catalog():
     names.extend(description for description, _ in v41_cases(None))
     names.extend(description for description, _ in tabs_cases(None))
     names.extend(description for description, _ in v43_cases(None))
+    names.extend(description for description, _ in v43_dev2_cases(None))
     return names
 
 def parse_args():
@@ -3638,6 +3799,16 @@ def main():
 
         # Mini Browser 4.3 part 1: stop, error pages, back/forward cache, gzip.
         for description, test_func in v43_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 4.3 part 2: disk cache, downloads, saved cookies.
+        for description, test_func in v43_dev2_cases(badge):
             run_test(
                 results,
                 number,

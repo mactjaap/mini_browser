@@ -2,7 +2,7 @@
     "unique_identifier": "mini_browser",
     "name": "Mini Browser",
     "author": "MacTjaap",
-    "version": "4.3-dev1",
+    "version": "4.3-dev2",
     "interpreter": "",
     "metadata_file": "",
     "binary_path": "mini_browser.elf",

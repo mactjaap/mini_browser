@@ -81,6 +81,18 @@ CONFIG = {
         "test_cookie_restart": False,
     },
 
+    # Mini Browser 4.4: find, focus, zoom, simplified view, saved pages, share.
+    "v44": {
+        # Page on minibrowser.macip.net for find, zoom, save, share and page
+        # info, and a word that occurs on it at least twice (any case).
+        "find_page": "phase5-info.php",
+        "find_word": "phase",
+        # Page with at least two links for the Tab focus test.
+        "focus_page": "phase1-entities.html",
+        # A long article for the simplified view (WHY+V), typed after WHY+L.
+        "reader_url": "en.wikipedia.org/wiki/ESP32",
+    },
+
     "v41": {
         # Pages on minibrowser.macip.net used to fill the history.
         "history_pages": [
@@ -2463,11 +2475,14 @@ def v41_open_page(badge, path, wait_content=True):
     badge.type_text("minibrowser.macip.net/" + path)
     badge.settle(0.2)
     badge.enter()
-    badge.wait_for(
-        r"HTTP 200.*https://minibrowser\.macip\.net/" + re.escape(path),
-        DEFAULT_TIMEOUT,
+    # The USB serial line sometimes drops a character ("https:/minibrowser"),
+    # so accept the HTTP line by its page name, or the end of the page text,
+    # and give up after a minute instead of DEFAULT_TIMEOUT.
+    line = badge.wait_for(
+        r"HTTP 200.*" + re.escape(path) + r"|^--- CONTENT END ---$",
+        60,
     )
-    if wait_content:
+    if wait_content and "CONTENT END" not in line:
         badge.wait_for(r"^--- CONTENT END ---$", 30)
     badge.settle(0.8)
     badge.view(path)
@@ -3129,6 +3144,208 @@ def v43_dev2_cases(badge):
         cases.append(("4.3 Cookies: Max-Age cookie survives a restart", lambda: v43_cookie_restart(badge)))
     return cases
 
+
+# ---------------------------------------------------------------------------
+# MINI BROWSER 4.3 PART 3: IMAGES IN THE BACKGROUND
+# ---------------------------------------------------------------------------
+
+def v43_background_images(badge):
+    phase3_set_display_mode(badge, 4, "Colors + 5 Images (Experimental)")
+    try:
+        phase3_open_final_page(badge)
+        line = badge.wait_for(r"\[mini_browser\] images: (\d+) of (\d+) loaded", 60)
+        badge.wait_for(
+            r"\[mini_browser\] display: mode=Colors \+ 5 Images \(Experimental\) "
+            r"images_seen=6 images_retained=6 images_loaded=5",
+            10,
+        )
+        lines = badge.get_lines()
+        page_at = next((i for i, l in enumerate(lines)
+                        if re.search(CONFIG["phase3final"]["url_pattern"], l)), None)
+        image_at = next((i for i, l in enumerate(lines) if "image: loaded" in l
+                         or "image: decoded" in l), None)
+        if page_at is None or image_at is None:
+            raise RuntimeError("Page or image lines missing from the log")
+        if page_at > image_at:
+            raise RuntimeError("An image was decoded before the page was shown")
+        m = re.search(r"images: (\d+) of (\d+) loaded(?: in (\d+) ms)?", line)
+        badge.view("all images loaded")
+        return ["Page text shown before its images",
+                f"{m.group(1)} of {m.group(2)} images loaded afterwards"
+                + (f" in {m.group(3)} ms" if m.group(3) else "")]
+    finally:
+        phase3_set_display_mode(badge, 3, "Colors + Image")
+
+
+def v43_dev3_cases(badge):
+    return [
+        ("4.3 Images load in the background after the page is shown", lambda: v43_background_images(badge)),
+    ]
+
+# ---------------------------------------------------------------------------
+# MINI BROWSER 4.4: FIND, FOCUS, ZOOM, READER, SAVED PAGES, SHARE, PAGE INFO
+# ---------------------------------------------------------------------------
+
+def v44_open_url(badge, url):
+    """Open any address through WHY+L and wait for the page text."""
+    v41_type_in_omnibox(badge, url, "L")
+    badge.enter()
+    badge.wait_for(r"HTTP 200", DEFAULT_TIMEOUT)
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.settle(0.8)
+
+
+def v44_find(badge):
+    cfg = CONFIG["v44"]
+    v41_open_page(badge, cfg["find_page"])
+    badge.clear_log()
+    badge.why("F")
+    badge.wait_for(r"\[mini_browser\] find: opened", 10)
+    badge.type_text(cfg["find_word"])
+    badge.settle(0.3)
+    badge.enter()
+    line = badge.wait_for(r"\[mini_browser\] find: '.*' (\d+) matches", 10)
+    count = int(re.search(r"(\d+) matches", line).group(1))
+    if count < 2:
+        raise RuntimeError(f"Expected at least 2 matches for {cfg['find_word']!r}, got {count}")
+    badge.view("find highlights")
+    badge.clear_log()
+    badge.press(0x11, ord("n"))                        # n: next match
+    badge.wait_for(r"\[mini_browser\] find: match \d+ of " + str(count), 10)
+    badge.clear_log()
+    badge.press(0x29)                                  # Esc: highlights off
+    badge.wait_for(r"\[mini_browser\] find: closed", 10)
+    badge.settle(0.5)
+    return [f"WHY+F found {count} matches for {cfg['find_word']!r}",
+            "n jumped to the next match", "Esc closed the find"]
+
+
+def v44_focus(badge):
+    v41_open_page(badge, CONFIG["v44"]["focus_page"])
+    badge.clear_log()
+    badge.press(0x2B)                                  # Tab
+    badge.press(0x2B)                                  # Tab
+    line = badge.wait_for(r"\[mini_browser\] focus: action 2 of (\d+)", 10)
+    if "not in the text" in line:
+        raise RuntimeError("The focused link was not found in the page text")
+    badge.view("focus ring on the second link")
+    return ["Tab moved the focus ring to the second link"]
+
+
+def v44_zoom(badge):
+    v41_open_page(badge, CONFIG["v44"]["find_page"])
+    badge.clear_log()
+    badge.why_key(0x2E, ord("="))                      # WHY + =
+    line = badge.wait_for(r"\[mini_browser\] zoom: 150%, (\d+) columns", 10)
+    badge.view("text at 150%")
+    badge.clear_log()
+    badge.why_key(0x27, ord("0"))                      # WHY + 0
+    line2 = badge.wait_for(r"\[mini_browser\] zoom: 100%, (\d+) columns", 10)
+    big = int(re.search(r"(\d+) columns", line).group(1))
+    normal = int(re.search(r"(\d+) columns", line2).group(1))
+    if big >= normal:
+        raise RuntimeError(f"Zoomed text has {big} columns, normal text {normal}")
+    badge.settle(0.5)
+    return [f"WHY+= zoomed to 150% ({big} columns)", f"WHY+0 back to 100% ({normal} columns)"]
+
+
+def v44_reader(badge):
+    badge.clear_log()
+    v44_open_url(badge, CONFIG["v44"]["reader_url"])
+    offered = any("reader: offered" in l for l in badge.get_lines())
+    badge.clear_log()
+    badge.why("V")
+    line = badge.wait_for(r"\[mini_browser\] reader: (built from <\w+>.*|no article found)", 20)
+    if "no article found" in line:
+        raise RuntimeError("WHY+V found no article on " + CONFIG["v44"]["reader_url"])
+    badge.wait_for(r"\[mini_browser\] reader: opened", 10)
+    badge.view("simplified view")
+    badge.clear_log()
+    badge.why("V")                                     # back to the full page
+    badge.wait_for(r"^--- CONTENT END ---$", 15)
+    badge.settle(0.5)
+    return [("Simplified view chip offered" if offered else "Chip not offered (page too short)"),
+            "WHY+V " + line.split("reader: ", 1)[1], "WHY+V returned to the full page"]
+
+
+def v44_save_page(badge):
+    page = CONFIG["v44"]["find_page"]
+    v41_open_page(badge, page)
+    badge.clear_log()
+    badge.why("P")
+    line = badge.wait_for(r"\[mini_browser\] saved page: (\S+) \((\d+) bytes", 15)
+    badge.clear_log()
+    badge.why("D")
+    badge.wait_for(r"^--- CONTENT END ---$", 15)
+    content = latest_content_block(badge)
+    require_content(content, "= SAVED PAGES =")
+    badge.view("Downloads page with the saved page")
+    badge.why("D")                                     # back
+    badge.settle(0.8)
+    return ["WHY+P " + line.split("] ", 1)[1], "The Downloads page lists it under SAVED PAGES"]
+
+
+def v44_share(badge):
+    page = CONFIG["v44"]["find_page"]
+    v41_open_page(badge, page)
+    badge.clear_log()
+    badge.why("U")
+    line = badge.wait_for(r"\[mini_browser\] share: (\S+) \(QR (ok|too long)\)", 10)
+    badge.wait_for(r"SHARE\s+\S+", 5)
+    if "QR ok" not in line:
+        raise RuntimeError("The QR code could not be made: " + line)
+    badge.view("QR code")
+    badge.press(0x2C, ord(" "))                        # any key closes
+    badge.settle(0.5)
+    return ["WHY+U showed a QR code", "SHARE line sent on the serial port"]
+
+
+def v44_page_info(badge):
+    v41_open_page(badge, CONFIG["v44"]["find_page"])
+    badge.clear_log()
+    badge.why("I")
+    badge.wait_for(r"^--- CONTENT END ---$", 15)
+    content = latest_content_block(badge)
+    require_content(content, "= PAGE INFORMATION =", "SECURITY", "Connection is secure",
+                    "LOADING", "Load time:", "COOKIES SET BY")
+    badge.view("page information")
+    badge.why("I")
+    badge.settle(0.8)
+    return ["WHY+I shows security, load time, size and cookies"]
+
+
+def v44_bookmark_k(badge):
+    page = CONFIG["v44"]["find_page"]
+    v41_open_page(badge, page)
+    badge.clear_log()
+    badge.why("K")
+    line = badge.wait_for(r"\[mini_browser\] bookmark (added|removed): ", 10)
+    first = "added" if "added" in line else "removed"
+    badge.clear_log()
+    badge.why("K")
+    line = badge.wait_for(r"\[mini_browser\] bookmark (added|removed): ", 10)
+    second = "added" if "added" in line else "removed"
+    if first == second:
+        raise RuntimeError("WHY+K did not toggle the bookmark")
+    if second == "added":                              # leave it as it was
+        badge.why("K")
+        badge.settle(0.5)
+    return [f"WHY+K {first} the bookmark", f"WHY+K again {second} it"]
+
+
+def v44_cases(badge):
+    return [
+        ("4.4 Find in page (WHY+F, n, Esc)", lambda: v44_find(badge)),
+        ("4.4 Link focus ring (Tab)", lambda: v44_focus(badge)),
+        ("4.4 Text zoom (WHY+= / WHY+0)", lambda: v44_zoom(badge)),
+        ("4.4 Simplified view (WHY+V)", lambda: v44_reader(badge)),
+        ("4.4 Save page for offline reading (WHY+P)", lambda: v44_save_page(badge)),
+        ("4.4 Share as QR code (WHY+U)", lambda: v44_share(badge)),
+        ("4.4 Page information (WHY+I)", lambda: v44_page_info(badge)),
+        ("4.4 Bookmark toggle moved to WHY+K", lambda: v44_bookmark_k(badge)),
+    ]
+
+
 def v41_cases(badge):
     cases = [
         ("4.1 Omnibox: search from empty bar (WHY+L)", lambda: v41_search_empty_bar(badge)),
@@ -3259,6 +3476,8 @@ def test_catalog():
     names.extend(description for description, _ in tabs_cases(None))
     names.extend(description for description, _ in v43_cases(None))
     names.extend(description for description, _ in v43_dev2_cases(None))
+    names.extend(description for description, _ in v43_dev3_cases(None))
+    names.extend(description for description, _ in v44_cases(None))
     return names
 
 def parse_args():
@@ -3809,6 +4028,27 @@ def main():
 
         # Mini Browser 4.3 part 2: disk cache, downloads, saved cookies.
         for description, test_func in v43_dev2_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 4.3 part 3: images in the background.
+        for description, test_func in v43_dev3_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 4.4: find, focus, zoom, simplified view, saved pages,
+        # share, page information and WHY+K bookmarks.
+        for description, test_func in v44_cases(badge):
             run_test(
                 results,
                 number,

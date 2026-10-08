@@ -96,7 +96,6 @@ static void *mb_stbi_realloc(void *p, size_t n) {
 #define STBI_ONLY_GIF
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-#include "qrcodegen_mb.h"   /* 4.4 Share: QR code (Project Nayuki, MIT) */
 
 
 /*
@@ -172,7 +171,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.4-dev1"
+#define MINI_BROWSER_VERSION "4.3-dev2"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -365,16 +364,9 @@ static const unsigned char font5x7[96][5] = {
 #define FONT_W_COLS 5
 #define FONT_H_ROWS 7
 #define FONT_COL_GAP 1
-/* 4.4: text zoom.  FONT_SCALE is the scale of the text being drawn right
- * now: g_page_scale (WHY+= / WHY+-) for page content, 2 for the bar and
- * menus.  PAGE_SCALE_BEGIN/END switch to the page scale for a block. */
-static int g_font_scale = 2;
-static int g_page_scale = 2;
-#define FONT_SCALE  g_font_scale
+#define FONT_SCALE  2
 #define CH_W ((FONT_W_COLS + FONT_COL_GAP) * FONT_SCALE)
 #define CH_H ((FONT_H_ROWS) * FONT_SCALE)
-#define PAGE_SCALE_BEGIN() int saved_font_scale_ = g_font_scale; g_font_scale = g_page_scale
-#define PAGE_SCALE_END()   g_font_scale = saved_font_scale_
 
 /* External Unicode glyph geometry. Needed by wrapping and rendering. */
 #define UNICODE_GLYPH_BYTES 32
@@ -435,8 +427,6 @@ typedef struct {
     int cookies_sent;
 
     fetch_source_t source;        /* 4.3: network or disk cache */
-    unsigned load_ms;             /* 4.4: request to page shown */
-    double wire_bytes;            /* 4.4: bytes received (compressed), 0: unknown */
 } fetch_meta_t;
 
 static fetch_meta_t g_fetch_meta;
@@ -695,9 +685,6 @@ typedef struct {
     char *strings;                /* NUL-separated link/image URL pool */
     size_t strings_len;
     size_t strings_cap;
-    char *html;                   /* 4.4: the HTML, for reader mode */
-    size_t html_len;
-    bool reader_offer;            /* 4.4: show the "Simplified view" chip */
 } page_t;
 
 #define PAGE_STRINGS_MAX (64 * 1024)
@@ -2797,7 +2784,6 @@ static void free_page(page_t *page) {
     free(page->text);
     free(page->text_template);
     free(page->strings);
-    free(page->html);
     free(page);
 }
 
@@ -2815,7 +2801,7 @@ static int wrap_glyph_width(unsigned cp) {
         return CH_W;
 
     if (cp >= 0x80 && cp <= 0x10FFFF)
-        return (UNICODE_GLYPH_W + 1) * FONT_SCALE / 2;
+        return UNICODE_GLYPH_W + 1;
 
     return 0;
 }
@@ -2838,17 +2824,7 @@ static int wrap_token_width(const char *s, size_t start, size_t end) {
  * markers as standalone logical lines. Definition is in the image section. */
 static int is_image_marker_line(const char *line, int len, int *index);
 
-static char *wrap_text_scaled(const char *in, int max_cols);
-
-/* Wrapping measures text at the page's zoom. */
 static char *wrap_text(const char *in, int max_cols) {
-    PAGE_SCALE_BEGIN();
-    char *out = wrap_text_scaled(in, max_cols);
-    PAGE_SCALE_END();
-    return out;
-}
-
-static char *wrap_text_scaled(const char *in, int max_cols) {
     if (!in) return NULL;
 
     size_t n = strlen(in);
@@ -3929,8 +3905,6 @@ typedef struct {
     bool stopped;                 /* Esc pressed: the transfer was stopped */
     bool images;                  /* loading the images of the new page */
     const char *download_name;    /* 4.3: saving a download */
-    bool background;              /* 4.3: image loaded while the page is in use */
-    bool yielded;                 /* 4.3: interrupted by a key, try again later */
     int image_index, image_count;
     Uint64 next_draw;
 } load_state_t;
@@ -4489,6 +4463,31 @@ static int load_image_url(const char *url, int target_max_w, int target_max_h,
                                  target_max_w, target_max_h, out);
     free(m.buf);
     return ok;
+}
+
+static int load_page_images(const page_t *page) {
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
+        decoded_image_release(&g_inline_images[i]);
+
+    int inline_limit = display_inline_image_limit();
+    if (!page || inline_limit <= 0)
+        return 0;
+
+    int count = page->image_count;
+    if (count > inline_limit) count = inline_limit;
+
+    int loaded = 0;
+    g_load.images = true;
+    g_load.image_count = count;
+    for (int i = 0; i < count && !g_load.stopped; i++) {
+        g_load.image_index = i;
+        if (load_image_url(page_image_src(page, i),
+                           IMAGE_DRAW_MAX_W, IMAGE_DRAW_MAX_H,
+                           &g_inline_images[i]))
+            loaded++;
+    }
+    g_load.images = false;
+    return loaded;
 }
 
 static void image_draw_size(const page_image_t *spec,
@@ -5107,9 +5106,8 @@ static void draw_unicode_char_ex(SDL_Renderer *r, int x, int y, unsigned cp, boo
                 SDL_RenderFillRects(r, rects, n);
                 n = 0;
             }
-            const float f = (float)FONT_SCALE / 2.0f;     /* 4.4: zoom */
-            rects[n++] = (SDL_FRect){ (float)x + (float)(col + skew) * f, (float)y + (float)row * f,
-                                      (float)(run - col + 1) * f, f };
+            rects[n++] = (SDL_FRect){ (float)(x + col + skew), (float)(y + row),
+                                      (float)(run - col + 1), 1.0f };
             col = run;
         }
     }
@@ -5129,27 +5127,7 @@ typedef struct {
     bool custom_background;
     unsigned char bg_r, bg_g, bg_b;
     unsigned char dir;
-    unsigned char mark;          /* 4.4: MARK_FIND, MARK_FIND_CURRENT, MARK_FOCUS */
 } visual_glyph_t;
-
-/* 4.4: highlighted byte ranges of the line being drawn (find matches,
- * the focused link or field).  Offsets are relative to that line. */
-#define MARK_FIND          1
-#define MARK_FIND_CURRENT  2
-#define MARK_FOCUS         3
-#define LINE_MARKS_MAX     24
-typedef struct { size_t start, end; unsigned char kind; } line_mark_t;
-static line_mark_t g_line_marks[LINE_MARKS_MAX];
-static int g_line_mark_count;
-
-static unsigned char line_mark_at(size_t offset) {
-    unsigned char kind = 0;
-    for (int i = 0; i < g_line_mark_count; i++)
-        if (offset >= g_line_marks[i].start && offset < g_line_marks[i].end &&
-            g_line_marks[i].kind > kind)
-            kind = g_line_marks[i].kind;
-    return kind;
-}
 
 #define TEXT_COLOR_NORMAL  0
 #define TEXT_COLOR_LINK    1
@@ -5450,9 +5428,6 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
         }
     }
 
-    /* 4.4: focus ring around the focused link/field (one box per row). */
-    int focus_x0 = -1, focus_x1 = 0, focus_y = 0;
-
     for (int i = 0; i < count; i++) {
         unsigned cp = g[i].cp;
         if (cp == 0xA0)
@@ -5466,29 +5441,6 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
             cx = x;
             cy += (CH_H + LINE_SPACING);
             rows++;
-        }
-
-        if (g[i].mark == MARK_FOCUS) {
-            if (focus_x0 >= 0 && focus_y != cy) {
-                SDL_FRect ring = { (float)(focus_x0 - 2), (float)(focus_y - 2),
-                                   (float)(focus_x1 - focus_x0 + 4), (float)(CH_H + 4) };
-                SDL_SetRenderDrawColor(r, 0x64, 0xEF, 0xFE, 255);
-                SDL_RenderRect(r, &ring);
-                focus_x0 = -1;
-            }
-            if (focus_x0 < 0) { focus_x0 = cx; focus_y = cy; }
-            focus_x1 = cx + char_w;
-        }
-        if (g[i].mark == MARK_FIND || g[i].mark == MARK_FIND_CURRENT) {
-            if (g[i].mark == MARK_FIND_CURRENT) SDL_SetRenderDrawColor(r, 0xFF, 0x8F, 0x00, 255);
-            else SDL_SetRenderDrawColor(r, 0xFF, 0xE0, 0x60, 255);
-            SDL_FRect hl = { (float)cx, (float)(cy - 1), (float)char_w, (float)(CH_H + 2) };
-            SDL_RenderFillRect(r, &hl);
-            SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
-            if (cp >= 32 && cp <= 126) draw_char_ex(r, cx, cy, (char)cp, g[i].italic);
-            else if (cp >= 0x80 && cp <= 0x10FFFF) draw_unicode_char_ex(r, cx, cy, cp, g[i].italic);
-            cx += char_w;
-            continue;
         }
 
         /* Phase 2B: paint the background cell first.  This intentionally
@@ -5534,12 +5486,6 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
         }
 
         cx += char_w;
-    }
-    if (focus_x0 >= 0) {
-        SDL_FRect ring = { (float)(focus_x0 - 2), (float)(focus_y - 2),
-                           (float)(focus_x1 - focus_x0 + 4), (float)(CH_H + 4) };
-        SDL_SetRenderDrawColor(r, 0x64, 0xEF, 0xFE, 255);
-        SDL_RenderRect(r, &ring);
     }
     return rows;
 }
@@ -5773,7 +5719,6 @@ static int draw_text_ex(SDL_Renderer *r, int x, int y, const char *s, size_t L,
         bool saw_newline = false;
 
         while (i < L) {
-            size_t glyph_at = i;
             unsigned cp = utf8_next(s, L, &i);
             if (cp == 0)
                 break;
@@ -5802,7 +5747,6 @@ static int draw_text_ex(SDL_Renderer *r, int x, int y, const char *s, size_t L,
                 line[count].bg_g = st->background.g;
                 line[count].bg_b = st->background.b;
                 line[count].dir = DIR_NEUTRAL;
-                line[count].mark = g_line_mark_count ? line_mark_at(glyph_at) : 0;
                 count++;
             }
         }
@@ -5920,12 +5864,9 @@ static void draw_logo(SDL_Renderer *r) {
 }
 
 /* --- draw URL bar text, clipped from the LEFT, starting at URL_TEXT_X --- */
-static bool g_bar_lock;     /* 4.4: draw the lock: an https page is shown */
-static void draw_bar_lock(SDL_Renderer *r);
-
 static void draw_bar(SDL_Renderer *r, const char *text) {
     if (!text) text = "";
-    int max_cols = (VIEW_W - URL_TEXT_X - PAD_LR - (g_bar_lock ? 22 : 0)) / CH_W;
+    int max_cols = (VIEW_W - URL_TEXT_X - PAD_LR) / CH_W;
     if (max_cols < 4) max_cols = 4;
 
     size_t n = strlen(text);
@@ -5956,7 +5897,6 @@ static void draw_ui(SDL_Renderer *r, const char *bar_text) {
 
     SDL_SetRenderDrawColor(r, 220, 220, 220, 255);
     draw_bar(r, bar_text);
-    if (g_bar_lock) draw_bar_lock(r);
 
     SDL_FRect mid = (SDL_FRect){0, URLBAR_H + 1, VIEW_W, 2};
     SDL_SetRenderDrawColor(r, 60, 60, 60, 255);
@@ -6189,7 +6129,7 @@ static page_t *bookmarks_to_page(void) {
     if (g_bookmark_count == 0) {
         snprintf(text + used, cap - used,
                  "No bookmarks yet.\n\n"
-                 "Press WHY+K on a web page to add one.");
+                 "Press WHY+F on a web page to add one.");
 
         pg->text = text;
         return pg;
@@ -6231,79 +6171,6 @@ static page_t *bookmarks_to_page(void) {
 }
 
 /* ---------- Phase 5: Page Information ---------- */
-
-static void format_kb(char *out, size_t cap, curl_off_t bytes);
-
-/* 4.4: security, the site's cookies, load time and sizes, at the top of
- * Page Information. */
-__attribute__((noinline)) static char *page_info_extend(char *text, size_t cap, const page_t *source,
-                                                        const char *url) {
-    static char host[COOKIE_DOMAIN_MAX + 1], when[48], size_a[32], size_b[32];
-    size_t extra_cap = 2048 + (size_t)MAX_COOKIES * 160;
-    char *out = (char *)malloc(cap + extra_cap);
-    if (!out) return text;
-    size_t o = 0;
-#define PI_APPEND(...) do { int n_ = snprintf(out + o, cap + extra_cap - o, __VA_ARGS__); \
-        if (n_ > 0) o += ((size_t)n_ < cap + extra_cap - o) ? (size_t)n_ : cap + extra_cap - o - 1; } while (0)
-    bool https = url && !strncasecmp(url, "https://", 8);
-    bool secure_req = false;
-    host[0] = 0;
-    if (url && cookie_url_parts(url, &secure_req))
-        snprintf(host, sizeof host, "%s", g_cookie_host);
-
-    PI_APPEND("= PAGE INFORMATION =\n\n");
-    PI_APPEND("SECURITY\n");
-    if (https)
-        PI_APPEND("Connection is secure (HTTPS).\nCertificate: verified for %s\nby the built-in certificate bundle.\n\n",
-                  host[0] ? host : "this site");
-    else
-        PI_APPEND("Connection is NOT secure (HTTP):\ndon't enter passwords on this site.\n\n");
-
-    PI_APPEND("LOADING\n");
-    if (g_fetch_meta.load_ms) PI_APPEND("Load time: %u ms\n", g_fetch_meta.load_ms);
-    format_kb(size_a, sizeof size_a, (curl_off_t)g_fetch_meta.downloaded_bytes);
-    PI_APPEND("Page size: %s\n", size_a);
-    if (g_fetch_meta.wire_bytes > 0 && (size_t)g_fetch_meta.wire_bytes != g_fetch_meta.downloaded_bytes) {
-        format_kb(size_b, sizeof size_b, (curl_off_t)g_fetch_meta.wire_bytes);
-        PI_APPEND("Transferred: %s (compressed)\n", size_b);
-    }
-    if (source && source->html) {
-        format_kb(size_b, sizeof size_b, (curl_off_t)source->html_len);
-        PI_APPEND("HTML: %s, %d images, %d links\n", size_b, source->image_count, source->link_count);
-    }
-    PI_APPEND("\nCOOKIES SET BY %s\n", host[0] ? host : "THIS SITE");
-    int listed = 0;
-    long long now = clock_now();
-    for (int i = 0; i < MAX_COOKIES; i++) {
-        const mb_cookie_t *c = &g_cookie_jar[i];
-        if (!c->used || !host[0]) continue;
-        bool match = c->host_only ? !strcasecmp(host, c->domain) : cookie_domain_match(host, c->domain);
-        if (!match) continue;
-        if (c->expires > 0 && now > 0) {
-            long long days = (c->expires - now) / 86400;
-            snprintf(when, sizeof when, "kept %lld more day%s", days, days == 1 ? "" : "s");
-        } else if (c->expires > 0 || c->pending_age > 0) {
-            snprintf(when, sizeof when, "kept after a restart");
-        } else {
-            snprintf(when, sizeof when, "until the browser quits");
-        }
-        PI_APPEND("- %s (%s%s)\n", c->name, when, c->secure ? ", secure" : "");
-        listed++;
-    }
-    if (!listed) PI_APPEND("none\n");
-    PI_APPEND("\n");
-#undef PI_APPEND
-    /* The original inspector text follows, then the keys. */
-    size_t tl = strlen(text);
-    if (o + tl + 128 < cap + extra_cap) {
-        memcpy(out + o, text, tl);
-        o += tl;
-        o += (size_t)snprintf(out + o, cap + extra_cap - o,
-                              "WHY+X clears all cookies and the disk cache.\nPress WHY+B or WHY+I to return.");
-    }
-    free(text);
-    return out;
-}
 
 static page_t *page_info_to_page(const page_t *source,
                                  const char *requested_url,
@@ -6400,7 +6267,10 @@ static page_t *page_info_to_page(const page_t *source,
              "Available CURLINFO: response code,\n"
              "content length.\n"
              "Content type and redirects come from\n"
-             "the response headers.\n\n",
+             "the response headers.\n\n"
+
+             "WHY+X clears all cookies and the disk cache.\n"
+             "Press WHY+B or WHY+I to return.",
              title,
              (unsigned)g_fetch_meta.downloaded_bytes,
              (unsigned)MAX_BYTES,
@@ -6426,7 +6296,7 @@ static page_t *page_info_to_page(const page_t *source,
              cache_total() / 1024, CACHE_BUDGET / 1024, g_cache_count);
 
     text[cap - 1] = 0;
-    pg->text = page_info_extend(text, cap, source, requested_url);
+    pg->text = text;
 
     /*
      * Keep the Phase 5 diagnostic stable: the existing 49/49 regression suite
@@ -7296,7 +7166,6 @@ static bool screenshot_stream_renderer(SDL_Renderer *renderer) {
  */
 static int screenshot_full_page_height(const page_t *page,
                                        const char *content_wrapped) {
-    PAGE_SCALE_BEGIN();
     int height = PAD_TOP + PAD_BOTTOM;
 
     if (content_wrapped && *content_wrapped) {
@@ -7336,7 +7205,6 @@ static int screenshot_full_page_height(const page_t *page,
         height = VIEW_H;
     }
 
-    PAGE_SCALE_END();
     return height;
 }
 
@@ -7365,7 +7233,6 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
     /* Formatting state runs from the top of the page, as on screen. */
     static text_state_t state;
     text_state_reset(&state);
-    PAGE_SCALE_BEGIN();
 
     const int slice_bottom = slice_top + slice_height;
     const char *p = content_wrapped;
@@ -7430,7 +7297,6 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
 
         p = nl ? nl + 1 : NULL;
     }
-    PAGE_SCALE_END();
 }
 
 static bool screenshot_stream_full_page(SDL_Renderer *renderer,
@@ -7507,8 +7373,7 @@ typedef enum {
     INPUT_NONE,          /* browsing: arrows scroll, Tab selects, digits pick */
     INPUT_URL,           /* editing the URL bar */
     INPUT_FORM,          /* editing a form field */
-    INPUT_LINK_NUMBER,   /* typing a link/action number */
-    INPUT_FIND           /* 4.4: typing in the find bar (WHY+F) */
+    INPUT_LINK_NUMBER    /* typing a link/action number */
 } input_mode_t;
 
 typedef enum {
@@ -7516,8 +7381,7 @@ typedef enum {
     OVERLAY_OPTIONS,     /* WHY+O display mode menu */
     OVERLAY_IMAGE,       /* image viewer */
     OVERLAY_TABS,        /* WHY+A tab overview */
-    OVERLAY_DOWNLOAD,    /* 4.3: "Download this file?" */
-    OVERLAY_SHARE        /* 4.4: QR code of the address (WHY+U) */
+    OVERLAY_DOWNLOAD     /* 4.3: "Download this file?" */
 } overlay_t;
 
 typedef enum {
@@ -7526,9 +7390,7 @@ typedef enum {
     VIEW_PAGE_INFO,      /* WHY+I */
     VIEW_HISTORY,        /* WHY+Y */
     VIEW_NEWTAB,         /* WHY+T: a new, empty tab */
-    VIEW_DOWNLOADS,      /* 4.3: WHY+D */
-    VIEW_READER,         /* 4.4: simplified view (WHY+V) */
-    VIEW_SAVED           /* 4.4: a page saved for offline reading */
+    VIEW_DOWNLOADS       /* 4.3: WHY+D */
 } view_kind_t;
 
 typedef struct browser_s {
@@ -7584,8 +7446,6 @@ typedef struct browser_s {
     char dl_type[64];
     long long dl_size;          /* -1: unknown */
 
-    bool reader_chip_hidden;    /* 4.4: "Simplified view" chip dismissed */
-
     char status_message[64];
     Uint64 status_message_until;
 
@@ -7607,15 +7467,10 @@ typedef struct browser_s {
 } browser_t;
 
 static void bfcache_store(browser_t *b, const char *url, const fetch_meta_t *meta);
-static void bg_cancel(void);
-static void bg_start(browser_t *b);
-static void find_clear_hook(void);
-static int bg_progress_keys(browser_t *b, curl_off_t dltotal, curl_off_t dlnow);
 static const char *shown_web_url(const browser_t *b);
 
-/* Columns and lines of page text at the current zoom (4.4). */
-#define k_max_cols       ((VIEW_W - 2 * PAD_LR) / ((FONT_W_COLS + FONT_COL_GAP) * g_page_scale))
-#define k_lines_per_page ((VIEW_H - PAD_TOP - PAD_BOTTOM) / (FONT_H_ROWS * g_page_scale + LINE_SPACING))
+static const int k_max_cols = (VIEW_W - 2 * PAD_LR) / CH_W;
+static const int k_lines_per_page = (VIEW_H - PAD_TOP - PAD_BOTTOM) / (CH_H + LINE_SPACING);
 
 static void browser_set_status(browser_t *b, const char *message, Uint64 ms) {
     snprintf(b->status_message, sizeof(b->status_message), "%s", message);
@@ -7646,16 +7501,7 @@ static int content_line_height(const page_t *page, const char *line, int len) {
 
 /* Smallest scroll position from which the rest of the page fits on one
  * screen: scrolling further only shows empty space. */
-static int compute_max_scroll_scaled(const page_t *page, const char *content, int lines);
-
 static int compute_max_scroll(const page_t *page, const char *content, int lines) {
-    PAGE_SCALE_BEGIN();
-    int r = compute_max_scroll_scaled(page, content, lines);
-    PAGE_SCALE_END();
-    return r;
-}
-
-static int compute_max_scroll_scaled(const page_t *page, const char *content, int lines) {
     if (!content || lines <= 0) return 0;
     const int avail = VIEW_H - PAD_TOP - PAD_BOTTOM;
     long total = 0;
@@ -7689,8 +7535,6 @@ static void browser_set_content(browser_t *b, char *wrapped) {
  * look up page->images[] of a page that is gone. */
 static void browser_set_page(browser_t *b, page_t *pg) {
     if (b->page != pg) {
-        bg_cancel();                       /* its images are no longer wanted */
-        find_clear_hook();                 /* 4.4: matches belong to the old page */
         free_page(b->page);
         for (int i = 0; i < MAX_INLINE_IMAGES; i++)
             decoded_image_release(&g_inline_images[i]);
@@ -7864,7 +7708,6 @@ __attribute__((noinline)) static void tab_save(browser_t *b, int i) {
     t->error_page = b->error_page;
     t->page_from_post = b->page_from_post;
     t->page_partial = b->page_partial;
-    bg_cancel();
 
     /* The browser no longer owns them: nothing may free them now. */
     b->page = NULL;
@@ -7897,17 +7740,17 @@ __attribute__((noinline)) static void tab_load(browser_t *b, int i) {
 
     t->page = NULL;               /* owned by the browser again */
     t->content_wrapped = NULL;
-    find_clear_hook();            /* 4.4: matches belong to the other tab */
 
     browser_reset_input(b);
     b->sel_action = -1;
     b->scroll_cache_content = NULL;
     g_tab_cur = i;
 
-    /* Images were released when this tab went to the background: load
-     * them again in the background. */
-    if (b->page && b->view == VIEW_WEB && b->page->image_count > 0)
-        bg_start(b);
+    /* Images were released when this tab went to the background. */
+    if (b->page && b->view == VIEW_WEB && b->page->image_count > 0) {
+        load_page_images(b->page);
+        b->max_scroll = compute_max_scroll(b->page, b->content_wrapped, b->content_lines);
+    }
     browser_clamp_scroll(b);
     b->dirty = true;
 }
@@ -7942,7 +7785,7 @@ __attribute__((noinline)) static page_t *newtab_to_page(void) {
 
     int number = 0;
     NT_APPEND("Bookmarks\n\n");
-    if (g_bookmark_count == 0) NT_APPEND("No bookmarks yet (WHY+K on a page adds one).\n\n");
+    if (g_bookmark_count == 0) NT_APPEND("No bookmarks yet (WHY+F on a page adds one).\n\n");
     for (int i = 0; i < g_bookmark_count && pg->link_count < MAX_LINKS; i++) {
         long off = page_store_string(pg, g_bookmarks[i].url);
         if (off < 0) break;
@@ -8061,170 +7904,6 @@ static void tab_free_all_background(void) {
         if (i != g_tab_cur) tab_free_slot(&g_tabs[i]);
 }
 
-/* ---------- 4.4: find in page (WHY+F) and the focus ring (Tab) ----------
- *
- * Matches are searched line by line in the wrapped text, case-insensitive
- * for ASCII, with the formatting markers left out.  They are kept as byte
- * ranges of content_wrapped and drawn highlighted (the current one in
- * orange).  Enter / n go to the next match, N (Shift+n) to the previous one,
- * Esc clears the highlights.
- *
- * The focused action (Tab / Shift+Tab) is found in the text by its marker
- * and "[n]" number, and drawn with a ring; Enter activates it.
- */
-#define FIND_MAX        400
-#define FIND_QUERY_MAX  64
-
-typedef struct {
-    bool shown;                      /* highlights on screen */
-    char query[FIND_QUERY_MAX];
-    int count;
-    int current;                     /* -1: none */
-    size_t start[FIND_MAX];
-    unsigned short len[FIND_MAX];
-    int line[FIND_MAX];
-    const char *content;             /* the text the matches belong to */
-} find_state_t;
-
-static find_state_t g_find;
-
-static struct {
-    const char *content;
-    int action;
-    size_t start, end;               /* bytes in content_wrapped */
-    int line;
-    bool found;
-} g_focus = { NULL, -1, 0, 0, 0, false };
-
-/* Search the wrapped text for g_find.query. */
-__attribute__((noinline)) static void find_compute(const char *content) {
-    static char clean[1024];
-    static size_t map[1024];
-    static char needle[FIND_QUERY_MAX];
-    g_find.count = 0;
-    g_find.content = content;
-    size_t qn = strlen(g_find.query);
-    if (!content || !qn) { g_find.current = -1; return; }
-    for (size_t i = 0; i <= qn; i++) needle[i] = (char)tolower((unsigned char)g_find.query[i]);
-
-    int lineno = 0;
-    for (const char *p = content; p && *p; lineno++) {
-        const char *nl = strchr(p, '\n');
-        size_t len = nl ? (size_t)(nl - p) : strlen(p);
-        size_t n = 0, i = 0;
-        while (i < len && n < sizeof clean) {
-            size_t at = i;
-            unsigned cp = utf8_next(p, len, &i);
-            if (cp == 0) break;
-            if (cp < 0x20 || is_format_marker(cp)) continue;     /* markers */
-            for (size_t k = at; k < i && n < sizeof clean; k++) {
-                clean[n] = (char)tolower((unsigned char)p[k]);
-                map[n++] = (size_t)(p - content) + k;
-            }
-        }
-        for (size_t j = 0; j + qn <= n && g_find.count < FIND_MAX; ) {
-            if (!memcmp(clean + j, needle, qn)) {
-                g_find.start[g_find.count] = map[j];
-                g_find.len[g_find.count] = (unsigned short)(map[j + qn - 1] + 1 - map[j]);
-                g_find.line[g_find.count] = lineno;
-                g_find.count++;
-                j += qn;
-            } else {
-                j++;
-            }
-        }
-        p = nl ? nl + 1 : NULL;
-    }
-    if (g_find.current >= g_find.count) g_find.current = g_find.count - 1;
-}
-
-static void scroll_line_into_view(browser_t *b, int line) {
-    int page = k_lines_per_page;
-    if (line < b->scroll_lines || line >= b->scroll_lines + page - 1) {
-        b->scroll_lines = line - page / 3;
-        browser_clamp_scroll(b);
-    }
-}
-
-/* First match on or after the top of the screen. */
-static void find_first_visible(browser_t *b) {
-    g_find.current = -1;
-    for (int i = 0; i < g_find.count; i++)
-        if (g_find.line[i] >= b->scroll_lines) { g_find.current = i; break; }
-    if (g_find.current < 0 && g_find.count > 0) g_find.current = 0;
-    if (g_find.current >= 0) scroll_line_into_view(b, g_find.line[g_find.current]);
-}
-
-static void find_step(browser_t *b, int dir) {
-    if (b->content_wrapped != g_find.content) find_compute(b->content_wrapped);
-    if (g_find.count <= 0) {
-        browser_set_status(b, "NO MATCHES", 1200);
-        return;
-    }
-    g_find.current = g_find.current < 0 ? 0 : (g_find.current + dir + g_find.count) % g_find.count;
-    scroll_line_into_view(b, g_find.line[g_find.current]);
-    printf("[mini_browser] find: match %d of %d (line %d)\n", g_find.current + 1, g_find.count,
-           g_find.line[g_find.current] + 1);
-}
-
-static void find_clear(void) {
-    g_find.shown = false;
-    g_find.count = 0;
-    g_find.current = -1;
-    g_find.content = NULL;
-}
-
-static void find_clear_hook(void) {
-    find_clear();
-    g_focus.found = false;
-    g_focus.content = NULL;
-}
-
-/* Where is action `action` (0-based) in the text? */
-static void focus_locate(browser_t *b) {
-    g_focus.content = b->content_wrapped;
-    g_focus.action = b->sel_action;
-    g_focus.found = false;
-    if (!b->content_wrapped || b->sel_action < 0) return;
-    char number[16];
-    int nlen = snprintf(number, sizeof number, "[%d]", b->sel_action + 1);
-    for (const char *p = b->content_wrapped; (p = strstr(p, number)) != NULL; p++) {
-        if (p == b->content_wrapped) continue;
-        unsigned char on = (unsigned char)p[-1];
-        if (on != TEXT_LINK_ON && on != TEXT_FORM_ON) continue;
-        unsigned char off = on == TEXT_LINK_ON ? TEXT_LINK_OFF : TEXT_FORM_OFF;
-        const char *end = strchr(p + nlen, (char)off);
-        const char *limit = p + 600;                 /* a link is not that long */
-        if (!end || end > limit) end = p + nlen;
-        g_focus.start = (size_t)(p - b->content_wrapped);
-        g_focus.end = (size_t)(end - b->content_wrapped);
-        int line = 0;
-        for (const char *q = b->content_wrapped; q < p; q++) if (*q == '\n') line++;
-        g_focus.line = line;
-        g_focus.found = true;
-        return;
-    }
-}
-
-/* Marks of the line at byte offset off (length len) for draw_text_ex. */
-static void line_marks_build(const browser_t *b, size_t off, size_t len) {
-    g_line_mark_count = 0;
-    if (g_find.shown && g_find.content == b->content_wrapped) {
-        for (int i = 0; i < g_find.count && g_line_mark_count < LINE_MARKS_MAX; i++) {
-            if (g_find.start[i] < off || g_find.start[i] >= off + len) continue;
-            g_line_marks[g_line_mark_count++] = (line_mark_t){
-                g_find.start[i] - off, g_find.start[i] - off + g_find.len[i],
-                (unsigned char)(i == g_find.current ? MARK_FIND_CURRENT : MARK_FIND) };
-        }
-    }
-    if (g_focus.found && g_focus.content == b->content_wrapped && b->sel_action == g_focus.action &&
-        g_focus.start < off + len && g_focus.end > off && g_line_mark_count < LINE_MARKS_MAX) {
-        size_t s0 = g_focus.start > off ? g_focus.start - off : 0;
-        size_t e0 = g_focus.end < off + len ? g_focus.end - off : len;
-        g_line_marks[g_line_mark_count++] = (line_mark_t){ s0, e0, MARK_FOCUS };
-    }
-}
-
 static void browser_render_page(browser_t *b);
 static void colored_text(char *out, size_t cap, unsigned rgb, const char *s);
 
@@ -8267,11 +7946,7 @@ __attribute__((noinline)) static void browser_draw_loading(browser_t *b, curl_of
             snprintf(amount, sizeof amount, "%s", done);
         }
     }
-    if (g_load.background)
-        snprintf(b->barline, sizeof b->barline, "[img %d/%d] %s",
-                 g_load.image_index + 1, g_load.image_count,
-                 b->page && b->page->title[0] ? b->page->title : b->url_buf);
-    else if (g_load.download_name)
+    if (g_load.download_name)
         snprintf(b->barline, sizeof b->barline, "Saving %s: %s - Esc stops",
                  g_load.download_name, amount);
     else if (g_load.images)
@@ -8308,12 +7983,7 @@ static int load_progress_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
     (void)ultotal; (void)ulnow;
     browser_t *b = (browser_t *)clientp;
     if (!b) return 0;
-    if (g_load.background) {
-        if (bg_progress_keys(b, dltotal, dlnow)) {
-            if (g_load.stopped) printf("[mini_browser] stop: Esc pressed, image loading stopped\n");
-            return 1;
-        }
-    } else if (screenshot_cancel_requested()) {   /* takes queued Esc presses only */
+    if (screenshot_cancel_requested()) {   /* takes queued Esc presses only */
         g_load.stopped = true;
         printf("[mini_browser] stop: Esc pressed, %s stopped\n",
                g_load.download_name ? "download" : g_load.images ? "image loading" : "page load");
@@ -8528,7 +8198,6 @@ __attribute__((noinline)) static void bfcache_store(browser_t *b, const char *ur
     if (kept) e->image_bytes = mine;
 
     /* The cache owns them now. */
-    bg_cancel();
     b->page = NULL;
     b->content_wrapped = NULL;
     b->scroll_cache_content = NULL;
@@ -8550,216 +8219,15 @@ __attribute__((noinline)) static void bfcache_restore(browser_t *b, int i) {
     b->scroll_cache_content = NULL;
     b->sel_action = -1;
     g_fetch_meta = e->meta;
+    bool had_images = e->image_bytes > 0;
     memset(e, 0, sizeof *e);
 
-    /* Images that did not fit in the cache are loaded again, in the
-     * background. */
-    bg_start(b);
+    /* Images that did not fit in the cache are loaded again. */
+    if (!had_images && b->page->image_count > 0 && display_inline_image_limit() > 0) {
+        load_page_images(b->page);
+        b->max_scroll = compute_max_scroll(b->page, b->content_wrapped, b->content_lines);
+    }
     browser_clamp_scroll(b);
-}
-
-/* ---------- 4.3 part 3: images in the background ----------
- *
- * A page is shown as soon as its text is there; its inline images are then
- * loaded one by one from the main loop, the ones on screen (or nearest to
- * it) first, and each appears as soon as it is decoded.  While an image
- * downloads, the progress callback keeps the page usable:
- *   - Up/Down/PgUp/PgDn/J/K scroll at once;
- *   - Esc stops the image loading (instead of quitting the browser);
- *   - any other key interrupts the download and is handled by the main loop;
- *     the image is tried again when the browser is idle on the same page.
- * Images that belong to a page that is no longer shown are dropped.
- *
- * Everything runs on the app's one thread: BadgeVMS app threads share a
- * memory allocator without locking, so curl cannot run in two threads.
- */
-typedef struct {
-    bool active;
-    const page_t *page;             /* the page these images belong to */
-    int count;                      /* inline images to load */
-    int done;                       /* loaded or failed */
-    int loaded;
-    bool finished[MAX_INLINE_IMAGES];
-    int line[MAX_INLINE_IMAGES];    /* content line of each image marker */
-    Uint64 started;
-} bg_images_t;
-
-static bg_images_t g_bg;
-
-typedef struct {
-    int scroll;                     /* lines to scroll */
-    bool esc;
-    bool other_key;
-} bg_keys_t;
-
-static void bg_cancel(void) {
-    g_bg.active = false;
-}
-
-/* "display:" summary line (the regression suite reads it). */
-static void browser_log_display(const page_t *page) {
-    int inline_loaded = 0;
-    for (int ii = 0; ii < MAX_INLINE_IMAGES; ii++)
-        if (g_inline_images[ii].loaded) inline_loaded++;
-    printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d images_loaded=%d\n",
-           display_mode_name(g_display_mode),
-           page->image_seen_count, page->image_count, inline_loaded);
-}
-
-/* Start loading the images of the page on screen that are not loaded yet. */
-__attribute__((noinline)) static void bg_start(browser_t *b) {
-    memset(&g_bg, 0, sizeof g_bg);
-    const page_t *page = b->page;
-    int limit = display_inline_image_limit();
-    if (!page || !b->content_wrapped || limit <= 0 || page->image_count <= 0) return;
-    int count = page->image_count < limit ? page->image_count : limit;
-    if (count > MAX_INLINE_IMAGES) count = MAX_INLINE_IMAGES;
-
-    for (int i = 0; i < count; i++) g_bg.line[i] = 1 << 30;   /* not in the text */
-    int lineno = 0;
-    for (const char *p = b->content_wrapped; p; lineno++) {
-        const char *nl = strchr(p, '\n');
-        int idx = -1;
-        if (is_image_marker_line(p, nl ? (int)(nl - p) : (int)strlen(p), &idx) &&
-            idx >= 0 && idx < count && g_bg.line[idx] == 1 << 30)
-            g_bg.line[idx] = lineno;
-        p = nl ? nl + 1 : NULL;
-    }
-
-    int pending = 0;
-    for (int i = 0; i < count; i++) {
-        if (g_inline_images[i].loaded) {
-            g_bg.finished[i] = true;
-            g_bg.done++;
-            g_bg.loaded++;
-        } else {
-            pending++;
-        }
-    }
-    if (!pending) return;
-    g_bg.active = true;
-    g_bg.page = page;
-    g_bg.count = count;
-    g_bg.started = SDL_GetTicks();
-}
-
-static bool bg_can_run(const browser_t *b) {
-    return g_bg.active && !b->need_fetch && b->input == INPUT_NONE &&
-           b->overlay == OVERLAY_NONE && (b->view == VIEW_WEB || b->view == VIEW_READER);
-}
-
-static void bg_finish(browser_t *b, bool stopped) {
-    g_bg.active = false;
-    printf("[mini_browser] images: %d of %d loaded in %u ms%s\n", g_bg.loaded, g_bg.count,
-           (unsigned)(SDL_GetTicks() - g_bg.started), stopped ? " (stopped)" : "");
-    if (b->page == g_bg.page) browser_log_display(b->page);
-    b->dirty = true;
-}
-
-/* Esc while images are loading (between two downloads). */
-static void bg_stop(browser_t *b) {
-    printf("[mini_browser] stop: Esc pressed, image loading stopped\n");
-    browser_set_status(b, "IMAGES STOPPED", 1500);
-    bg_finish(b, true);
-}
-
-/* Take scroll keys and Esc out of the queue; note any other key. */
-static bool SDLCALL bg_key_filter(void *userdata, SDL_Event *ev) {
-    bg_keys_t *k = (bg_keys_t *)userdata;
-    if (ev->type != SDL_EVENT_KEY_DOWN && ev->type != SDL_EVENT_KEY_UP) {
-        if (ev->type == SDL_EVENT_QUIT) k->other_key = true;
-        return true;
-    }
-    SDL_Scancode sc = ev->key.scancode;
-    int step = 0;
-    switch (sc) {
-        case SDL_SCANCODE_UP: case SDL_SCANCODE_K: step = -1; break;
-        case SDL_SCANCODE_DOWN: case SDL_SCANCODE_J: step = 1; break;
-        case SDL_SCANCODE_PAGEDOWN: step = k_lines_per_page > 2 ? k_lines_per_page - 2 : 1; break;
-        case SDL_SCANCODE_PAGEUP: step = -5; break;
-        case SDL_SCANCODE_ESCAPE:
-            if (ev->type == SDL_EVENT_KEY_UP) return true;
-            k->esc = true;
-            return false;
-        default:
-            if (ev->type == SDL_EVENT_KEY_DOWN) k->other_key = true;
-            return true;                  /* left for the main loop */
-    }
-    if (ev->type == SDL_EVENT_KEY_UP) return true;   /* clears "held" in the main loop */
-    k->scroll += step;
-    return false;
-}
-
-/* Called from load_progress_cb while a background image downloads. */
-static int bg_progress_keys(browser_t *b, curl_off_t dltotal, curl_off_t dlnow) {
-    bg_keys_t keys = { 0 };
-    SDL_PumpEvents();
-    SDL_FilterEvents(bg_key_filter, &keys);
-    if (keys.esc) {
-        g_load.stopped = true;
-        return 1;
-    }
-    if (keys.other_key) {                 /* a link, WHY+..., typing: go */
-        g_load.yielded = true;
-        return 1;
-    }
-    if (keys.scroll) {
-        b->scroll_lines += keys.scroll;
-        browser_clamp_scroll(b);
-        g_load.next_draw = 0;             /* redraw now */
-    }
-    return 0;
-}
-
-/* Load one image (the one nearest to the screen); called when idle. */
-__attribute__((noinline)) static void bg_step(browser_t *b) {
-    if (!g_bg.active) return;
-    if (b->page != g_bg.page || !b->content_wrapped) {
-        g_bg.active = false;              /* the page is gone */
-        return;
-    }
-    int pick = -1;
-    long best = 0;
-    int top = b->scroll_lines, bottom = b->scroll_lines + k_lines_per_page;
-    for (int i = 0; i < g_bg.count; i++) {
-        if (g_bg.finished[i]) continue;
-        int l = g_bg.line[i];
-        long dist = l < top ? (long)(top - l) : l >= bottom ? (long)(l - bottom + 1) : 0;
-        if (pick < 0 || dist < best) { pick = i; best = dist; }
-    }
-    if (pick < 0) {
-        bg_finish(b, false);
-        return;
-    }
-
-    memset(&g_load, 0, sizeof g_load);
-    g_load.b = b;
-    g_load.background = true;
-    g_load.images = true;
-    g_load.image_index = pick;
-    g_load.image_count = g_bg.count;
-    browser_draw_loading(b, 0, 0);
-    g_load.next_draw = SDL_GetTicks() + 150;
-
-    int ok = load_image_url(page_image_src(b->page, pick), IMAGE_DRAW_MAX_W, IMAGE_DRAW_MAX_H,
-                            &g_inline_images[pick]);
-    bool yielded = g_load.yielded, stopped = g_load.stopped;
-    g_load.b = NULL;
-
-    if (!yielded) {                       /* loaded, or failed for good */
-        g_bg.finished[pick] = true;
-        g_bg.done++;
-        if (ok) g_bg.loaded++;
-    }
-    b->max_scroll = compute_max_scroll(b->page, b->content_wrapped, b->content_lines);
-    browser_clamp_scroll(b);
-    b->dirty = true;
-    if (stopped) {
-        browser_set_status(b, "IMAGES STOPPED", 1500);
-        bg_finish(b, true);
-    } else if (g_bg.done >= g_bg.count) {
-        bg_finish(b, false);
-    }
 }
 
 /* ---------- page loading ---------- */
@@ -8789,8 +8257,6 @@ static void browser_restore_shown_url(browser_t *b) {
         case VIEW_HISTORY:   snprintf(b->url_buf, sizeof b->url_buf, "history:"); break;
         case VIEW_NEWTAB:    snprintf(b->url_buf, sizeof b->url_buf, "newtab:"); break;
         case VIEW_DOWNLOADS: snprintf(b->url_buf, sizeof b->url_buf, "downloads:"); break;
-        case VIEW_READER:    snprintf(b->url_buf, sizeof b->url_buf, "reader:"); break;
-        case VIEW_SAVED:     snprintf(b->url_buf, sizeof b->url_buf, "saved:"); break;
     }
 }
 
@@ -8811,9 +8277,12 @@ __attribute__((noinline)) static void browser_log_page(browser_t *b, long http_s
     printf("[mini_browser] visual: explicit_colors=%d\n", page->explicit_color_count);
     printf("[mini_browser] visual: explicit_styles=%d\n", page->explicit_style_count);
     printf("[mini_browser] visual: explicit_backgrounds=%d\n", page->explicit_background_count);
-    /* With images still loading, the display line follows when they are
-     * done (bg_finish). */
-    if (!g_bg.active) browser_log_display(page);
+    int inline_loaded = 0;
+    for (int ii = 0; ii < MAX_INLINE_IMAGES; ii++)
+        if (g_inline_images[ii].loaded) inline_loaded++;
+    printf("[mini_browser] display: mode=%s images_seen=%d images_retained=%d images_loaded=%d\n",
+           display_mode_name(g_display_mode),
+           page->image_seen_count, page->image_count, inline_loaded);
     printf("[mini_browser] cookies: count=%d\n", cookie_count());
     browser_log_content(b->content_wrapped);
 }
@@ -8831,9 +8300,6 @@ __attribute__((noinline)) static void browser_log_page(browser_t *b, long http_s
 #define DOWNLOAD_LIST      "APPS:[mini_browser]downloads.txt"
 #define DOWNLOAD_MAX       (4LL * 1024 * 1024)
 #define DOWNLOAD_LIST_MAX  50
-#define SAVED_DIR          "FLASH0:[SAVED]"          /* 4.4: pages saved with WHY+P */
-#define SAVED_LIST         "APPS:[mini_browser]saved.txt"
-#define SAVED_LIST_MAX     50
 
 /* BadgeVMS file names: letters, digits, '_', '-', '$' and '.'. */
 static void download_sanitize(const char *in, size_t n, char *out, size_t cap) {
@@ -9101,40 +8567,8 @@ __attribute__((noinline)) static page_t *downloads_to_page(int *count_out) {
         fclose(f);
     }
     if (!count) DL_APPEND("No downloads yet.\n\nA link to a file the browser cannot show\n(zip, pdf, mp3, ...) offers to save it.\n\n");
-    DL_APPEND("Saved in FLASH0:[DOWNLOADS], max 4 MB per file.\n\n");
-
-    /* 4.4: pages saved for offline reading (WHY+P), as links. */
-    DL_APPEND("= SAVED PAGES =\n\n");
-    int saved = 0;
-    f = fopen(SAVED_LIST, "r");
-    if (f) {
-        while (fgets(line, sizeof line, f)) {
-            line[strcspn(line, "\r\n")] = 0;
-            char *t1 = strchr(line, '\t');
-            if (!line[0] || !t1) continue;
-            *t1 = 0;
-            char *t2 = strchr(t1 + 1, '\t');
-            if (t2) *t2 = 0;
-            saved++;
-            char href[24];
-            snprintf(href, sizeof href, "saved:%d", saved);
-            long off = pg->link_count < MAX_LINKS ? page_store_string(pg, href) : -1;
-            struct stat st;
-            bool there = stat(line, &st) == 0;
-            format_size(size_text, sizeof size_text, there ? (long long)st.st_size : 0);
-            if (off >= 0 && there) {
-                pg->links[pg->link_count].href = (uint32_t)off;
-                int action = add_action(pg, ACTION_LINK, pg->link_count++, -1, -1);
-                DL_APPEND("[%d] %s\n    %s, %s\n\n", action + 1, t1 + 1, size_text,
-                          t2 ? omnibox_strip_scheme(t2 + 1) : "");
-            } else {
-                DL_APPEND("- %s (deleted)\n\n", t1 + 1);
-            }
-        }
-        fclose(f);
-    }
-    if (!saved) DL_APPEND("None yet. WHY+P saves the page you are reading\n(or its simplified view) as text.\n\n");
-    DL_APPEND("WHY+D returns, WHY+X deletes all downloads and saved pages.\n");
+    DL_APPEND("Saved in FLASH0:[DOWNLOADS], max 4 MB per file.\n"
+              "WHY+D returns, WHY+X deletes all downloaded files.\n");
 #undef DL_APPEND
     text[cap - 1] = 0;
     pg->text = text;
@@ -9158,661 +8592,6 @@ static void downloads_delete_all(void) {
     }
     remove(DOWNLOAD_LIST);
     printf("[mini_browser] downloads: deleted %d files\n", removed);
-
-    /* 4.4: and the saved pages. */
-    removed = 0;
-    f = fopen(SAVED_LIST, "r");
-    if (f) {
-        while (fgets(line, sizeof line, f)) {
-            char *tab = strchr(line, '\t');
-            if (!tab) continue;
-            *tab = 0;
-            if (!strncmp(line, SAVED_DIR, strlen(SAVED_DIR)) && remove(line) == 0) removed++;
-        }
-        fclose(f);
-    }
-    remove(SAVED_LIST);
-    printf("[mini_browser] saved pages: deleted %d\n", removed);
-}
-
-/* ---------- 4.4: text zoom (WHY+= / WHY+- / WHY+0) ----------
- * The page text is drawn with the 5x7 font at 2x (100%), 3x (150%) or
- * 4x (200%) and re-wrapped; Unicode glyphs scale along.  The bar and menus
- * stay at 100%.  The choice is kept in SETTINGS_FILE. */
-#define SETTINGS_FILE  "APPS:[mini_browser]settings.txt"
-#define ZOOM_MIN_SCALE 2
-#define ZOOM_MAX_SCALE 4
-
-static void settings_save(void) {
-    FILE *f = fopen(SETTINGS_FILE, "w");
-    if (!f) return;
-    fprintf(f, "zoom=%d\n", g_page_scale * 50);
-    fclose(f);
-}
-
-static void settings_load(void) {
-    FILE *f = fopen(SETTINGS_FILE, "r");
-    if (!f) return;
-    char line[64];
-    while (fgets(line, sizeof line, f)) {
-        int z = 0;
-        if (sscanf(line, "zoom=%d", &z) == 1 && z >= ZOOM_MIN_SCALE * 50 && z <= ZOOM_MAX_SCALE * 50)
-            g_page_scale = z / 50;
-    }
-    fclose(f);
-    if (g_page_scale != 2) printf("[mini_browser] zoom: %d%%\n", g_page_scale * 50);
-}
-
-/* Re-wrap a page's text for the current zoom. */
-static char *rewrap_page(const page_t *pg) {
-    return pg && pg->text ? wrap_text(pg->text, k_max_cols) : NULL;
-}
-
-__attribute__((noinline)) static void browser_set_zoom(browser_t *b, int scale) {
-    if (scale < ZOOM_MIN_SCALE) scale = ZOOM_MIN_SCALE;
-    if (scale > ZOOM_MAX_SCALE) scale = ZOOM_MAX_SCALE;
-    char msg[32];
-    snprintf(msg, sizeof msg, "ZOOM %d%%", scale * 50);
-    if (scale == g_page_scale) {
-        browser_set_status(b, msg, 1000);
-        return;
-    }
-    /* Keep the same part of the page on screen. */
-    double at = b->content_lines > 0 ? (double)b->scroll_lines / (double)b->content_lines : 0.0;
-    g_page_scale = scale;
-    if (b->page && b->page->text) {
-        char *wrapped = rewrap_page(b->page);
-        if (wrapped) {
-            free(b->content_wrapped);
-            b->content_wrapped = wrapped;
-            b->content_lines = count_lines(wrapped);
-            b->max_scroll = compute_max_scroll(b->page, wrapped, b->content_lines);
-            b->scroll_cache_content = NULL;
-            b->scroll_lines = (int)(at * b->content_lines);
-            browser_clamp_scroll(b);
-        }
-    }
-    /* Other tabs are re-wrapped too; cached pages are simply dropped. */
-    for (int i = 0; i < g_tab_count; i++) {
-        if (i == g_tab_cur || !g_tabs[i].page) continue;
-        char *wrapped = rewrap_page(g_tabs[i].page);
-        if (!wrapped) continue;
-        free(g_tabs[i].content_wrapped);
-        g_tabs[i].content_wrapped = wrapped;
-        g_tabs[i].content_lines = count_lines(wrapped);
-        g_tabs[i].max_scroll = 0;
-        g_tabs[i].scroll_lines = 0;
-    }
-    bfcache_clear();
-    settings_save();
-    browser_set_status(b, msg, 1200);
-    printf("[mini_browser] zoom: %d%%, %d columns\n", scale * 50, k_max_cols);
-    b->dirty = true;
-}
-
-/* ---------- 4.4: reader mode ("Simplified view", WHY+V) ----------
- *
- * A Readability-style pass over the page's HTML: every container element
- * (div, article, section, main, td, ...) collects the text of the
- * paragraphs directly inside it; a paragraph scores 1 + its commas + one
- * point per 100 characters (max 3), for its container and half for the
- * container above.  Link-heavy containers lose score, and class/id names
- * like "article"/"content" win while "nav"/"footer"/"sidebar"/"share" lose.
- * The best container becomes the simplified page: title, text and images,
- * without the navigation, footers and widgets inside it.
- */
-#define RD_MAX_NODES 512
-
-typedef struct {
-    int parent;
-    size_t start, end;
-    int text, total_text, link_text, total_link;
-    int paras, total_paras;
-    float score;
-    int bias;
-    char tag[12];
-} rd_node_t;
-
-static rd_node_t g_rd[RD_MAX_NODES];
-static int g_rd_count;
-
-static bool rd_name_is(const char *name, const char *const *list) {
-    for (; *list; list++) if (!strcmp(name, *list)) return true;
-    return false;
-}
-
-static const char *const rd_containers[] = { "div", "article", "section", "main", "td", "body",
-    "blockquote", "nav", "aside", "footer", "header", "form", "ul", "ol", "table", NULL };
-static const char *const rd_junk[] = { "nav", "aside", "footer", "header", "form", NULL };
-static const char *const rd_skip[] = { "script", "style", "noscript", "template", "svg", "iframe", NULL };
-static const char *const rd_paragraph[] = { "p", "pre", "br", "h1", "h2", "h3", "h4", "h5", "h6",
-    "li", "tr", "dd", "dt", "figcaption", NULL };
-
-/* Score from the tag and its class/id/role names. */
-static int rd_bias(const char *tag, const char *attrs, size_t len) {
-    static const char *const bad[] = { "comment", "nav", "menu", "footer", "header", "sidebar",
-        "share", "social", "related", "promo", "banner", "advert", "cookie", "popup", "widget",
-        "breadcrumb", "subscribe", "newsletter", "login", "masthead", "meta", "tags", NULL };
-    static const char *const good[] = { "article", "content", "main", "post", "entry", "story",
-        "text", "body", "blog", "read", NULL };
-    static char names[256];
-    int bias = 0;
-    if (!strcmp(tag, "article") || !strcmp(tag, "main")) bias += 25;
-    if (rd_name_is(tag, rd_junk)) bias -= 100;
-    size_t n = 0;
-    for (size_t i = 0; i + 4 < len && n + 1 < sizeof names; i++) {
-        if (strncasecmp(attrs + i, "class=", 6) && strncasecmp(attrs + i, "id=", 3) &&
-            strncasecmp(attrs + i, "role=", 5)) continue;
-        const char *v = memchr(attrs + i, '=', len - i) + 1;
-        char q = (*v == '"' || *v == '\'') ? *v++ : ' ';
-        while (v < attrs + len && *v != q && *v != '>' && n + 1 < sizeof names)
-            names[n++] = (char)tolower((unsigned char)*v++);
-        names[n++] = ' ';
-        i = (size_t)(v - attrs);
-    }
-    names[n] = 0;
-    if (!n) return bias;
-    int neg = 0, pos = 0;
-    for (const char *const *w = bad; *w; w++) if (strstr(names, *w)) neg++;
-    for (const char *const *w = good; *w; w++) if (strstr(names, *w)) pos++;
-    bias += (pos ? 25 : 0) + (pos > 1 ? 25 : 0) - (neg ? 25 : 0) - (neg > 1 ? 25 : 0);
-    return bias;
-}
-
-/* Analyse the page; returns the best container or -1. */
-__attribute__((noinline)) static int rd_analyze(const char *html, size_t n) {
-    static int stack[64];
-    int depth = 0;
-    g_rd_count = 0;
-    if (!html || !n) return -1;
-    memset(&g_rd[0], 0, sizeof g_rd[0]);
-    g_rd[0].parent = -1;
-    g_rd[0].end = n;
-    snprintf(g_rd[0].tag, sizeof g_rd[0].tag, "doc");
-    g_rd_count = 1;
-    stack[depth++] = 0;
-
-    int in_a = 0, para_chars = 0, para_commas = 0, para_node = -1;
-#define RD_FLUSH() do { \
-        if (para_node >= 0 && para_chars >= 25) { \
-            float s_ = 1.0f + (float)para_commas + (float)(para_chars / 100 > 3 ? 3 : para_chars / 100); \
-            g_rd[para_node].score += s_; \
-            g_rd[para_node].paras++; \
-            int up_ = g_rd[para_node].parent; \
-            if (up_ >= 0) g_rd[up_].score += s_ / 2.0f; \
-        } \
-        para_chars = 0; para_commas = 0; para_node = -1; \
-    } while (0)
-
-    size_t i = 0;
-    while (i < n) {
-        if (html[i] == '<') {
-            if (i + 3 < n && !strncmp(html + i, "<!--", 4)) {
-                const char *e = strstr(html + i + 4, "-->");
-                i = e ? (size_t)(e - html) + 3 : n;
-                continue;
-            }
-            bool closing = i + 1 < n && html[i + 1] == '/';
-            size_t k = i + 1 + (closing ? 1 : 0);
-            char name[12];
-            size_t nl = 0;
-            while (k < n && nl + 1 < sizeof name && (isalnum((unsigned char)html[k])))
-                name[nl++] = (char)tolower((unsigned char)html[k++]);
-            name[nl] = 0;
-            size_t attrs = k;
-            char quote = 0;
-            while (k < n && (quote || html[k] != '>')) {
-                if (quote) { if (html[k] == quote) quote = 0; }
-                else if (html[k] == '"' || html[k] == '\'') quote = html[k];
-                k++;
-            }
-            size_t tag_end = k < n ? k + 1 : n;
-            if (!nl) { i = tag_end; continue; }
-
-            if (!closing && rd_name_is(name, rd_skip)) {      /* skip <script>...</script> */
-                char close[16];
-                snprintf(close, sizeof close, "</%s", name);
-                size_t j = tag_end;
-                while (j < n && strncasecmp(html + j, close, strlen(close))) j++;
-                const char *gt = j < n ? memchr(html + j, '>', n - j) : NULL;
-                i = gt ? (size_t)(gt - html) + 1 : n;
-                continue;
-            }
-            if (rd_name_is(name, rd_containers)) {
-                RD_FLUSH();
-                if (!closing) {
-                    if (g_rd_count < RD_MAX_NODES && depth < 64) {
-                        rd_node_t *nd = &g_rd[g_rd_count];
-                        memset(nd, 0, sizeof *nd);
-                        nd->parent = stack[depth - 1];
-                        nd->start = i;
-                        nd->end = n;
-                        nd->bias = rd_bias(name, html + attrs, k - attrs);
-                        snprintf(nd->tag, sizeof nd->tag, "%s", name);
-                        stack[depth++] = g_rd_count++;
-                    }
-                } else {
-                    for (int d = depth - 1; d > 0; d--) {
-                        if (!strcmp(g_rd[stack[d]].tag, name)) {
-                            for (int e = depth - 1; e >= d; e--) g_rd[stack[e]].end = tag_end;
-                            depth = d;
-                            break;
-                        }
-                    }
-                }
-            } else if (!strcmp(name, "a")) {
-                in_a = closing ? 0 : 1;
-            } else if (rd_name_is(name, rd_paragraph)) {
-                RD_FLUSH();
-            }
-            i = tag_end;
-            continue;
-        }
-        /* Text up to the next tag. */
-        int node = stack[depth - 1];
-        int chars = 0, commas = 0;
-        while (i < n && html[i] != '<') {
-            unsigned char c = (unsigned char)html[i];
-            if (c == '&') {                    /* an entity counts as one character */
-                const char *semi = memchr(html + i, ';', (n - i) < 10 ? n - i : 10);
-                if (semi) i = (size_t)(semi - html);
-                chars++;
-            } else if (!isspace(c) && (c & 0xC0) != 0x80) {
-                chars++;
-                if (c == ',') commas++;
-            }
-            i++;
-        }
-        if (!chars) continue;
-        g_rd[node].text += chars;
-        if (in_a) g_rd[node].link_text += chars;
-        if (para_node != node) { RD_FLUSH(); para_node = node; }
-        para_chars += chars;
-        para_commas += commas;
-    }
-    RD_FLUSH();
-#undef RD_FLUSH
-
-    /* Totals per subtree (children come after their parents). */
-    for (int k2 = 0; k2 < g_rd_count; k2++) {
-        g_rd[k2].total_text = g_rd[k2].text;
-        g_rd[k2].total_link = g_rd[k2].link_text;
-        g_rd[k2].total_paras = g_rd[k2].paras;
-    }
-    for (int k2 = g_rd_count - 1; k2 > 0; k2--) {
-        int p = g_rd[k2].parent;
-        g_rd[p].total_text += g_rd[k2].total_text;
-        g_rd[p].total_link += g_rd[k2].total_link;
-        g_rd[p].total_paras += g_rd[k2].total_paras;
-    }
-
-    int best = -1;
-    float best_score = 0;
-    for (int k2 = 1; k2 < g_rd_count; k2++) {
-        rd_node_t *nd = &g_rd[k2];
-        if (nd->score <= 0 || nd->total_text < 300 || nd->bias <= -100) continue;
-        float ld = nd->total_text ? (float)nd->total_link / (float)nd->total_text : 1.0f;
-        float s = (nd->score + (float)nd->bias) * (1.0f - ld);
-        if (s > best_score) { best_score = s; best = k2; }
-    }
-    return best;
-}
-
-static void html_escape_into(char *out, size_t cap, const char *in) {
-    size_t o = 0;
-    for (; *in && o + 6 < cap; in++) {
-        if (*in == '<') { memcpy(out + o, "&lt;", 4); o += 4; }
-        else if (*in == '>') { memcpy(out + o, "&gt;", 4); o += 4; }
-        else if (*in == '&') { memcpy(out + o, "&amp;", 5); o += 5; }
-        else out[o++] = *in;
-    }
-    out[o] = 0;
-}
-
-/* Called for every new page: should the "Simplified view" chip show? */
-static void reader_check_offer(page_t *pg) {
-    pg->reader_offer = false;
-    if (!pg->html) return;
-    int best = rd_analyze(pg->html, pg->html_len);
-    if (best < 0) return;
-    const rd_node_t *nd = &g_rd[best];
-    int all = g_rd[0].total_text;
-    if (nd->total_text >= 1000 && nd->total_paras >= 4 && all >= nd->total_text + nd->total_text / 4) {
-        pg->reader_offer = true;
-        printf("[mini_browser] reader: offered (%d of %d characters, %d paragraphs)\n",
-               nd->total_text, all, nd->total_paras);
-    }
-}
-
-/* The simplified page for the page on screen, or NULL. */
-__attribute__((noinline)) static page_t *reader_build(const page_t *src) {
-    static char title[400];
-    if (!src || !src->html) return NULL;
-    int best = rd_analyze(src->html, src->html_len);
-    if (best < 0) return NULL;
-    const rd_node_t *nd = &g_rd[best];
-    size_t len = nd->end > nd->start ? nd->end - nd->start : 0;
-    char *body = (char *)malloc(len + 1);
-    if (!body) return NULL;
-    memcpy(body, src->html + nd->start, len);
-    body[len] = 0;
-    /* Blank navigation, footers and link-heavy widgets inside the article. */
-    for (int k = best + 1; k < g_rd_count; k++) {
-        const rd_node_t *c = &g_rd[k];
-        if (c->start < nd->start || c->end > nd->end || c->end <= c->start) continue;
-        float ld = c->total_text ? (float)c->total_link / (float)c->total_text : 0.0f;
-        if (c->bias <= -100 || (c->bias <= -25 && ld > 0.4f) || (ld > 0.7f && c->total_text > 40))
-            memset(body + (c->start - nd->start), ' ', c->end - c->start);
-    }
-    html_escape_into(title, sizeof title, src->title[0] ? src->title : "Simplified view");
-    size_t cap = len + 2 * strlen(title) + 160;
-    char *html = (char *)malloc(cap);
-    if (!html) { free(body); return NULL; }
-    snprintf(html, cap, "<html><head><title>%s</title></head><body><h1>%s</h1>%s</body></html>",
-             title, title, body);
-    free(body);
-    page_t *pg = html_to_page(html, src->base);
-    free(html);
-    if (pg) printf("[mini_browser] reader: built from <%s>, %d characters, %d paragraphs\n",
-                   nd->tag, nd->total_text, nd->total_paras);
-    return pg;
-}
-
-/* WHY+V: simplified view of the page, or back to the full page. */
-__attribute__((noinline)) static void browser_toggle_reader(browser_t *b) {
-    if (b->view == VIEW_READER) {
-        browser_return_from_local_page(b);
-        return;
-    }
-    if (b->view != VIEW_WEB || !b->page || !b->page->html) {
-        browser_set_status(b, "NO SIMPLIFIED VIEW HERE", 1500);
-        return;
-    }
-    page_t *pg = reader_build(b->page);
-    if (!pg || !pg->text || !pg->text[0]) {
-        free_page(pg);
-        browser_set_status(b, "NO ARTICLE FOUND ON THIS PAGE", 1800);
-        printf("[mini_browser] reader: no article found\n");
-        return;
-    }
-    b->reader_chip_hidden = true;
-    browser_show_local_page(b, pg, VIEW_READER, "reader:");
-    b->last_http_status = 0;
-    bg_start(b);                                  /* the article's images */
-    printf("[mini_browser] reader: opened\n");
-    browser_log_content(b->content_wrapped);
-}
-
-/* The "Simplified view" chip at the bottom of a long article. */
-static void browser_render_reader_chip(browser_t *b) {
-    static char line[96];
-    SDL_Renderer *ren = b->ren;
-    const char *label = "Show simplified view  WHY+V";
-    int w = (int)strlen(label) * 12 + 28, h = CH_H + 16;
-    int x = (VIEW_W - w) / 2, y = VIEW_H - h - 14;
-    SDL_FRect box = { (float)x, (float)y, (float)w, (float)h };
-    SDL_SetRenderDrawColor(ren, 0x18, 0x28, 0x3C, 255);
-    SDL_RenderFillRect(ren, &box);
-    SDL_SetRenderDrawColor(ren, 0x64, 0xEF, 0xFE, 255);
-    SDL_RenderRect(ren, &box);
-    colored_text(line, sizeof line, 0xE5E7EB, label);
-    draw_text(ren, x + 14, y + 8, line, w - 20);
-}
-
-/* ---------- 4.4: saved pages (WHY+P) ----------
- * The text of the page (or of its simplified view) is saved to SAVED_DIR
- * for reading offline; the Downloads page (WHY+D) lists the saved pages. */
-
-/* Page text without formatting markers; image lines become "[image]". */
-static size_t page_plain_text(const char *in, char *out, size_t cap) {
-    size_t o = 0, i = 0, len = strlen(in);
-    while (i < len && o + 8 < cap) {
-        const char *line = in + i;
-        const char *nl = strchr(line, '\n');
-        size_t ll = nl ? (size_t)(nl - line) : strlen(line);
-        int idx = -1;
-        if (is_image_marker_line(line, (int)ll, &idx)) {
-            o += (size_t)snprintf(out + o, cap - o, "[image]");
-            i += ll;
-        } else {
-            size_t end = i + ll;
-            while (i < end && o + 5 < cap) {
-                size_t at = i;
-                unsigned cp = utf8_next(in, end, &i);
-                if (cp == 0) { i = end; break; }
-                if ((cp < 0x20 && cp != '\t') || is_format_marker(cp)) continue;
-                memcpy(out + o, in + at, i - at);
-                o += i - at;
-            }
-        }
-        if (nl && o + 1 < cap) { out[o++] = '\n'; i++; }
-        else if (!nl) break;
-    }
-    out[o] = 0;
-    return o;
-}
-
-__attribute__((noinline)) static void browser_save_page(browser_t *b) {
-    static char name[64], path[128], line[URL_MAX + 200];
-    if (!b->page || !b->page->text || (b->view != VIEW_WEB && b->view != VIEW_READER)) {
-        browser_set_status(b, "NOTHING TO SAVE HERE", 1500);
-        return;
-    }
-    const char *url = b->view == VIEW_READER ? b->view_return_url : b->url_buf;
-    const char *title = b->page->title[0] ? b->page->title : url;
-    size_t cap = strlen(b->page->text) + 1024;
-    char *text = (char *)malloc(cap);
-    if (!text) return;
-    page_plain_text(b->page->text, text, cap);
-
-    /* The list, newest first.  Saving a page again replaces its earlier
-     * copy; entries whose file is gone are dropped. */
-    static char lines[SAVED_LIST_MAX][URL_MAX + 200];
-    static char reuse[128];
-    int count = 0;
-    reuse[0] = 0;
-    FILE *l = fopen(SAVED_LIST, "r");
-    if (l) {
-        while (count < SAVED_LIST_MAX - 1 && fgets(lines[count], sizeof lines[count], l)) {
-            char *e = lines[count];
-            e[strcspn(e, "\r\n")] = 0;
-            char *t1 = strchr(e, '\t');
-            char *t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
-            if (!t1) continue;
-            *t1 = 0;
-            bool keep = file_exists(e);
-            if (keep && t2 && !strcmp(t2 + 1, url) && !reuse[0]) {
-                snprintf(reuse, sizeof reuse, "%s", e);
-                keep = false;
-            }
-            *t1 = '\t';
-            if (keep) count++;
-        }
-        fclose(l);
-    }
-
-    mkdir_p(SAVED_DIR);
-    if (reuse[0]) {
-        snprintf(path, sizeof path, "%s", reuse);
-        const char *nm = strchr(path, ']');
-        snprintf(name, sizeof name, "%s", nm ? nm + 1 : path);
-    } else {
-        download_sanitize(title, strlen(title), name, 48);
-        if (strlen(name) + 5 < sizeof name) strcat(name, ".txt");
-        snprintf(path, sizeof path, SAVED_DIR "%s", name);
-        for (int i = 2; i < 100 && file_exists(path); i++) {
-            name[strlen(name) - 4] = 0;
-            snprintf(path, sizeof path, SAVED_DIR "%.40s-%d.txt", name, i);
-            strcat(name, ".txt");
-        }
-    }
-    FILE *f = fopen(path, "w");
-    bool ok = f != NULL;
-    if (f) {
-        if (fprintf(f, "%s\n%s\n\n%s\n", title, url, text) < 0) ok = false;
-        if (fclose(f) != 0) ok = false;
-    }
-    free(text);
-    if (!ok) {
-        remove(path);
-        browser_set_status(b, "COULD NOT SAVE (FLASH FULL?)", 2000);
-        printf("[mini_browser] saved page: failed %s\n", path);
-        return;
-    }
-    remove(SAVED_LIST);
-    l = fopen(SAVED_LIST, "w");
-    if (l) {
-        snprintf(line, sizeof line, "%s\t%s\t%s", path, title, url);
-        for (char *c = line + strlen(path) + 1; *c; c++) if (*c == '\n') *c = ' ';
-        fprintf(l, "%s\n", line);
-        for (int i = 0; i < count; i++) fprintf(l, "%s\n", lines[i]);
-        fclose(l);
-    }
-    struct stat st;
-    long size = stat(path, &st) == 0 ? (long)st.st_size : 0;
-    printf("[mini_browser] saved page: %s (%ld bytes%s)\n", path, size, reuse[0] ? ", replaced" : "");
-    snprintf(line, sizeof line, "SAVED FOR OFFLINE: %s", name);
-    browser_set_status(b, line, 2500);
-}
-
-/* "saved:N" (from the Downloads page): show saved page N. */
-__attribute__((noinline)) static void browser_open_saved(browser_t *b, int number) {
-    static char line[URL_MAX + 200];
-    FILE *l = fopen(SAVED_LIST, "r");
-    int n = 0;
-    bool found = false;
-    if (l) {
-        while (fgets(line, sizeof line, l)) {
-            line[strcspn(line, "\r\n")] = 0;
-            if (line[0] && ++n == number) { found = true; break; }
-        }
-        fclose(l);
-    }
-    char *tab = found ? strchr(line, '\t') : NULL;
-    if (!tab) {
-        browser_set_status(b, "SAVED PAGE NOT FOUND", 1500);
-        return;
-    }
-    *tab = 0;
-    FILE *f = fopen(line, "r");
-    if (!f) {
-        browser_set_status(b, "SAVED PAGE WAS DELETED", 1500);
-        return;
-    }
-    page_t *pg = (page_t *)calloc(1, sizeof(page_t));
-    size_t cap = 256 * 1024;
-    char *text = (char *)malloc(cap);
-    if (!pg || !text) { free(pg); free(text); fclose(f); return; }
-    size_t got = fread(text, 1, cap - 1, f);
-    fclose(f);
-    text[got] = 0;
-    /* Keep the line breaks of the text file; other control characters
-     * (and the marker range) are made harmless line by line. */
-    for (char *ln = text; ln && *ln;) {
-        char *nl = strchr(ln, '\n');
-        if (nl) *nl = 0;
-        sanitize_text_inplace(ln);
-        if (!nl) break;
-        *nl = '\n';
-        ln = nl + 1;
-    }
-    char *t2 = strchr(tab + 1, '\t');
-    if (t2) *t2 = 0;
-    snprintf(pg->title, sizeof pg->title, "Saved: %s", tab + 1);
-    snprintf(pg->base, URL_MAX, "saved:");
-    pg->text = text;
-    browser_show_local_page(b, pg, VIEW_SAVED, "saved:");
-    b->last_http_status = 0;
-    printf("[mini_browser] opened saved page: %s (%u bytes)\n", line, (unsigned)got);
-    browser_log_content(b->content_wrapped);
-}
-
-/* ---------- 4.4: share (WHY+U) ----------
- * The address as a QR code on screen (for a phone camera) and as a line on
- * the USB serial port ("SHARE <url>"). */
-static uint8_t g_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(15)];
-static uint8_t g_qr_tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(15)];
-static char g_share_url[URL_MAX];
-static bool g_qr_ok;
-
-static const char *browser_page_url(const browser_t *b) {
-    if (b->view == VIEW_WEB) return b->url_buf;
-    if (b->view == VIEW_READER && b->view_return_url[0]) return b->view_return_url;
-    return NULL;
-}
-
-static void browser_share(browser_t *b) {
-    const char *url = browser_page_url(b);
-    if (!url || !is_http_scheme(url)) {
-        browser_set_status(b, "NOTHING TO SHARE HERE", 1500);
-        return;
-    }
-    snprintf(g_share_url, sizeof g_share_url, "%s", url);
-    g_qr_ok = qrcodegen_encodeText(g_share_url, g_qr_tmp, g_qr, qrcodegen_Ecc_MEDIUM, 1, 15,
-                                   qrcodegen_Mask_AUTO, true);
-    printf("[mini_browser] share: %s (QR %s)\n", g_share_url, g_qr_ok ? "ok" : "too long");
-    printf("SHARE %s\n", g_share_url);
-    fflush(stdout);
-    b->overlay = OVERLAY_SHARE;
-}
-
-__attribute__((noinline)) static void browser_render_share(browser_t *b) {
-    static char line[URL_MAX + 64];
-    SDL_Renderer *ren = b->ren;
-    draw_ui(ren, "Share this page - any key returns");
-    int top = PAD_TOP + 8;
-    if (g_qr_ok) {
-        int size = qrcodegen_getSize(g_qr);
-        int quiet = 4;
-        int scale = (VIEW_W - 160) / (size + 2 * quiet);
-        if (scale > 12) scale = 12;
-        int px = (size + 2 * quiet) * scale;
-        int x0 = (VIEW_W - px) / 2;
-        SDL_FRect bg = { (float)x0, (float)top, (float)px, (float)px };
-        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
-        SDL_RenderFillRect(ren, &bg);
-        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-        for (int yy = 0; yy < size; yy++) {
-            for (int xx = 0; xx < size; xx++) {
-                if (!qrcodegen_getModule(g_qr, xx, yy)) continue;
-                int run = xx;
-                while (run + 1 < size && qrcodegen_getModule(g_qr, run + 1, yy)) run++;
-                SDL_FRect m = { (float)(x0 + (quiet + xx) * scale), (float)(top + (quiet + yy) * scale),
-                                (float)((run - xx + 1) * scale), (float)scale };
-                SDL_RenderFillRect(ren, &m);
-                xx = run;
-            }
-        }
-        top += px + 14;
-    } else {
-        colored_text(line, sizeof line, 0xFFFB96, "The address is too long for a QR code.");
-        draw_text(ren, PAD_LR, top, line, VIEW_W - 2 * PAD_LR);
-        top += 2 * (CH_H + LINE_SPACING);
-    }
-    colored_text(line, sizeof line, 0xE5E7EB, g_share_url);
-    top += draw_text_ex(ren, PAD_LR, top, line, strlen(line), VIEW_W - 2 * PAD_LR, NULL) + 8;
-    colored_text(line, sizeof line, 0x9CA3AF, "Scan it with a phone, or read it on the USB serial port:");
-    top += draw_text_ex(ren, PAD_LR, top, line, strlen(line), VIEW_W - 2 * PAD_LR, NULL);
-    colored_text(line, sizeof line, 0x9CA3AF, "a line \"SHARE <address>\" was sent.");
-    draw_text(ren, PAD_LR, top, line, VIEW_W - 2 * PAD_LR);
-}
-
-/* ---------- 4.4: lock in the bar ---------- */
-
-static void draw_bar_lock(SDL_Renderer *r) {
-    const int x = VIEW_W - 22, y = 4;
-    SDL_SetRenderDrawColor(r, 0x34, 0xD3, 0x99, 255);
-    SDL_FRect body = { (float)x, (float)(y + 7), 14.0f, 10.0f };
-    SDL_RenderFillRect(r, &body);
-    SDL_FRect shackle_l = { (float)(x + 2), (float)(y + 2), 2.0f, 6.0f };
-    SDL_FRect shackle_r = { (float)(x + 10), (float)(y + 2), 2.0f, 6.0f };
-    SDL_FRect shackle_t = { (float)(x + 2), (float)y, 10.0f, 2.0f };
-    SDL_RenderFillRect(r, &shackle_l);
-    SDL_RenderFillRect(r, &shackle_r);
-    SDL_RenderFillRect(r, &shackle_t);
-    SDL_SetRenderDrawColor(r, 0x11, 0x18, 0x26, 255);
-    SDL_FRect hole = { (float)(x + 6), (float)(y + 10), 2.0f, 4.0f };
-    SDL_RenderFillRect(r, &hole);
 }
 
 __attribute__((noinline)) static void browser_fetch(browser_t *b) {
@@ -9831,14 +8610,6 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
 
     trim_inplace(b->url_buf);
     if (!b->url_buf[0]) return;
-
-    /* 4.4: "saved:N" links on the Downloads page. */
-    if (!strncmp(b->url_buf, "saved:", 6)) {
-        int number = atoi(b->url_buf + 6);
-        browser_restore_shown_url(b);
-        if (number > 0) browser_open_saved(b, number);
-        return;
-    }
 
     if (b->url_buf[0] == '/' && b->url_buf[1] == '/') {
         char sch[16]; scheme_from_url(b->page ? b->page->base : "https://example.org", sch, sizeof sch);
@@ -9878,7 +8649,6 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     }
 
     /* Loading line over the current page; Esc stops. */
-    const Uint64 load_started = SDL_GetTicks();
     memset(&g_load, 0, sizeof g_load);
     g_load.b = b;
     browser_draw_loading(b, 0, 0);
@@ -9942,8 +8712,6 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     if (!image && shown_url && strcmp(shown_url, b->url_buf) != 0)   /* not on reload */
         bfcache_store(b, shown_url, &shown_meta);
     browser_commit_navigation(b, hist_target, history_navigation);
-    b->reader_chip_hidden = false;
-    g_fetch_meta.wire_bytes = g_net_wire_bytes;
     int stale = bfcache_find(b->url_buf);   /* superseded by this load */
     if (stale >= 0) bfcache_free(&g_bfcache[stale]);
     b->last_http_status = http_status;
@@ -10006,12 +8774,6 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
             browser_set_page(b, pg);   /* releases the old page and its images */
             b->page_from_post = was_post;
             b->page_partial = m.truncated && g_load.stopped;
-            /* 4.4: keep the HTML for reader mode (and offer it). */
-            pg->html = m.buf;
-            pg->html_len = m.len;
-            m.buf = NULL;
-            reader_check_offer(pg);
-            g_fetch_meta.load_ms = (unsigned)(SDL_GetTicks() - load_started);
 
             char *wrapped = wrap_text(pg->text, k_max_cols);
 #if MB_LOG_CONTENT
@@ -10019,9 +8781,12 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
 #endif
             browser_set_content(b, wrapped);
 
-            /* 4.3: the page is ready now; its images follow in the
-             * background (bg_step from the main loop). */
-            bg_start(b);
+            /* Text first, then the images: the loading line shows the new
+             * page while they arrive, and Esc skips the rest. */
+            if (pg->image_count > 0 && display_inline_image_limit() > 0) {
+                load_page_images(pg);
+                b->max_scroll = compute_max_scroll(pg, b->content_wrapped, b->content_lines);
+            }
             browser_set_status(b, g_load.stopped ? "STOPPED" : "Loaded", 1000);
 
             if (!was_post) visit_record(b->url_buf, pg->title);
@@ -10055,15 +8820,6 @@ __attribute__((noinline)) static void browser_compose_bar(browser_t *b) {
                  b->form_edit_buf, b->form_edit_buf + b->form_edit_cursor);
     } else if (b->input == INPUT_LINK_NUMBER && b->link_number_len > 0) {
         snprintf(bar, cap, "%s", b->link_number_buf);
-    } else if (b->input == INPUT_FIND) {
-        if (g_find.query[0])
-            snprintf(bar, cap, "Find: %s|   %d of %d", g_find.query,
-                     g_find.count ? g_find.current + 1 : 0, g_find.count);
-        else
-            snprintf(bar, cap, "Find: |");
-    } else if (g_find.shown && g_find.count > 0) {
-        snprintf(bar, cap, "\"%s\" %d of %d - n next, N previous, Esc", g_find.query,
-                 g_find.current + 1, g_find.count);
     } else if (b->input == INPUT_URL) {
         size_t curlen = strlen(b->url_buf);
         if (b->url_cursor > curlen) b->url_cursor = curlen;
@@ -10087,14 +8843,10 @@ __attribute__((noinline)) static void browser_compose_bar(browser_t *b) {
          * HTTP failures are already shown as readable page content.
          * With several tabs open, "[2/3]" in front says which tab this is.
          */
-        static char img[24];
-        img[0] = 0;
-        if (g_bg.active && g_bg.page == page)
-            snprintf(img, sizeof img, "[img %d/%d] ", g_bg.done, g_bg.count);
         if (g_tab_count > 1)
-            snprintf(bar, cap, "[%d/%d] %s%s", g_tab_cur + 1, g_tab_count, img, page->title);
+            snprintf(bar, cap, "[%d/%d] %s", g_tab_cur + 1, g_tab_count, page->title);
         else
-            snprintf(bar, cap, "%s%s", img, page->title);
+            snprintf(bar, cap, "%s", page->title);
     } else {
         snprintf(bar, cap, "%s", b->url_buf);
     }
@@ -10160,12 +8912,6 @@ static void browser_render_page(browser_t *b) {
     draw_ui(ren, b->barline);
     if (!b->content_wrapped) return;
 
-    /* 4.4: matches and focus belong to this text (zoom re-wraps it). */
-    if (g_find.shown && g_find.content != b->content_wrapped) find_compute(b->content_wrapped);
-    if (b->sel_action >= 0 && (g_focus.content != b->content_wrapped || g_focus.action != b->sel_action))
-        focus_locate(b);
-
-    PAGE_SCALE_BEGIN();
     static text_state_t state;
     int y = PAD_TOP;
     const char *p = browser_visible_start(b, &state);
@@ -10199,16 +8945,13 @@ static void browser_render_page(browser_t *b) {
             }
             text_state_advance(&state, p, (size_t)len);
         } else {
-            line_marks_build(b, (size_t)(p - b->content_wrapped), (size_t)len);
             draw_text_ex(ren, PAD_LR, y, p, (size_t)len, VIEW_W - 2 * PAD_LR, &state);
-            g_line_mark_count = 0;
             y += (CH_H + LINE_SPACING);
         }
 
         drawn++;
         p = nl ? nl + 1 : NULL;
     }
-    PAGE_SCALE_END();
 }
 
 /* Wrap s in a colour marker so draw_text() draws it in rgb. */
@@ -10291,24 +9034,12 @@ __attribute__((noinline)) static void browser_render_suggestions(browser_t *b) {
 
 __attribute__((noinline)) static void browser_render(browser_t *b) {
     browser_compose_bar(b);
-    g_bar_lock = b->overlay == OVERLAY_NONE && (b->view == VIEW_WEB || b->view == VIEW_READER) &&
-                 b->input == INPUT_NONE && !strncasecmp(b->view == VIEW_READER ? b->view_return_url
-                                                                              : b->url_buf, "https://", 8);
 
     if (b->overlay == OVERLAY_IMAGE) draw_image_viewer(b->ren, &g_viewer_image);
     else if (b->overlay == OVERLAY_OPTIONS) browser_render_options(b);
     else if (b->overlay == OVERLAY_TABS) browser_render_tabs(b);
     else if (b->overlay == OVERLAY_DOWNLOAD) { browser_render_page(b); browser_render_download(b); }
-    else if (b->overlay == OVERLAY_SHARE) browser_render_share(b);
     else browser_render_page(b);
-
-    /* 4.4: offer the simplified view on long articles (until scrolled). */
-    if (b->overlay == OVERLAY_NONE && b->input == INPUT_NONE && b->view == VIEW_WEB &&
-        b->page && b->page->reader_offer && !b->reader_chip_hidden && !b->screenshot_pending &&
-        !b->full_screenshot_pending) {
-        if (b->scroll_lines > 12) b->reader_chip_hidden = true;
-        else browser_render_reader_chip(b);
-    }
 
     if (b->input == INPUT_URL && b->sugg_count > 0 && b->overlay == OVERLAY_NONE)
         browser_render_suggestions(b);
@@ -10354,15 +9085,7 @@ static void browser_handle_text(browser_t *b, const char *t) {
         unsigned char c = (unsigned char)*t;
         if (c < 32 || c > 126) continue;   /* the URL bar and fields are ASCII */
 
-        if (b->input == INPUT_FIND) {
-            size_t n = strlen(g_find.query);
-            if (n + 1 < sizeof g_find.query) {
-                g_find.query[n] = (char)c;
-                g_find.query[n + 1] = 0;
-                find_compute(b->content_wrapped);
-                find_first_visible(b);
-            }
-        } else if (b->input == INPUT_FORM) {
+        if (b->input == INPUT_FORM) {
             browser_insert_char(b->form_edit_buf, sizeof(b->form_edit_buf), &b->form_edit_cursor, (char)c);
         } else if (b->input == INPUT_URL) {
             browser_insert_char(b->url_buf, sizeof(b->url_buf), &b->url_cursor, (char)c);
@@ -10588,43 +9311,8 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
             break;
         }
 
-        case SDL_SCANCODE_K: /* BOOKMARK current page (4.4: was WHY+F) */
+        case SDL_SCANCODE_F: /* BOOKMARK current page */
             browser_toggle_bookmark(b);
-            break;
-
-        case SDL_SCANCODE_V: /* 4.4: SIMPLIFIED VIEW (reader mode) */
-            browser_toggle_reader(b);
-            break;
-
-        case SDL_SCANCODE_P: /* 4.4: SAVE PAGE for offline reading */
-            browser_save_page(b);
-            break;
-
-        case SDL_SCANCODE_U: /* 4.4: SHARE (QR code + serial) */
-            browser_share(b);
-            break;
-
-        case SDL_SCANCODE_EQUALS:      /* 4.4: zoom in (WHY+ =/+) */
-        case SDL_SCANCODE_KP_PLUS:
-            browser_set_zoom(b, g_page_scale + 1);
-            break;
-        case SDL_SCANCODE_MINUS:       /* zoom out */
-        case SDL_SCANCODE_KP_MINUS:
-            browser_set_zoom(b, g_page_scale - 1);
-            break;
-        case SDL_SCANCODE_0:           /* zoom 100% */
-            browser_set_zoom(b, 2);
-            break;
-
-        case SDL_SCANCODE_F: /* 4.4: FIND IN PAGE */
-            if (b->content_wrapped && b->overlay == OVERLAY_NONE) {
-                browser_reset_input(b);
-                b->input = INPUT_FIND;
-                g_find.shown = true;
-                find_compute(b->content_wrapped);   /* the previous query, if any */
-                find_first_visible(b);
-                printf("[mini_browser] find: opened\n");
-            }
             break;
 
         case SDL_SCANCODE_B: { /* BACK */
@@ -10796,15 +9484,6 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
         return;
     }
 
-    /* 4.4: the share screen closes on any key (WHY+S still takes a
-     * screenshot of it). */
-    if (b->overlay == OVERLAY_SHARE && sc != SC_ACCELERATOR &&
-        !(b->accel_down && sc == SDL_SCANCODE_S)) {
-        b->inhibit_text_once = true;
-        b->overlay = OVERLAY_NONE;
-        return;
-    }
-
     /* 4.3: "Download this file?": Enter saves, Esc cancels. */
     if (b->overlay == OVERLAY_DOWNLOAD && sc != SC_ACCELERATOR && !b->accel_down) {
         b->inhibit_text_once = true;
@@ -10866,35 +9545,6 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
         return;
     }
 
-    /* 4.4: the find bar. */
-    if (b->input == INPUT_FIND) {
-        size_t n = strlen(g_find.query);
-        if (sc == SDL_SCANCODE_BACKSPACE || sc == SDL_SCANCODE_DELETE) {
-            if (n) g_find.query[n - 1] = 0;
-            find_compute(b->content_wrapped);
-            find_first_visible(b);
-        } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
-            b->input = INPUT_NONE;          /* keep the highlights: n / N jump */
-            if (b->content_wrapped != g_find.content) find_compute(b->content_wrapped);
-            printf("[mini_browser] find: '%s' %d matches\n", g_find.query, g_find.count);
-            if (g_find.count == 0) {
-                browser_set_status(b, "NO MATCHES", 1500);
-                find_clear();
-            } else if (g_find.current < 0) {
-                find_first_visible(b);
-            }
-        } else if (sc == SDL_SCANCODE_DOWN) {
-            find_step(b, +1);
-        } else if (sc == SDL_SCANCODE_UP) {
-            find_step(b, -1);
-        } else if (sc == SDL_SCANCODE_ESCAPE) {
-            b->input = INPUT_NONE;
-            find_clear();
-            printf("[mini_browser] find: closed\n");
-        }
-        return;
-    }
-
     /* Text editing in the URL bar or a form field. */
     if (b->input == INPUT_URL || b->input == INPUT_FORM) {
         bool url = b->input == INPUT_URL;
@@ -10943,11 +9593,6 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
                 b->history_navigation = true;   /* reload: no new history entry */
                 b->need_fetch = true;
             }
-            break;
-
-        case SDL_SCANCODE_N:   /* 4.4: next / previous find match */
-            if (g_find.shown) find_step(b, (key->mod & SDL_KMOD_SHIFT) ? -1 : +1);
-            else if (b->input == INPUT_LINK_NUMBER) browser_reset_input(b);
             break;
 
         case SDL_SCANCODE_R:   /* error page: reload (as Chrome's Reload button) */
@@ -11007,14 +9652,9 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
             bool shift = (key->mod & SDL_KMOD_SHIFT) != 0;
             if (b->page && b->page->action_count > 0) {
                 int n = b->page->action_count;
-                if (b->sel_action < 0) b->sel_action = shift ? n - 1 : 0;   /* first Tab */
+                if (b->sel_action < 0) b->sel_action = 0;   /* first Tab: first action */
                 else if (shift) b->sel_action = (b->sel_action == 0) ? n - 1 : b->sel_action - 1;
                 else b->sel_action = (b->sel_action + 1) % n;
-                /* 4.4: ring around it, and scroll it into view. */
-                focus_locate(b);
-                if (g_focus.found) scroll_line_into_view(b, g_focus.line);
-                printf("[mini_browser] focus: action %d of %d%s\n", b->sel_action + 1, n,
-                       g_focus.found ? "" : " (not in the text)");
             }
             break;
         }
@@ -11025,11 +9665,6 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
                 decoded_image_release(&g_viewer_image);
             } else if (b->input == INPUT_LINK_NUMBER) {
                 browser_reset_input(b);
-            } else if (g_find.shown) {
-                find_clear();              /* 4.4: Esc clears the find highlights */
-                printf("[mini_browser] find: closed\n");
-            } else if (g_bg.active) {
-                bg_stop(b);                /* 4.3: stop the images, not the browser */
             } else {
                 b->running = false;
             }
@@ -11102,7 +9737,6 @@ static void browser_scroll_repeat(browser_t *b) {
 /* How long to sleep in SDL_WaitEventTimeout before something needs a redraw
  * on its own (status message expiry, held-key repeat). */
 static Sint32 browser_wait_ms(const browser_t *b) {
-    if (bg_can_run(b)) return 0;           /* 4.3: images to load */
     Uint64 now = SDL_GetTicks();
     Uint64 wake = now + 1000;
     if (b->status_message[0] && b->status_message_until > now && b->status_message_until < wake)
@@ -11153,7 +9787,6 @@ int main(void) {
     visit_load();
     cookie_load();     /* 4.3 */
     cache_init();      /* 4.3 */
-    settings_load();   /* 4.4: zoom */
 
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);
@@ -11208,13 +9841,6 @@ int main(void) {
         }
 
         browser_scroll_repeat(b);
-
-        /* 4.3: idle on a page with images still to load: load one. */
-        if (b->running && bg_can_run(b) && !b->dirty) {
-            SDL_PumpEvents();
-            if (SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST) == 0)
-                bg_step(b);
-        }
     }
 
     SDL_StopTextInput(b->win);

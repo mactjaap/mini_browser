@@ -10638,7 +10638,10 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
                 browser_return_from_local_page(b);
             } else if (b->page && b->view == VIEW_WEB && is_http_scheme(b->url_buf)) {
                 page_t *pg = page_info_to_page(b->page, b->url_buf, b->last_http_status);
-                if (pg) browser_show_local_page(b, pg, VIEW_PAGE_INFO, "page-info:");
+                if (pg) {
+                    browser_show_local_page(b, pg, VIEW_PAGE_INFO, "page-info:");
+                    browser_log_content(b->content_wrapped);   /* 4.4-dev2: for the regression suite */
+                }
             }
             break;
         }
@@ -11180,7 +11183,8 @@ static Sint32 browser_wait_ms(const browser_t *b) {
 }
 
 int main(void) {
-    printf("[mini_browser] enter main\n");
+    /* Version and build time: shows which build is on the badge. */
+    printf("[mini_browser] enter main (version " MINI_BROWSER_VERSION ", built " __DATE__ " " __TIME__ ")\n");
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         printf("[mini_browser] SDL_Init failed: %s\n", SDL_GetError());

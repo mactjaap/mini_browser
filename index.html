@@ -22,7 +22,7 @@ Welcome to Mini Browser, a compact web browser for the WHY2025 badge.
 It is designed to explore lightweight and server-rendered websites while staying small
 enough to run comfortably on the badge.
 
-The latest stable release is Mini Browser 3.0. It supports links, bookmarks,
+It supports links, bookmarks,
 Back/Forward history, simple GET and POST forms, bounded cookie support, PNG/JPEG/GIF
 images, inline image rendering, multiple display modes, 56,352 Unicode glyphs,
 word-aware wrapping, RTL/Bidi text, Arabic shaping, monochrome emoji, real bold text,
@@ -30,11 +30,18 @@ HTTP/TLS page information and full-page screenshots.
 </p>
 
 <p>
-Mini Browser 4.3 is in development (4.3-dev1). Version 4.1 added an omnibox: one bar
-for web addresses and searches, with suggestions from your bookmarks and history while you
-type, a persistent history that survives a restart, and up to five tabs. Version 4.3 shows
-loading progress, lets you stop a page with Esc, explains failed pages clearly, and brings
-the last pages back instantly with Back and Forward.
+The current version is Mini Browser 4.4. It adds find in page, a simplified view for
+long articles, text zoom, a focus ring for links and fields, pages saved for offline
+reading, sharing a page as a QR code, a page information screen with a lock for secure
+pages, and a built-in help page: press WHY+/ (the /? key) to see every key.
+</p>
+
+<p>
+Version 4.3 brought loading progress with a stop key (Esc), clear error pages, an instant
+Back/Forward cache, compressed pages, cookies that stay after a restart, a 2 MB disk cache,
+downloads, and images that load after the text so you can start reading at once.
+Version 4.1 added the omnibox (one bar for addresses and searches, with suggestions),
+a history that survives a restart, and up to five tabs.
 </p>
 
 <pre>
@@ -117,7 +124,23 @@ switch tabs, WHY+A shows all tabs and WHY+W closes one.
 
 <p>
 While a page loads, the bar shows its progress; press Esc to stop. If a page cannot be
-loaded, an error page tells you why; press R or Enter to try again.
+loaded, an error page tells you why; press R or Enter to try again. The text appears
+first and the images follow; the bar shows [img 2/5] while they arrive.
+</p>
+
+<p>
+Press WHY+F to find a word on the page: matches light up while you type, n and Shift+N
+jump to the next and previous match, Esc turns them off. Tab and Shift+Tab move a ring over
+the links and fields, Enter opens the one with the ring. On a long article a chip offers a
+simplified view: press WHY+V to read just the article, without menus and sidebars.
+WHY+= and WHY+- make the text bigger or smaller, WHY+0 returns to 100%.
+</p>
+
+<p>
+WHY+P saves the text of a page to read later without a network; WHY+D lists your saved
+pages and downloads. WHY+U shows a QR code of the page address, so you can open it on your
+phone. WHY+I shows whether the connection is secure, how long the page took and which
+cookies the site set. Forgot a key? Press WHY+/ for help.
 </p>
 
 <pre>
@@ -126,6 +149,7 @@ loaded, an error page tells you why; press R or Enter to try again.
 <h2>Browser keys</h2>
 
 <ul>
+  <li>WHY+/ - help with all the keys</li>
   <li>WHY+L - omnibox: type an address or a search</li>
   <li>WHY+E - enter a new URL</li>
   <li>WHY+C - edit the current URL</li>
@@ -133,17 +157,25 @@ loaded, an error page tells you why; press R or Enter to try again.
   <li>WHY+R - reload</li>
   <li>WHY+B - back</li>
   <li>WHY+G - forward</li>
+  <li>Esc - stop loading</li>
   <li>WHY+T - new tab</li>
   <li>WHY+W - close tab</li>
   <li>WHY+Tab - next tab</li>
   <li>WHY+1 ... WHY+5 - go to tab 1 to 5</li>
   <li>WHY+A - tab overview</li>
-  <li>Esc - stop loading</li>
-  <li>WHY+I - page information</li>
-  <li>WHY+F - add or remove bookmark</li>
+  <li>WHY+F - find in page (n next, Shift+N previous)</li>
+  <li>Tab / Shift+Tab - next / previous link or field</li>
+  <li>WHY+V - simplified view</li>
+  <li>WHY+= / WHY+- / WHY+0 - bigger / smaller / normal text</li>
+  <li>WHY+K - add or remove bookmark</li>
   <li>WHY+M - bookmarks</li>
   <li>WHY+Y - history of visited pages</li>
-  <li>WHY+X - clear the history (on the history page)</li>
+  <li>WHY+P - save the page for offline reading</li>
+  <li>WHY+D - downloads and saved pages</li>
+  <li>WHY+U - share the page as a QR code</li>
+  <li>WHY+I - page information</li>
+  <li>WHY+X - clear: history (on the history page), downloads and saved pages (on the
+      downloads page), cookies and cache (on page information)</li>
   <li>WHY+O - display mode options</li>
   <li>WHY+S - capture the visible 716x716 viewport</li>
   <li>WHY+Z - capture the complete rendered page</li>
@@ -187,7 +219,7 @@ Customized WHY2025 firmware and test tools
 <h2>About Mini Browser</h2>
 
 <p>
-Mini Browser 3.0 combines a built-in ASCII font with an external GNU Unifont-based
+Mini Browser combines a built-in ASCII font with an external GNU Unifont-based
 MBCJ font containing 56,352 usable glyphs across 101 ranges.
 Text wrapping preserves complete words where possible, while CJK and
 overlong tokens safely fall back to glyph wrapping.
@@ -202,9 +234,9 @@ so basic list rendering does not depend on the external Unicode font.
 
 <p>
 Mini Browser intentionally has no JavaScript engine, CSS layout engine or full HTML DOM.
-Version 3.0 adds bounded PNG, JPEG and GIF image rendering, including inline images and
-multiple display modes, while retaining the browser's focus on ordinary server-rendered
-HTML, text content, links and simple GET and POST forms.
+It focuses on ordinary server-rendered HTML, text content, links, PNG, JPEG and GIF
+images and simple GET and POST forms. Pages that need JavaScript often still read well in
+the simplified view (WHY+V).
 </p>
 
 <p>
@@ -221,7 +253,7 @@ HTML, text content, links and simple GET and POST forms.
 <hr>
 
 <p>
-<b>Mini Browser</b> - WHY2025 BadgeVMS
+<b>Mini Browser 4.4</b> - WHY2025 BadgeVMS
 </p>
 
 </body>

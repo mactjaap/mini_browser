@@ -13,7 +13,7 @@
 \033[38;5;21m   ██████╔╝ ██║  ██║ ╚██████╔╝ ╚███╔███╔╝ ███████║ ███████╗ ██║  ██║\033[0m
 \033[38;5;21m   ╚═════╝  ╚═╝  ╚═╝  ╚═════╝   ╚══╝╚══╝  ╚══════╝ ╚══════╝ ╚═╝  ╚═╝\033[0m
 
-\033[38;5;245m                Mini Browser 3.0 for the WHY2025 Badge\033[0m
+\033[38;5;245m                Mini Browser 4.4 for the WHY2025 Badge\033[0m
 \033[38;5;240m  ──────────────────────────────────────────────────────────────────────\033[0m
 
 
@@ -23,17 +23,23 @@
 \033[38;5;87m  It is designed for lightweight and server-rendered websites while\033[0m
 \033[38;5;87m  staying small enough to run comfortably on the badge.\033[0m
 
-\033[38;5;241m  ┌─ Mini Browser 3.0 ──────────────────────────────────────────────┐\033[0m
+\033[38;5;241m  ┌─ Mini Browser 4.4 ──────────────────────────────────────────────┐\033[0m
 \033[38;5;241m  │\033[0m                                                                 \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Links, bookmarks and Back/Forward history                    \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Simple GET and POST forms                                    \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m PNG, JPEG and GIF images                                     \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Inline image rendering and multiple display modes            \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m 56,352 Unicode glyphs                                        \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Word-aware wrapping                                          \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m RTL/Bidi text and Arabic shaping                             \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Find in page, focus ring and text zoom                       \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Simplified view for long articles                            \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Pages saved for offline reading                              \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Share a page as a QR code                                    \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Page information with a lock for secure pages                \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Built-in help: press WHY+/                                   \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Omnibox with Google search and suggestions                   \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Up to five tabs and a persistent history                     \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Loading progress, stop key and clear error pages             \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Back/Forward cache, disk cache and downloads                 \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Cookies kept after a restart                                 \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Links, bookmarks and simple GET and POST forms               \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m PNG, JPEG and GIF images, loaded in the background           \033[38;5;241m│\033[0m
+\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m 56,352 Unicode glyphs, RTL/Bidi and Arabic shaping           \033[38;5;241m│\033[0m
 \033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Monochrome emoji and real bold text                          \033[38;5;241m│\033[0m
-\033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m HTTP/TLS page information                                    \033[38;5;241m│\033[0m
 \033[38;5;241m  │\033[0m  \033[38;5;120m✓\033[0m Full-page screenshots                                        \033[38;5;241m│\033[0m
 \033[38;5;241m  │\033[0m                                                                 \033[38;5;241m│\033[0m
 \033[38;5;241m  └─────────────────────────────────────────────────────────────────┘\033[0m
@@ -63,19 +69,33 @@
 \033[38;5;223m  HOW TO BROWSE\033[0m
 
 \033[38;5;87m  Links and form controls have numbers. Type a number and press Enter\033[0m
-\033[38;5;87m  to activate it. Use Up and Down to scroll; hold an arrow for continuous\033[0m
-\033[38;5;87m  scrolling. J and K scroll one line at a time.\033[0m
+\033[38;5;87m  to activate it, or move the ring with Tab and press Enter. Use Up and\033[0m
+\033[38;5;87m  Down to scroll; hold an arrow for continuous scrolling. J and K scroll\033[0m
+\033[38;5;87m  one line at a time.\033[0m
+
+\033[38;5;87m  WHY+L opens the omnibox: type an address, or some words to search\033[0m
+\033[38;5;87m  Google. WHY+F finds a word on the page, WHY+V shows just the article,\033[0m
+\033[38;5;87m  WHY+= and WHY+- change the text size. Forgot a key? Press WHY+/.\033[0m
 
 
 \033[38;5;223m  BROWSER KEYS\033[0m
 
-\033[38;5;120m  WHY+E\033[0m  Enter a new URL             \033[38;5;120mWHY+F\033[0m  Add/remove bookmark
-\033[38;5;120m  WHY+C\033[0m  Edit current URL            \033[38;5;120mWHY+M\033[0m  Bookmarks
-\033[38;5;120m  WHY+H\033[0m  Home                        \033[38;5;120mWHY+O\033[0m  Display mode options
-\033[38;5;120m  WHY+R\033[0m  Reload                      \033[38;5;120mWHY+S\033[0m  Capture visible viewport
-\033[38;5;120m  WHY+B\033[0m  Back                        \033[38;5;120mWHY+Z\033[0m  Capture complete page
-\033[38;5;120m  WHY+G\033[0m  Forward                     \033[38;5;120mWHY+Q\033[0m  Quit
-\033[38;5;120m  WHY+I\033[0m  Page information
+\033[38;5;120m  WHY+/  \033[0m  Help, all keys        \033[38;5;120mWHY+F\033[0m  Find in page
+\033[38;5;120m  WHY+L  \033[0m  Omnibox               \033[38;5;120mWHY+V\033[0m  Simplified view
+\033[38;5;120m  WHY+E  \033[0m  Enter a new URL       \033[38;5;120mWHY+=\033[0m  Bigger text
+\033[38;5;120m  WHY+C  \033[0m  Edit current URL      \033[38;5;120mWHY+-\033[0m  Smaller text
+\033[38;5;120m  WHY+H  \033[0m  Home                  \033[38;5;120mWHY+0\033[0m  Text at 100%
+\033[38;5;120m  WHY+R  \033[0m  Reload                \033[38;5;120mWHY+K\033[0m  Add/remove bookmark
+\033[38;5;120m  WHY+B  \033[0m  Back                  \033[38;5;120mWHY+M\033[0m  Bookmarks
+\033[38;5;120m  WHY+G  \033[0m  Forward               \033[38;5;120mWHY+Y\033[0m  History
+\033[38;5;120m  Esc    \033[0m  Stop loading          \033[38;5;120mWHY+P\033[0m  Save page offline
+\033[38;5;120m  WHY+T  \033[0m  New tab               \033[38;5;120mWHY+D\033[0m  Downloads, saved pages
+\033[38;5;120m  WHY+W  \033[0m  Close tab             \033[38;5;120mWHY+U\033[0m  Share as QR code
+\033[38;5;120m  WHY+Tab\033[0m  Next tab              \033[38;5;120mWHY+I\033[0m  Page information
+\033[38;5;120m  WHY+1-5\033[0m  Go to tab 1-5         \033[38;5;120mWHY+O\033[0m  Display mode options
+\033[38;5;120m  WHY+A  \033[0m  Tab overview          \033[38;5;120mWHY+S\033[0m  Capture visible viewport
+\033[38;5;120m  Tab    \033[0m  Next link or field    \033[38;5;120mWHY+Z\033[0m  Capture complete page
+\033[38;5;120m  n / N  \033[0m  Next/prev. match      \033[38;5;120mWHY+Q\033[0m  Quit
 
 
 \033[38;5;223m  SCREENSHOTS\033[0m
@@ -103,7 +123,7 @@
 
 
 \033[38;5;240m  ──────────────────────────────────────────────────────────────────────\033[0m
-\033[38;5;223m  Mini Browser 3.0\033[0m
+\033[38;5;223m  Mini Browser 4.4\033[0m
 \033[38;5;245m  WHY2025 BadgeVMS · The small web on a very small computer\033[0m
 
 \033[0m

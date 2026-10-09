@@ -13,7 +13,7 @@
 [38;5;21m   ██████╔╝ ██║  ██║ ╚██████╔╝ ╚███╔███╔╝ ███████║ ███████╗ ██║  ██║[0m
 [38;5;21m   ╚═════╝  ╚═╝  ╚═╝  ╚═════╝   ╚══╝╚══╝  ╚══════╝ ╚══════╝ ╚═╝  ╚═╝[0m
 
-[38;5;245m                Mini Browser 3.0 for the WHY2025 Badge[0m
+[38;5;245m                Mini Browser 4.4 for the WHY2025 Badge[0m
 [38;5;240m  ──────────────────────────────────────────────────────────────────────[0m
 
 
@@ -23,17 +23,23 @@
 [38;5;87m  It is designed for lightweight and server-rendered websites while[0m
 [38;5;87m  staying small enough to run comfortably on the badge.[0m
 
-[38;5;241m  ┌─ Mini Browser 3.0 ──────────────────────────────────────────────┐[0m
+[38;5;241m  ┌─ Mini Browser 4.4 ──────────────────────────────────────────────┐[0m
 [38;5;241m  │[0m                                                                 [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m Links, bookmarks and Back/Forward history                    [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m Simple GET and POST forms                                    [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m PNG, JPEG and GIF images                                     [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m Inline image rendering and multiple display modes            [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m 56,352 Unicode glyphs                                        [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m Word-aware wrapping                                          [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m RTL/Bidi text and Arabic shaping                             [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Find in page, focus ring and text zoom                       [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Simplified view for long articles                            [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Pages saved for offline reading                              [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Share a page as a QR code                                    [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Page information with a lock for secure pages                [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Built-in help: press WHY+/                                   [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Omnibox with Google search and suggestions                   [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Up to five tabs and a persistent history                     [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Loading progress, stop key and clear error pages             [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Back/Forward cache, disk cache and downloads                 [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Cookies kept after a restart                                 [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m Links, bookmarks and simple GET and POST forms               [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m PNG, JPEG and GIF images, loaded in the background           [38;5;241m│[0m
+[38;5;241m  │[0m  [38;5;120m✓[0m 56,352 Unicode glyphs, RTL/Bidi and Arabic shaping           [38;5;241m│[0m
 [38;5;241m  │[0m  [38;5;120m✓[0m Monochrome emoji and real bold text                          [38;5;241m│[0m
-[38;5;241m  │[0m  [38;5;120m✓[0m HTTP/TLS page information                                    [38;5;241m│[0m
 [38;5;241m  │[0m  [38;5;120m✓[0m Full-page screenshots                                        [38;5;241m│[0m
 [38;5;241m  │[0m                                                                 [38;5;241m│[0m
 [38;5;241m  └─────────────────────────────────────────────────────────────────┘[0m
@@ -63,19 +69,33 @@
 [38;5;223m  HOW TO BROWSE[0m
 
 [38;5;87m  Links and form controls have numbers. Type a number and press Enter[0m
-[38;5;87m  to activate it. Use Up and Down to scroll; hold an arrow for continuous[0m
-[38;5;87m  scrolling. J and K scroll one line at a time.[0m
+[38;5;87m  to activate it, or move the ring with Tab and press Enter. Use Up and[0m
+[38;5;87m  Down to scroll; hold an arrow for continuous scrolling. J and K scroll[0m
+[38;5;87m  one line at a time.[0m
+
+[38;5;87m  WHY+L opens the omnibox: type an address, or some words to search[0m
+[38;5;87m  Google. WHY+F finds a word on the page, WHY+V shows just the article,[0m
+[38;5;87m  WHY+= and WHY+- change the text size. Forgot a key? Press WHY+/.[0m
 
 
 [38;5;223m  BROWSER KEYS[0m
 
-[38;5;120m  WHY+E[0m  Enter a new URL             [38;5;120mWHY+F[0m  Add/remove bookmark
-[38;5;120m  WHY+C[0m  Edit current URL            [38;5;120mWHY+M[0m  Bookmarks
-[38;5;120m  WHY+H[0m  Home                        [38;5;120mWHY+O[0m  Display mode options
-[38;5;120m  WHY+R[0m  Reload                      [38;5;120mWHY+S[0m  Capture visible viewport
-[38;5;120m  WHY+B[0m  Back                        [38;5;120mWHY+Z[0m  Capture complete page
-[38;5;120m  WHY+G[0m  Forward                     [38;5;120mWHY+Q[0m  Quit
-[38;5;120m  WHY+I[0m  Page information
+[38;5;120m  WHY+/  [0m  Help, all keys        [38;5;120mWHY+F[0m  Find in page
+[38;5;120m  WHY+L  [0m  Omnibox               [38;5;120mWHY+V[0m  Simplified view
+[38;5;120m  WHY+E  [0m  Enter a new URL       [38;5;120mWHY+=[0m  Bigger text
+[38;5;120m  WHY+C  [0m  Edit current URL      [38;5;120mWHY+-[0m  Smaller text
+[38;5;120m  WHY+H  [0m  Home                  [38;5;120mWHY+0[0m  Text at 100%
+[38;5;120m  WHY+R  [0m  Reload                [38;5;120mWHY+K[0m  Add/remove bookmark
+[38;5;120m  WHY+B  [0m  Back                  [38;5;120mWHY+M[0m  Bookmarks
+[38;5;120m  WHY+G  [0m  Forward               [38;5;120mWHY+Y[0m  History
+[38;5;120m  Esc    [0m  Stop loading          [38;5;120mWHY+P[0m  Save page offline
+[38;5;120m  WHY+T  [0m  New tab               [38;5;120mWHY+D[0m  Downloads, saved pages
+[38;5;120m  WHY+W  [0m  Close tab             [38;5;120mWHY+U[0m  Share as QR code
+[38;5;120m  WHY+Tab[0m  Next tab              [38;5;120mWHY+I[0m  Page information
+[38;5;120m  WHY+1-5[0m  Go to tab 1-5         [38;5;120mWHY+O[0m  Display mode options
+[38;5;120m  WHY+A  [0m  Tab overview          [38;5;120mWHY+S[0m  Capture visible viewport
+[38;5;120m  Tab    [0m  Next link or field    [38;5;120mWHY+Z[0m  Capture complete page
+[38;5;120m  n / N  [0m  Next/prev. match      [38;5;120mWHY+Q[0m  Quit
 
 
 [38;5;223m  SCREENSHOTS[0m
@@ -103,7 +123,7 @@
 
 
 [38;5;240m  ──────────────────────────────────────────────────────────────────────[0m
-[38;5;223m  Mini Browser 3.0[0m
+[38;5;223m  Mini Browser 4.4[0m
 [38;5;245m  WHY2025 BadgeVMS · The small web on a very small computer[0m
 
 [0m

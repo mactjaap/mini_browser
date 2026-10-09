@@ -3233,14 +3233,22 @@ def v44_focus(badge):
 
 
 def v44_zoom(badge):
+    """Zoom in and back.  The zoom is not saved (4.4-dev2), and the finally
+    block resets it, so a failure here cannot leave later tests (whose page
+    text is wrapped at the zoomed width) with bigger text."""
     v41_open_page(badge, CONFIG["v44"]["find_page"])
-    badge.clear_log()
-    badge.why_key(0x2E, ord("="))                      # WHY + =
-    line = badge.wait_for(r"\[mini_browser\] zoom: 150%, (\d+) columns", 10)
-    badge.view("text at 150%")
-    badge.clear_log()
-    badge.why_key(0x27, ord("0"))                      # WHY + 0
-    line2 = badge.wait_for(r"\[mini_browser\] zoom: 100%, (\d+) columns", 10)
+    try:
+        badge.clear_log()
+        badge.why_key(0x2E, ord("="))                  # WHY + =
+        line = badge.wait_for(r"zoom: 150%, (\d+) columns", 15)
+        badge.view("text at 150%")
+        badge.clear_log()
+        badge.why_key(0x27, ord("0"))                  # WHY + 0
+        line2 = badge.wait_for(r"zoom: 100%, (\d+) columns", 15)
+    finally:
+        if not any("zoom: 100%" in l for l in badge.get_lines()):
+            badge.why_key(0x27, ord("0"))              # make sure: back to 100%
+            badge.settle(1.0)
     big = int(re.search(r"(\d+) columns", line).group(1))
     normal = int(re.search(r"(\d+) columns", line2).group(1))
     if big >= normal:

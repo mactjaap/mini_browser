@@ -3359,6 +3359,28 @@ def v44_bookmark_k(badge):
     return [f"WHY+K {first} the bookmark", f"WHY+K again {second} it"]
 
 
+def v44_help(badge):
+    """WHY+/ (the /? key) opens the help page; WHY+/ again returns."""
+    v41_open_page(badge, CONFIG["v44"]["find_page"])
+    badge.clear_log()
+    badge.why_key(0x38, ord("/"))                      # WHY + /
+    badge.wait_for(r"\[mini_browser\] help: opened", 15)
+    badge.settle(2.0)                                  # the help text is long
+    joined = "\n".join(badge.get_lines())
+    markers = ["Mini Browser help", "The WHY key", "Find in page", "Tabs",
+               "Bookmarks and history", "Quitting"]
+    found = [m for m in markers if m in joined]
+    if len(found) < 4:
+        raise RuntimeError("Help text is missing: " + ", ".join(m for m in markers if m not in found))
+    badge.view("help page")
+    badge.clear_log()
+    badge.why_key(0x38, ord("/"))                      # back to the page
+    badge.wait_for(r"phase5-info\.php|CONTENT END", 15)
+    badge.settle(0.8)
+    return [f"WHY+/ showed the help ({len(found)} of {len(markers)} headings seen)",
+            "WHY+/ returned to the page"]
+
+
 def v44_cases(badge):
     return [
         ("4.4 Find in page (WHY+F, n, Esc)", lambda: v44_find(badge)),
@@ -3369,6 +3391,7 @@ def v44_cases(badge):
         ("4.4 Share as QR code (WHY+U)", lambda: v44_share(badge)),
         ("4.4 Page information (WHY+I)", lambda: v44_page_info(badge)),
         ("4.4 Bookmark toggle moved to WHY+K", lambda: v44_bookmark_k(badge)),
+        ("4.4 Help page (WHY+/)", lambda: v44_help(badge)),
     ]
 
 

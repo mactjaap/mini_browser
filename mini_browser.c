@@ -172,7 +172,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.4-dev2"
+#define MINI_BROWSER_VERSION "4.4-dev3"
 
 /* ---------- Limits & layout ---------- */
 #define MAX_BYTES     (64 * 1024)
@@ -7540,7 +7540,8 @@ typedef enum {
     VIEW_NEWTAB,         /* WHY+T: a new, empty tab */
     VIEW_DOWNLOADS,      /* 4.3: WHY+D */
     VIEW_READER,         /* 4.4: simplified view (WHY+V) */
-    VIEW_SAVED           /* 4.4: a page saved for offline reading */
+    VIEW_SAVED,          /* 4.4: a page saved for offline reading */
+    VIEW_HELP            /* 4.4: WHY+/ (the /? key) */
 } view_kind_t;
 
 typedef struct browser_s {
@@ -8804,6 +8805,7 @@ static void browser_restore_shown_url(browser_t *b) {
         case VIEW_DOWNLOADS: snprintf(b->url_buf, sizeof b->url_buf, "downloads:"); break;
         case VIEW_READER:    snprintf(b->url_buf, sizeof b->url_buf, "reader:"); break;
         case VIEW_SAVED:     snprintf(b->url_buf, sizeof b->url_buf, "saved:"); break;
+        case VIEW_HELP:      snprintf(b->url_buf, sizeof b->url_buf, "help:"); break;
     }
 }
 
@@ -9776,6 +9778,151 @@ __attribute__((noinline)) static void browser_open_saved(browser_t *b, int numbe
     browser_log_content(b->content_wrapped);
 }
 
+/* ---------- 4.4: help (WHY+/, the /? key) ----------
+ * A local page with every key, grouped by task.  It is plain HTML run
+ * through the normal parser, so it wraps, zooms and scrolls like any page;
+ * the text is also logged on the serial port for the regression suite. */
+#define HELP_KEY(k, d) "<b>" k "</b> - " d "<br>"
+
+static const char k_help_html[] =
+    "<html><head><title>Mini Browser help</title></head><body>"
+    "<h1>Mini Browser help</h1>"
+    "<p>Version " MINI_BROWSER_VERSION ". Scroll with Up/Down. "
+    "WHY+/ or WHY+B returns to the page you came from.</p>"
+
+    "<br><h2>The WHY key</h2>"
+    "<p>Most commands are WHY + a key: hold the WHY key, press the other key, "
+    "release both. In this help WHY+K means: hold WHY and press K. "
+    "Keys without WHY are written on their own.</p>"
+
+    "<br><h2>Reading a page</h2><p>"
+    HELP_KEY("Down / J", "scroll one line down")
+    HELP_KEY("Up / K", "scroll one line up (hold to keep scrolling)")
+    HELP_KEY("PageDown / PageUp", "scroll a screen down / up")
+    HELP_KEY("Home / End", "top / bottom of the page")
+    HELP_KEY("WHY+=", "bigger text (100%, 150%, 200%); the bar shows the size")
+    HELP_KEY("WHY+-", "smaller text")
+    HELP_KEY("WHY+0", "text back to 100% (zoom is not kept after a restart)")
+    HELP_KEY("WHY+V", "simplified view: only the article, without menus, sidebars "
+                      "and footers. Offered with a chip on long articles. WHY+V again "
+                      "returns to the full page")
+    "</p>"
+
+    "<br><h2>Links, buttons and forms</h2><p>"
+    "Every link, button and form field has a number in brackets, like [12].</p><p>"
+    HELP_KEY("digits, then Enter", "open link or field number n (Backspace corrects)")
+    HELP_KEY("Tab / Shift+Tab", "move a cyan ring to the next / previous link or field")
+    HELP_KEY("Enter", "open the link or field with the ring (without one: reload)")
+    "In a form field: type the text, Left/Right/Home/End/Backspace/Delete edit, "
+    "Enter keeps it, Esc cancels. Then open the [Submit] button.<br>"
+    "An image link opens the image viewer; Esc closes it.</p>"
+
+    "<br><h2>Find in page</h2><p>"
+    HELP_KEY("WHY+F", "find: type a word, the matches light up while you type")
+    HELP_KEY("Enter", "close the find bar and keep the matches on screen")
+    HELP_KEY("n / Shift+N", "next / previous match (also Down / Up in the find bar)")
+    HELP_KEY("Esc", "matches off")
+    "The bar shows \"3 of 12\": the current match and how many there are. "
+    "Upper and lower case are the same.</p>"
+
+    "<br><h2>Addresses and search</h2><p>"
+    HELP_KEY("WHY+L", "empty address bar: type an address or search words")
+    HELP_KEY("WHY+E", "address bar with https:// already typed")
+    HELP_KEY("WHY+C", "edit the address of this page")
+    "In the address bar: Up/Down pick a suggestion from your bookmarks and "
+    "history, Enter goes, Esc cancels. Words with spaces (or without a dot) "
+    "search Google; example.com opens https://example.com.</p>"
+
+    "<br><h2>Going places</h2><p>"
+    HELP_KEY("WHY+B", "back (cached pages come back at once)")
+    HELP_KEY("WHY+G", "forward")
+    HELP_KEY("WHY+R", "reload from the network")
+    HELP_KEY("WHY+H", "home page (minibrowser.macip.net)")
+    HELP_KEY("Esc while loading", "stop; while images load: stop the images")
+    HELP_KEY("R / Enter on an error page", "try again")
+    "The six special keys of the badge open: NPR text news, Hacker News, "
+    "textfiles.com, ifconfig.co (your address), Bobcat and curl.se.</p>"
+
+    "<br><h2>Tabs (up to 5)</h2><p>"
+    HELP_KEY("WHY+T", "new tab")
+    HELP_KEY("WHY+W", "close this tab (the last tab stays)")
+    HELP_KEY("WHY+Tab", "next tab")
+    HELP_KEY("WHY+1 ... WHY+5", "go to tab 1 ... 5")
+    HELP_KEY("WHY+A", "tab overview: Up/Down select, Enter opens, 1-5 open, "
+                      "X closes, Esc returns")
+    "</p>"
+
+    "<br><h2>Bookmarks and history</h2><p>"
+    HELP_KEY("WHY+K", "bookmark this page, or remove the bookmark (up to 32)")
+    HELP_KEY("WHY+M", "your bookmarks: type a number and Enter to open")
+    HELP_KEY("WHY+Y", "history of the last 150 pages; WHY+Y again returns")
+    HELP_KEY("WHY+X on the history page", "clear the history")
+    "</p>"
+
+    "<br><h2>Saving, downloads and sharing</h2><p>"
+    HELP_KEY("WHY+P", "save the text of this page (or of its simplified view) "
+                      "to read offline. Saving it again replaces the old copy")
+    HELP_KEY("WHY+D", "downloads and saved pages: open one by its number")
+    HELP_KEY("WHY+X on the downloads page", "delete all downloads and saved pages")
+    HELP_KEY("WHY+U", "share: a QR code of the address for a phone camera; the "
+                      "address is also sent on the USB serial port as SHARE address")
+    "A link to a file the browser cannot show (zip, pdf, mp3, ...) asks "
+    "\"Download?\": Enter or Y saves it, Esc or N cancels (max 4 MB).</p>"
+
+    "<br><h2>Page information and privacy</h2><p>"
+    HELP_KEY("WHY+I", "page information: secure or not, load time, sizes, cookies "
+                      "this site set, then the full HTTP/TLS inspector. WHY+I returns")
+    HELP_KEY("WHY+X on page information", "clear all cookies and the disk cache")
+    "A green lock in the bar means the page came over HTTPS with a checked "
+    "certificate. Don't type passwords on pages without the lock.</p>"
+
+    "<br><h2>Display and screenshots</h2><p>"
+    HELP_KEY("WHY+O", "options: 1 black and white, 2 colors, 3 colors + one image "
+                      "(default), 4 colors + 5 images (experimental); Esc closes")
+    HELP_KEY("WHY+S", "screenshot of the screen, sent on the USB serial port")
+    HELP_KEY("WHY+Z", "screenshot of the whole page")
+    "</p>"
+
+    "<br><h2>Quitting</h2><p>"
+    HELP_KEY("WHY+Q", "quit Mini Browser")
+    HELP_KEY("Esc", "quit, when nothing else is open (find, loading, a menu)")
+    "</p>"
+
+    "<br><h2>Where things are kept</h2><p>"
+    "Bookmarks, history, cookies that stay, the download and saved page lists: "
+    "APPS:[mini_browser]<br>"
+    "Downloads: FLASH0:[DOWNLOADS]<br>"
+    "Saved pages: FLASH0:[SAVED]<br>"
+    "Disk cache (2 MB): FLASH0:[MBCACHE]</p>"
+
+    "<br><h2>Good to know</h2><p>"
+    "- No JavaScript: pages that need it may show little or nothing; "
+    "the simplified view (WHY+V) often helps.<br>"
+    "- The first 64 KB of a page is shown.<br>"
+    "- The badge has no clock: cookie and cache times start from the "
+    "first web page that sends the date.<br>"
+    "- The last 3 pages are kept for a fast WHY+B / WHY+G.</p>"
+
+    "<br><p>More: https://github.com/mactjaap/mini_browser</p></body></html>";
+
+static page_t *help_to_page(void) {
+    return html_to_page(k_help_html, "help:");
+}
+
+/* WHY+/: show the help, or go back from it. */
+__attribute__((noinline)) static void browser_toggle_help(browser_t *b) {
+    if (b->view == VIEW_HELP) {
+        browser_return_from_local_page(b);
+        return;
+    }
+    page_t *pg = help_to_page();
+    if (!pg) return;
+    browser_show_local_page(b, pg, VIEW_HELP, "help:");
+    b->last_http_status = 0;
+    printf("[mini_browser] help: opened\n");
+    browser_log_content(b->content_wrapped);   /* for the regression suite */
+}
+
 /* ---------- 4.4: share (WHY+U) ----------
  * The address as a QR code on screen (for a phone camera) and as a line on
  * the USB serial port ("SHARE <url>"). */
@@ -10198,6 +10345,8 @@ static void browser_render_options(browser_t *b) {
     draw_text(ren, PAD_LR, oy, option_line, w);
     oy += (CH_H + LINE_SPACING);
     draw_text(ren, PAD_LR, oy, "WHY+0 back to 100%; not kept after a restart)", w);
+    oy += 2 * (CH_H + LINE_SPACING);
+    draw_text(ren, PAD_LR, oy, "WHY+/ shows help with all the keys", w);
 }
 
 /* Pointer to the first visible line, with the formatting state there. */
@@ -10668,6 +10817,10 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
 
         case SDL_SCANCODE_P: /* 4.4: SAVE PAGE for offline reading */
             browser_save_page(b);
+            break;
+
+        case SDL_SCANCODE_SLASH:       /* 4.4: HELP (the /? key) */
+            browser_toggle_help(b);
             break;
 
         case SDL_SCANCODE_U: /* 4.4: SHARE (QR code + serial) */

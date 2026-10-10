@@ -1680,6 +1680,13 @@ static void sb_line_break(sbuf_t *sb) {
     sb_byte(sb, '\n');
 }
 
+/* 4.5-dev1: an empty line, as the margin of <pre> or a second <br> gives in
+ * other browsers.  wrap_text() merges several empty lines into one. */
+static void sb_blank_line(sbuf_t *sb) {
+    sb_line_break(sb);
+    if (sb->len) sb_byte(sb, '\n');
+}
+
 /* Visible columns since the last newline, for <pre> tab stops. */
 static int sb_column(const sbuf_t *sb) {
     int col = 0;
@@ -2110,6 +2117,7 @@ typedef struct {
     sbuf_t sb;
     const char *html_end;
     bool in_head, in_pre, pre_skip_newline, tags_exhausted;
+    size_t pre_start;            /* 4.5: sb length just after <pre> opened */
     int current_form;
     open_element_t stack[PARSE_STACK_MAX];
     int depth;
@@ -2336,9 +2344,13 @@ static void parse_close_tag(html_parser_t *ps, const char *tag) {
     if (!strcmp(tag, "head")) { ps->in_head = false; return; }
     if (!strcmp(tag, "form")) { ps->current_form = -1; sb_line_break(sb); return; }
     if (!strcmp(tag, "pre")) {
+        bool empty = true;            /* only line breaks inside: a spacer */
+        for (size_t i = ps->pre_start; ps->in_pre && i < sb->len; i++)
+            if (sb->buf[i] != '\n' && sb->buf[i] != ' ') { empty = false; break; }
         if (ps->in_pre) sb_byte(sb, TEXT_PRE_OFF);
         ps->in_pre = false;
-        sb_line_break(sb);
+        if (empty) sb_line_break(sb);
+        else sb_blank_line(sb);       /* the margin under a <pre> block */
         return;
     }
     if (!strcmp(tag, "ul") || !strcmp(tag, "ol")) {
@@ -2450,13 +2462,16 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
         sb_byte(sb, TEXT_HEADING_ON);
         sb_text(sb, "= ");
     } else if (!strcmp(tag, "pre")) {
-        sb_line_break(sb);
+        sb_blank_line(sb);            /* the margin above a <pre> block; an
+                                         empty <pre></pre> is one empty line */
         if (!ps->in_pre) sb_byte(sb, TEXT_PRE_ON);
+        ps->pre_start = sb->len;
         ps->in_pre = true;
         ps->pre_skip_newline = true;
     } else if (!strcmp(tag, "br")) {
-        if (ps->in_pre) sb_byte(sb, '\n');
-        else sb_line_break(sb);
+        /* Every <br> ends a line, so <br><br> leaves an empty line, as in
+         * other browsers (4.4 merged them into one line break). */
+        sb_byte(sb, '\n');
     } else if (!strcmp(tag, "ul") || !strcmp(tag, "ol")) {
         if (ps->list_depth < PARSE_LIST_MAX) {
             ps->lists[ps->list_depth].ordered = !strcmp(tag, "ol");
@@ -4091,6 +4106,8 @@ __attribute__((noinline)) static void cache_store(const char *url, const char *c
         !(g_resp.expires > 0 && g_resp.date > 0 && g_resp.expires > g_resp.date))
         return;                                /* nothing to validate it with */
     if (strlen(url) >= URL_MAX || len > IMAGE_DOWNLOAD_MAX) return;
+    /* 4.5: never keep a page whose decoding went wrong (NUL bytes in HTML). */
+    if (content_type_is_html(content_type) && memchr(body, 0, len)) return;
 
     long max_age = -1;
     if (!g_resp.no_cache) {
@@ -4243,6 +4260,8 @@ static void net_common_options(CURL *curl, bool decode, struct browser_s *b) {
 
 /* Last transfer: compressed bytes on the wire (0 = unknown). */
 static double g_net_wire_bytes;
+/* 4.5: ask for the next page without compression (after a damaged one). */
+static bool g_net_no_decode;
 
 static int fetch_one(const char *url, const char *post_body, mem_t *m, long *http_status) {
     /* 4.3: a copy on flash that is still fresh needs no request at all. */
@@ -4277,7 +4296,7 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
      */
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 35L);
-    net_common_options(curl, true, g_load.b);
+    net_common_options(curl, !g_net_no_decode, g_load.b);
 
     /* Explicit request headers. */
     struct curl_slist *hdrs = NULL;
@@ -10532,6 +10551,26 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     long http_status = 0;
     int rc = fetch_url(b->url_buf, was_post ? b->post_body : NULL, &m, &http_status);
     g_cache_revalidate = false;
+
+    /* 4.5: an HTML page with NUL bytes in it was damaged on the way (seen on
+     * lobste.rs with the firmware's gzip decoder): drop any cached copy and
+     * load it once more, uncompressed. */
+    if (rc == 0 && !was_post && m.buf && m.len && !g_load.stopped &&
+        content_type_is_html(g_fetch_meta.content_type) && memchr(m.buf, 0, m.len)) {
+        printf("[mini_browser] net: damaged page (NUL byte at %u of %u), loading it again uncompressed\n",
+               (unsigned)((const char *)memchr(m.buf, 0, m.len) - m.buf), (unsigned)m.len);
+        int ci = g_cache_ready ? cache_find(cache_hash(g_fetch_meta.effective_url)) : -1;
+        if (ci >= 0) cache_drop(ci, true);
+        ci = g_cache_ready ? cache_find(cache_hash(b->url_buf)) : -1;
+        if (ci >= 0) cache_drop(ci, true);
+        mem_reset(&m);
+        http_status = 0;
+        g_net_no_decode = true;
+        g_cache_revalidate = true;
+        rc = fetch_url(b->url_buf, NULL, &m, &http_status);
+        g_net_no_decode = false;
+        g_cache_revalidate = false;
+    }
 
     b->pending_post = false;
     b->post_body[0] = 0;

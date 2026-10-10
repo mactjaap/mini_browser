@@ -28,6 +28,7 @@ badge_screenshot.py (same folder) to check and repair the transfer.
 
     ./mini-browser-site-survey.py --label 4.5-dev1-look --view 10
     ./mini-browser-site-survey.py --label 4.5-dev1-shots --screenshots
+    ./mini-browser-site-survey.py --sheet 4.5-dev1-shots     (only rebuild index.html)
 
 It needs the custom firmware with the serial keyboard bridge (as the
 regression suite) and reuses the regression suite's serial code.  All
@@ -110,6 +111,8 @@ def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
     badge.why("Z" if full_page else "S")
     state = None
     tried = []
+    records = 0
+    shown = 0.0
     last_activity = time.monotonic()
     end_wait = None
     error = None
@@ -120,6 +123,8 @@ def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
         for raw in lines:
             line = raw.strip()
             kind, value = shot.parse_line(line, state)
+            if kind == "data":
+                records += 1
             if kind == "fail":
                 return f"failed: {value}"
             if kind == "begin":
@@ -141,33 +146,87 @@ def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
                     return f"ok ({h.width}x{h.height}, {repaired} repaired)"
                 end_wait = end_wait or time.monotonic() + 2.0
         now = time.monotonic()
+        if state is not None and now - shown >= 2.0:      # progress on the screen
+            h = state.header
+            total = (h.width * h.height * 5) // 48 // 25 + 1   # rough: RLE ~1/25 of raw
+            sys.__stdout__.write(f"\r  screenshot {h.width}x{h.height}: {records} records received ")
+            sys.__stdout__.flush()
+            shown = now
         if end_wait and now > end_wait:
             return f"damaged: {error}" if error else "damaged"
-        if now - last_activity > (20.0 if state is None else timeout):
+        # WHY+Z first renders the whole page: allow more time before BEGIN.
+        if now - last_activity > ((60.0 if full_page else 20.0) if state is None else timeout):
             return "no screenshot received"
         time.sleep(0.05)
 
 
+def site_link(row):
+    """The address to open in a normal browser: where the badge ended up, else the start address."""
+    url = (row.get("final_url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        addr = row["address"].strip()
+        url = addr if addr.startswith(("http://", "https://")) else "https://" + addr
+    return url
+
+
 def write_contact_sheet(rows, folder, label):
-    """index.html with every screenshot and its numbers."""
+    """index.html with every screenshot, its numbers and a link to the real site.
+
+    Click a screenshot (or "full size") to open the PNG on its own in a new
+    tab; click the site address to open the live page in a normal browser.
+    """
     import html as htmlmod
+    esc = htmlmod.escape
     cards = []
     for i, r in enumerate(rows, 1):
-        img = r.get("screenshot", "")
-        pic = (f'<img src="{htmlmod.escape(img)}" alt="{htmlmod.escape(r["name"])}">' if img and
-               os.path.exists(os.path.join(folder, img)) else '<div class="none">no screenshot</div>')
+        img = r.get("screenshot", "") or ""
+        if not img:                               # older CSV: look for NN-name.png
+            guess = [f for f in sorted(os.listdir(folder))
+                     if f.endswith(".png") and f[3:-4] == re.sub(r"[^A-Za-z0-9]+", "-", r["name"]).strip("-").lower()]
+            img = guess[0] if guess else ""
+        have = img and os.path.exists(os.path.join(folder, img))
+        url = site_link(r)
+        if have:
+            pic = (f'<a class="shot" href="{esc(img)}" target="_blank" rel="noopener" title="Open the screenshot on its own">'
+                   f'<img src="{esc(img)}" alt="{esc(r["name"])} on the badge" loading="lazy"></a>')
+            full = f'<a href="{esc(img)}" target="_blank" rel="noopener">screenshot full size</a>'
+        else:
+            pic, full = '<div class="none">no screenshot</div>', '<span class="dim">no screenshot</span>'
+        moved = ""
+        if r.get("final_url") and r["final_url"].rstrip("/") != ("https://" + r["address"]).rstrip("/"):
+            moved = f'<div class="dim small">ended at {esc(r["final_url"])}</div>'
+        facts = (f'status {esc(r["status"] or "?")} &middot; {esc(r["text"] or "0")} characters &middot; '
+                 f'{esc(r["links"] or "0")} links{" &middot; cut off" if r["cut"] == "yes" else ""}'
+                 f'{(" &middot; <b class=flag>" + esc(r["flags"]) + "</b>") if r["flags"] else ""}')
         cards.append(
-            f'<figure>{pic}<figcaption><b>{i}. {htmlmod.escape(r["name"])}</b> '
-            f'<span>{htmlmod.escape(r["address"])}</span><br>status {htmlmod.escape(r["status"])}, '
-            f'{htmlmod.escape(r["text"] or "0")} characters, {htmlmod.escape(r["links"] or "0")} links'
-            f'{", cut off" if r["cut"] == "yes" else ""}'
-            f'{(" - " + htmlmod.escape(r["flags"])) if r["flags"] else ""}</figcaption></figure>')
-    page = f"""<!doctype html><html><head><meta charset="utf-8"><title>Mini Browser {htmlmod.escape(label)}</title>
-<style>body{{font-family:system-ui,sans-serif;background:#111;color:#ddd;margin:16px}}
-h1{{font-size:20px}} .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}}
-figure{{margin:0;background:#1c1c1c;padding:8px;border-radius:6px}} img{{width:100%;image-rendering:pixelated}}
-figcaption{{font-size:13px;margin-top:6px}} span{{color:#888}} .none{{height:300px;display:flex;align-items:center;justify-content:center;color:#666;border:1px dashed #444}}</style>
-</head><body><h1>Mini Browser site survey - {htmlmod.escape(label)}</h1><div class="grid">{''.join(cards)}</div></body></html>"""
+            f'<figure id="s{i}"><figcaption class="top"><b>{i}. {esc(r["name"])}</b>'
+            f'<a class="site" href="{esc(url)}" target="_blank" rel="noopener">{esc(r["address"])} &#8599;</a></figcaption>'
+            f'{pic}<figcaption><div>{facts}</div>{moved}'
+            f'<div class="links">{full} &middot; <a href="{esc(url)}" target="_blank" rel="noopener">open the site</a></div>'
+            f'</figcaption></figure>')
+    toc = " ".join(f'<a href="#s{i}">{i}. {esc(r["name"])}</a>' for i, r in enumerate(rows, 1))
+    page = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini Browser {esc(label)}</title>
+<style>
+body{{font-family:system-ui,sans-serif;background:#111;color:#ddd;margin:16px}}
+h1{{font-size:20px;margin:0 0 6px}} p{{color:#999;font-size:13px;margin:0 0 10px}}
+a{{color:#7cb7ff}} a:visited{{color:#b59cff}}
+nav{{font-size:13px;line-height:1.9;margin-bottom:14px}} nav a{{margin-right:10px;white-space:nowrap}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}}
+figure{{margin:0;background:#1c1c1c;padding:8px;border-radius:6px;display:flex;flex-direction:column}}
+figcaption{{font-size:13px;margin-top:6px}} figcaption.top{{margin:0 0 6px;display:flex;justify-content:space-between;gap:8px}}
+.site{{text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+a.shot{{display:block;max-height:480px;overflow:hidden;border:1px solid #333;cursor:zoom-in}}
+a.shot:hover{{border-color:#7cb7ff}}
+img{{width:100%;display:block;image-rendering:pixelated}}
+.links{{margin-top:4px}} .dim{{color:#777}} .small{{font-size:12px;word-break:break-all}} .flag{{color:#e8a33c}}
+.none{{height:300px;display:flex;align-items:center;justify-content:center;color:#666;border:1px dashed #444}}
+</style></head><body>
+<h1>Mini Browser site survey &ndash; {esc(label)}</h1>
+<p>Click a screenshot to open it full size in a new tab. Click the address (&#8599;) to open the real site in this browser and compare.</p>
+<nav>{toc}</nav>
+<div class="grid">{''.join(cards)}</div></body></html>"""
     with open(os.path.join(folder, "index.html"), "w", encoding="utf-8") as f:
         f.write(page)
 
@@ -311,7 +370,17 @@ def main():
                         help="take a WHY+S screenshot of every site into site-survey-<label>/")
     parser.add_argument("--full-page", action="store_true",
                         help="with --screenshots: whole-page WHY+Z screenshots (slow on long pages)")
+    parser.add_argument("--sheet", metavar="LABEL",
+                        help="rebuild site-survey-LABEL/index.html from site-survey-LABEL.csv (no badge needed)")
     args = parser.parse_args()
+
+    if args.sheet:
+        folder = os.path.join(HERE, f"site-survey-{args.sheet}")
+        with open(os.path.join(HERE, f"site-survey-{args.sheet}.csv"), newline="") as f:
+            rows = list(csv.DictReader(f))
+        write_contact_sheet(rows, folder, args.sheet)
+        print(f"Screenshots: {os.path.join(folder, 'index.html')}")
+        return 0
 
     if args.list:
         for i, (g, n, a) in enumerate(SITES, 1):

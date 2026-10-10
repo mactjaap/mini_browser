@@ -1,0 +1,1850 @@
+Init: Free main memory: 171600, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 16384 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://minibrowser.macip.net/phase2-test-not-pass.html (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 3171 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 3178 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 21 links from https://nos.nl
+[mini_browser] page title: NOS.nl - Nieuws, Sport en Evenementen | Nederlandse Omroep Stichting
+[mini_browser] parser: links=21 actions=21 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=4
+
+--- CONTENT START ---
+1. Ga naar de inhoud
+* [1]
+NOS.nl Voorpagina
+*
+*
+* [2]Nieuws
+* [3]Sport
+* [4]Live
+*
+* [5] Zoeken
+*  Instellingen
+* [6]
+Teletekst
+* [7]
+NPO Start
+*  Menu
+* [8]Voorpagina
+* [9]Laatste nieuws
+* [10]Video'nland
+* [12]Buitenland
+* [13]Regionaal nieuws
+* [14]Politiek
+* [15]Economie
+* [16]Koningshuis
+* [17]Tech
+* [18]Cultuur & media
+* [19]Opmerkelijk
+= Blijf bij. NOS.
+= Het belangrijkste nieuws
+* [20]
+[[MBIMG0]]
+
+VS schort eigen sancties op en accepteert Russische
+diesel: 'Cadeautje voor Poetin'
+* [21]
+<source data-id="mobile-Ratio4x3" media="(max-width:
+759px)" sizes="(min-width: 1100px) 370px, 50vw"
+srcSet="https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYns
+TCeWqfJu31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-96x72.webp
+96w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-192x144.webp 192w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-288x216.webp 288w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-384x288.webp 384w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-480x360.webp 480w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-576x432.webp 576w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-768x576.webp 768w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-960x720.webp 960w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-1152x864.webp 1152w,
+https://images.cdn.nos.nl/1/H/C/B/L/V/W6ZF4eSawYnsTCeWqfJu
+31Kg5j4UdmdcwaqUiNt/168x1x3552x2664-1440x1080.webp 1440
+
+--- CONTENT END ---
+[mini_browser] image: fetching https://images.cdn.nos.nl/1/7/W/G/o/y/ZepDMYE1XBCjxX7iJDiAaqwegBN55N1rVDMs9HL/0x0x1920x1080-768x432.webp
+[mini_browser] cache: stored https://images.cdn.nos.nl/1/7/W/G/o/y/ZepDMYE1XBCjxX7iJDiAaqwegBN55N1rVDMs9HL/0x0x1920x1080-768x432.webp (48182 bytes, 140 KB used, 8 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 2374 ms
+[mini_browser] display: mode=Colors + Image images_seen=1 images_retained=1 images_loaded=0
+Init: Free main memory: 131556, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] redirect 302 -> https://myprivacy.dpgmedia.nl/consent?siteKey=ucf98legs1caotgh&callbackUrl=https%3A%2F%2Fnu.nl%2Fprivacy-gate%2Faccept%3FredirectUri%3D%252F&isLoggedIn=false
+W (28285987) ESP_CURL: Parsing header 'xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=33696000; Path=/; Secure; HttpOnly; SameSite=Lax'
+[mini_browser] cookie store: xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=myprivacy.dpgmedia.nl path=/ secure=1 count=5
+W (28286007) ESP_CURL: Parsing header 'authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=33696000; Path=/; Secure; SameSite=Lax'
+[mini_browser] cookie store: authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=myprivacy.dpgmedia.nl path=/ secure=1 count=6
+[mini_browser] net: 2385 bytes received, 7855 bytes after decoding
+[mini_browser] bfcache: stored https://nos.nl (0 images)
+[UTF8] CURL: 7855 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 220 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 205 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 7855 bytes, 0 links from https://nu.nl
+[mini_browser] page title: DPG Media Privacy Gate
+[mini_browser] parser: links=0 actions=0 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=6
+
+--- CONTENT START ---
+[[MBIMG0]]
+
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 5 of 6
+[mini_browser] image: fetching https://myprivacy-static.dpgmedia.net/consent/resources/logos/logo-dpgmedia.svg
+[mini_browser] cache: stored https://myprivacy-static.dpgmedia.net/consent/resources/logos/logo-dpgmedia.svg (5701 bytes, 148 KB used, 9 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 1646 ms
+[mini_browser] display: mode=Colors + Image images_seen=1 images_retained=1 images_loaded=0
+Init: Free main memory: 140380, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+W (28295587) ESP_CURL: Parsing header 'enableSentry_v1=false; expires=Sun, 10-Oct-2027 07:43:40 GMT; secure'
+[mini_browser] cookie store: enableSentry_v1=false domain=volkskrant.nl path=/ secure=1 count=7
+[mini_browser] redirect 301 -> https://www.volkskrant.nl/
+Init: Free main memory: 145356, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+W (28296457) ESP_CURL: Parsing header 'enableSentry_v1=false; expires=Sun, 10-Oct-2027 07:43:41 GMT; secure'
+[mini_browser] cookie store: enableSentry_v1=false domain=www.volkskrant.nl path=/ secure=1 count=8
+[mini_browser] redirect 302 -> https://myprivacy.dpgmedia.nl/consent?siteKey=PUBX2BuuZfEPJ6vF&callbackUrl=https%3A%2F%2Fwww.volkskrant.nl%2Fprivacygate-confirm%3FredirectUri%3D%252F&isLoggedIn=false
+[mini_browser] cookie send: xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0
+E (28297267) HTTP_HEADER: Buffer length is small to fit all the headers
+W (28297307) ESP_CURL: Parsing header 'xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=33696000; Path=/; Secure; HttpOnly; SameSite=Lax'
+[mini_browser] cookie store: xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=myprivacy.dpgmedia.nl path=/ secure=1 count=8
+W (28297317) ESP_CURL: Parsing header 'authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=33696000; Path=/; Secure; SameSite=Lax'
+[mini_browser] cookie store: authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=myprivacy.dpgmedia.nl path=/ secure=1 count=8
+[mini_browser] redirect 303 -> https://www.volkskrant.nl/privacygate-confirm?redirectUri=%2F&authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0
+[mini_browser] cookie send: enableSentry_v1=false
+W (28298207) ESP_CURL: Parsing header 'authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=2678400; Path=/; Secure; SameSite=Lax; Domain=volkskrant.nl'
+[mini_browser] cookie store: authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=volkskrant.nl path=/ secure=1 count=9
+[mini_browser] redirect 303 -> https://www.volkskrant.nl/
+[mini_browser] cookie send: enableSentry_v1=false; authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 12288 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://nu.nl (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 7460 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 7453 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 64 links from https://volkskrant.nl
+[mini_browser] page title: Volkskrant - Nieuws, achtergronden en columns | de Volkskrant
+[mini_browser] parser: links=64 actions=64 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=9
+
+--- CONTENT START ---
+Direct naar inhoud
+= Rubrieken
+Ontdek
+*
+* [1]Bewaarde artikelen
+* [2]Krant
+* [3]Nieuwsbrieven
+* [4]Puzzels
+* [5]Overlijdensberichten
+* [6]Over ons
+Rubrieken
+* [7]AI & Tech
+* [8]Beter Leven
+* [9]Auto en fiets
+* [10]Koken en Eten
+* [11]Opvoeden
+* [12]Binnenland
+* [13]Buitenland
+* [14]Cartoons
+* [15]Columns
+* [16]Cultuur & Media
+* [17]Beeldende kunst
+* [18]Boeken
+* [19]Films
+* [20]Games
+* [21]Muziek
+* [22]Series
+* [23]Televisie
+* [24]Theater
+* [25]Economie
+* [26]Foto
+* [27]Mensen
+* [28]Opinie
+* [29]Luister
+* [30]Politiek
+* [31]Sport
+* [32]Volkskrant Magazine 
+* [33]Wetenschap
+[34][35]Krant
+[36]
+[[MBIMG0]]
+
+* [37]Vandaag
+* [38]Volkskrant Magazine 
+* [39]AI-revolutie
+* [40]Oekraïne
+* [41]Cultuur & Media
+* [42]Series
+* [43]Paulien Cornelisse
+* [44]Beter Leven
+* [45]Sport
+* [46]Podcasts
+* [47]Puzzels
+= Instellingen
+*
+*
+* [48]InloggenU bent niet ingelogd
+*
+= Service
+* [49]KlantenserviceAntwoord op al uw vragen
+* [50]BezorgingUpdates, wijzigingen en klachten
+*
+= Personaliseren
+* [51]Meldingen
+* [52]Nieuwsbrieven
+* Data en Privacy
+Data en Privacy
+* Privacy-instellingen
+* [53]Cookiebeleid
+* [54]Privacy
+*
+= Meer Volkskrant
+* [55]Winkel
+* [56]Puzzels & Games
+*
+= Vragen & contact
+* [57]Tip de redactie
+* Wat vindt u van deze website?
+* [58]Gebruikersvoorwaarden
+* [59]Adverteren
+*
+* [60]Home
+* [61]Krant
+* [62]Net binnen
+* [63]Luister
+* [64]<path d="M23.0278 16H6.97222C6.84698 16 6.72687
+15.9473 6.63831 15.8536C6.54975 15.7598 6.5 15.6326 6.5
+15.5C6.5 15.3674 6.54975 15.2402 6.63831 15.1464C6.72687
+15.0527 6.84698 15 6.97222 15H23.0278C23.153 15 23.2731
+15.0527 23.3617 15.1464C23.4502 15.2402 23.5 15.3674 23.5
+15.5C23.5 15.6326 23.4502 15.7598 23.3617 15.8536C23.2731
+15.9473 23.153 16 23.0278 16Z" fill="cu
+
+--- CONTENT END ---
+[mini_browser] history: saving 50 entries
+[mini_browser] history: old file removed
+[mini_browser] history: file opened
+[mini_browser] history: file closed
+[mini_browser] history: saved 50 entries
+[mini_browser] cookies: saved 6 of 9
+[mini_browser] image: fetching https://web-assets.volkskrant.nl/1dd4008bcd25/_next/static/media/vk_logo.20aed489.svg
+[mini_browser] cache: stored https://web-assets.volkskrant.nl/1dd4008bcd25/_next/static/media/vk_logo.20aed489.svg (3395 bytes, 152 KB used, 10 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 2341 ms
+[mini_browser] display: mode=Colors + Image images_seen=1 images_retained=1 images_loaded=0
+Init: Free main memory: 140408, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 132200, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] redirect 301 -> https://www.bbc.com/news
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 12288 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://volkskrant.nl (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 0 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 0 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 0 links from https://bbc.com/news
+[mini_browser] page title: BBC News - Breaking news, video and the latest top stories from the U.S. and around the world
+[mini_browser] parser: links=0 actions=0 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] display: mode=Colors + Image images_seen=0 images_retained=0 images_loaded=0
+[mini_browser] cookies: count=9
+
+--- CONTENT START ---
+
+--- CONTENT END ---
+Init: Free main memory: 173760, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] redirect 301 -> https://www.theguardian.com/
+W (28318587) ESP_CURL: Parsing header 'gu_client_ab_tests=; path=/; max-age=0'
+[mini_browser] cookie delete: gu_client_ab_tests count=9
+W (28318587) ESP_CURL: Parsing header 'gu_client_ab_tests=webx-monitor-group-contamination-v2:control,growth-auxia-banner:control,commercial-spacefinder-highvalue-sections-set2:control; path=/; max-age=2592000; domain=.theguardian.com; Secure'
+[mini_browser] cookie store: gu_client_ab_tests=webx-monitor-grounation-v2:control,growth-auxia-banner:control,commercial-spacefinder-highvalue-sections-set2:control domain=theguardian.com path=/ secure=1 count=10
+W (28318627) ESP_CURL: Parsing header 'gu_v2_mvt_id=; path=/; max-age=0'
+[mini_browser] cookie delete: gu_v2_mvt_id count=10
+W (28318637) ESP_CURL: Parsing header 'gu_v2_mvt_id=266; path=/; expires=Fri, 08 Jan 2027 07:44:03 GMT; domain=.theguardian.com; Secure'
+[mini_browser] cookie store: gu_v2_mvt_id=266 domain=theguardian.com path=/ secure=1 count=11
+W (28318657) ESP_CURL: Parsing header 'GU_mvt_id=649497; expires=Fri, 08 Jan 2027 07:44:03 GMT; path=/; domain=.theguardian.com; Secure'
+[mini_browser] cookie store: GU_mvt_id=649497 domain=theguardian.com path=/ secure=1 count=12
+W (28318677) ESP_CURL: Parsing header 'GU_geo_country=NL; path=/; Secure'
+[mini_browser] cookie store: GU_geo_country=NL domain=www.theguardian.com path=/ secure=1 count=13
+[mini_browser] redirect 302 -> https://www.theguardian.com/europe
+[mini_browser] cookie send: gu_client_ab_tests=webx-monitor-group-contamination-v2:control,growth-auxia-banner:control,commercial-spacefinder-highvalue-sections-set2:control; gu_v2_mvt_id=266; GU_mvt_id=649497; GU_geo_country=NL
+E (28319067) HTTP_HEADER: Buffer length is small to fit all the headers
+W (28319097) ESP_CURL: Parsing header 'gu_client_ab_tests=; path=/; max-age=0'
+[mini_browser] cookie delete: gu_client_ab_tests count=13
+W (28319097) ESP_CURL: Parsing header 'gu_client_ab_tests=webx-monitor-group-contamination-v2:control,growth-auxia-banner:control,commercial-spacefinder-highvalue-sections-set2:control; path=/; max-age=2592000; domain=.theguardian.com; Secure'
+[mini_browser] cookie store: gu_client_ab_tests=webx-monitor-group-contamination-v2:control,growth-auxia-banner:control,commercial-spacefinder-highvalue-sections-set2:control domain=theguardian.com path=/ secure=1 count=13
+W (28319137) ESP_CURL: Parsing header 'gu_v2_mvt_id=; path=/; max-age=0'
+[mini_browser] cookie delete: gu_v2_mvt_id count=13
+W (28319147) ESP_CURL: Parsing header 'gu_v2_mvt_id=266; path=/; expires=Fri, 08 Jan 2027 07:44:04 GMT; domain=.theguardian.com; Secure'
+[mini_browser] cookie store: gu_v2_mvt_id=266 domain=theguardian.com path=/ secure=1 count=13
+W (28319167) ESP_CURL: Parsing header 'GU_mvt_id=649497; expires=Fri, 08 Jan 2027 07:44:04 GMT; path=/; domain=.theguardian.com; Secure'
+[mini_browser] cookie store: GU_mvt_id=649497 domain=theguardian.com path=/ secure=1 count=13
+W (28319187) ESP_CURL: Parsing header 'GU_geo_country=NL; path=/; Secure'
+[mini_browser] cookie store: GU_geo_country=NL domain=www.theguardian.com path=/ secure=1 count=13
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 16384 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://bbc.com/news (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 12 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 13 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 0 links from https://theguardian.com
+[mini_browser] page title: Latest news, sport and opinion from the Guardian
+[mini_browser] parser: links=0 actions=0 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=13
+
+--- CONTENT START ---
+[[MBIMG0]]
+
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 9 of 13
+Init: Free main memory: 174048, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] image: fetching https://sb.scorecardresearch.com/p?c1=2&c2=6035250&cv=2.0&cj=1&cs_ucfr=0&comscorekw=europe
+[mini_browser] image: GIF detected; rendering first frame only
+[mini_browser] image: GIF decoder state=34904 bytes allocated on heap
+[mini_browser] image: decoded source=1x1 retained=1x1 RGB565=2 bytes
+[mini_browser] image: loaded compressed=43 bytes
+[mini_browser] images: 1 of 1 loaded in 949 ms
+[mini_browser] display: mode=Colors + Image images_seen=1 images_retained=1 images_loaded=1
+Init: Free main memory: 134832, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] redirect 301 -> https://www.reuters.com/
+W (28330777) ESP_CURL: Parsing header 'datadome=drI5V9U1E3ETTaeS98yMaS2izr8CjrrFlBNwgj9cj8deHE1uKfRalVk28nudd8e0PxqTEBSgAlgVPJT8RRQjFNTSV6k5ymO4EkEuOrgQ3SIn3UroghAqNTqKW9NkwX2~; Max-Age=31536000; Domain=.reuters.com; Path=/; Secure; SameSite=Lax'
+[mini_browser] cookie store: datadome=drI5V9U1E3ETTaeS98yMaS2izr8CjrrFlBNwgj9cj8deHE1uKfRalVk28nudd8e0PxqTEBSgAlgVPJT8RRQjFNTSV6k5ymO4EkEuOrgQ3SIn3UroghAqNTqKW9NkwX2~ domain=reuters.com path=/ secure=1 count=14
+[mini_browser] bfcache: stored https://theguardian.com (1 images)
+[mini_browser] HTTP 401 URL='https://reuters.com'
+
+--- CONTENT START ---
+
+:(
+
+Access denied
+
+You don't have permission to view this page on
+reuters.com.
+
+HTTP ERROR 401
+
+https://reuters.com
+
+Press R or Enter to reload, WHY+B to go back.
+--- CONTENT END ---
+[mini_browser] cookies: saved 10 of 14
+Init: Free main memory: 130928, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 130928, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+W (28341147) ESP_CURL: Parsing header 'countryCode=NL; Domain=.cnn.com; Path=/; SameSite=None; Secure'
+[mini_browser] cookie store: countryCode=NL domain=cnn.com path=/ secure=1 count=15
+W (28341157) ESP_CURL: Parsing header 'stateCode=ZH; Domain=.cnn.com; Path=/; SameSite=None; Secure'
+[mini_browser] cookie store: stateCode=ZH domain=cnn.com path=/ secure=1 count=16
+W (28341167) ESP_CURL: Parsing header 'geoData=rotterdam|ZH|3012 at|NL|EU|200|xdsl|51.920|4.480|-1; Domain=.cnn.com; Path=/; SameSite=None; Secure'
+[mini_browser] cookie store: geoData=rotterdam|ZH|3012 at|NL|EU|200|xdsl|51.920|4.480|-1 domain=cnn.com path=/ secure=1 count=17
+W (28341197) ESP_CURL: Parsing header 'wbdFch=eb0e1d059378682f6b8e407692ca316e527025fd; Domain=lite.cnn.com; Path=/; Max-Age=30; SameSite=None; Secure'
+[mini_browser] cookie store: wbdFch=eb0e1d059378682f6b8e407692ca316e527025fd domain=lite.cnn.com path=/ secure=1 count=18
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 8192 bytes received, 65536 bytes after decoding
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 0 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 0 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 0 links from https://lite.cnn.com
+[mini_browser] page title: (none)
+[mini_browser] parser: links=0 actions=0 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] display: mode=Colors + Image images_seen=0 images_retained=0 images_loaded=0
+[mini_browser] cookies: count=18
+
+--- CONTENT START ---
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 11 of 18
+Init: Free main memory: 173116, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 170800, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] net: 2487 bytes received, 6062 bytes after decoding
+[mini_browser] bfcache: stored https://lite.cnn.com (0 images)
+[UTF8] CURL: 6062 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 2923 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 2907 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 6062 bytes, 28 links from https://text.npr.org
+[mini_browser] page title: NPR : National Public Radio
+[mini_browser] parser: links=28 actions=28 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] display: mode=Colors + Image images_seen=0 images_retained=0 images_loaded=0
+[mini_browser] cookies: count=18
+
+--- CONTENT START ---
+Text-Only Version [1]Go To Full Site
+= NPR : National Public Radio
+Friday, October 9, 2026
+* [2]'Life-threatening' Isaias pummels the Florida Gulf
+Coast
+* [3]How the oil industry is preparing for Hurricane
+Isaias
+* [4]The U.S. last held a public execution in the 1930s.
+The Pentagon wants to change that
+* [5]Drugs in jars, bags of cash: Tennessee ignored
+warnings from Arizona's botched executions
+* [6]Fill in the blank in the quiz: A plague research
+employee in Russia died from ____
+* [7]U.S. working to reverse an Egyptian man's
+third-country deportation to Africa
+* [8]Margaret Hamilton, whose software sent humans to the
+moon, dies at 90
+* [9]Trump says U.S. to get diesel from Russia, relaxing
+pressure on Moscow to ease prices before midterms
+* [10]A student hated reading for years. Her podcast
+explores finding the right diagnosis
+* [11]Did Russia play by the rules in reporting lab
+worker's death?
+* [12]Fired OpenAI employees question the company's
+commitment to safety
+* [13]South African human rights lawyer Navi Pillay wins
+the Nobel Peace Prize
+* [14]Kalshi taps former FBI agent to fight against money
+laundering 
+* [15] ICE has quietly used this warehouse as a detention
+facility all summer, neighbors say
+* [16]ChatGPT for Teens has special safeguards. A watchdog
+group finds most don't work
+* [17]Democrats need to reel in more men. These Mainers
+say the party needs better bait
+* [18]Why mailing a ballot close to Election Day may get
+it rejected for a late postmark
+* [19]People are asking ChatGPT to help them decide how to
+vote in the midterms
+* [20]Toss-ups, triage and targets: How to read the
+wide-open 2026 House map
+* [21]Suicide is up among Black Americans. We need to talk
+about it.
+Topics
+* [22]News
+* [23]Culture
+* [24]Music
+* [25]Contact Us
+* [26]Terms of Use
+* [27]Permissions
+* [28]Privacy Policy
+© NPR
+
+--- CONTENT END ---
+Init: Free main memory: 132012, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] redirect 301 -> https://www.aljazeera.com:443/
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 16384 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://text.npr.org (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 8948 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 8941 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 47 links from https://aljazeera.com
+[mini_browser] page title: Breaking News, World News and Video from Al Jazeera
+[mini_browser] parser: links=47 actions=52 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=1
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=18
+
+--- CONTENT START ---
+Skip linksSkip to Featured ContentSkip to Content FeedSkip
+to Most Read
+[1]
+= Al Jazeera
+, link to home page
+[2]
+Live 
+Sign up
+Navigation menu
+* [3]NewsShow more news sections
+* [4]Africa
+* [5]Asia
+* [6]US & Canada
+* [7]Latin America
+* [8]Europe
+* [9]Asia Pacific
+* [10]Middle East
+* [11]Explained
+* [12]Sport
+* [13]Opinion
+* [14]Video
+* MoreShow more sections
+* [15]Originals
+* [16]Features
+* [17]Economy
+* [18]Human Rights
+* [19]Climate Crisis
+* [20]Investigations
+* [21]Interactives
+* [22]In Pictures
+* [23]Science & Technology
+* [24]Podcasts
+* [25]Travel
+* [26]Sponsored Content
+[27]
+Live 
+Click here to search
+Sign up
+Navigation menu
+* [28]Trending
+* [29]US-Israel war on Iran
+* [30]Yemen conflict
+* [31]Israel's ceasefire violations
+* [32]Donald Trump
+Featured Content
+[33]
+[[MBIMG0]]
+
+BREAKINGBREAKING, 
+[34]
+= Trump pledges to quickly ‘settle or win’ Iran and
+Ukraine conflicts
+Live updatesLive updates, 
+* list 1 of 10
+Published 14 minutes ago14m ago
+[35]
+= Israeli jets strike area between Lebanon’s Nabatieh
+al-Fawqa and Kfar Tebnit
+* list 2 of 10
+Published 29 minutes ago29m ago
+[36]
+= Senior Iranian official hits back at Marco Rubio over
+Athens speech
+* list 3 of 10
+Published 44 minutes ago44m ago
+[37]
+= Israeli forces injure Palestinian journalist in raid
+north of Ramallah
+* list 4 of 10
+Published 59 minutes ago59m ago
+[38]
+= WATCH: Gaza blockade – Israel’s siege prevents aid and
+fuel from entering territory
+Live updatesLive updates, 
+[39]
+= India police detain ‘cockroach’ leaders before rally
+against election chief
+Cockroach Janta Party founder Abhijeet Dipke and other
+leaders detained before protest to demand election chief
+quit.
+[40] Image: NEW DELHI, INDIA - OCTOBER 10: Police officers
+detain a protester during a demonstration on Oct
+
+Live updatesLive updates, 
+[41]
+= India police detain ‘cockroach’ leaders before rally
+against election chief
+Cockroach Janta Party founder Abhijeet Dipke and other
+leaders detained before protest to demand election chief
+quit.
+[42] Image: NEW DELHI, INDIA - OCTOBER 10: Police officers
+detain a protester during a demonstration on Oct
+
+*
+[43] Image: Police officers surrounded by yellow
+barricades direct commuters to an alternate route.
+
+[44]
+= ‘How can you stop these kids?’ Indian capital on
+lockdown before protests
+[45]
+= ‘How can you stop these kids?’ Indian capital on
+lockdown before protests
+[46] Image: Police officers surrounded by yellow
+barricades direct commuters to an alternate route.
+
+*
+[47]
+= Gaza ceasefire ‘exists in name only’, more than 100
+NGOs say
+[48] Image: People search the rubble of a collapsed
+building following overnight Israeli airstrikes in Gaza
+
+*
+[49]
+= Yemen’s Taiz under siege again as food and fuel prices
+rise
+[Image omitted: Children carry containers with water]
+*
+[50]
+= US hosts ‘productive’ trilateral talks to end
+Russia-Ukraine war
+*
+[51]
+= US sanctions International Criminal Court in major
+escalation
+*
+[52]
+= Taiwan president says defence spending boost aims to
+‘deter war’
+</div
+
+--- CONTENT END ---
+[mini_browser] history: saving 55 entries
+[mini_browser] history: old file removed
+[mini_browser] history: file opened
+Init: Free main memory: 169224, free PSRAM pages: 334/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] history: file closed
+[mini_browser] history: saved 55 entries
+[mini_browser] image: fetching https://www.aljazeera.com:443/wp-content/uploads/2026/09/GettyImages-2294402020-1-1789463522.jpg?resize=770%2C513&quality=80
+[mini_browser] cache: stored https://www.aljazeera.com:443/wp-content/uploads/2026/09/GettyImages-2294402020-1-1789463522.jpg?resize=770%2C513&quality=80 (54874 bytes, 208 KB used, 11 entries)
+[mini_browser] image: decoded source=770x513 retained=320x213 RGB565=136320 bytes
+[mini_browser] image: loaded compressed=54874 bytes
+[mini_browser] images: 1 of 1 loaded in 2790 ms
+[mini_browser] display: mode=Colors + Image images_seen=7 images_retained=6 images_loaded=1
+Init: Free main memory: 136984, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+W (28369727) ESP_CURL: Parsing header 'kameleoonVisitorCode=i9y6djom5qk2wnem; Max-Age=31536000; Path=/'
+[mini_browser] cookie store: kameleoonVisitorCode=i9y6djom5qk2wnem domain=apnews.com path=/ secure=0 count=19
+W (28369737) ESP_CURL: Parsing header '__cf_bm=k6ncd1bCJ_Ae3CzaXKXhnCd6Q9h.9emTXjnEdqa16VU-1791618294.6247373-1.0.1.1-HcLY9sQohwjCS_m660cnOQPj5sgG68U8kLUVS.7ZaT7FDFKkx86TXKqtEtZPNkx221VckSBvlZw1QfeGJ6X1QkDT_AHASEIB5bt2ROax0MLaQoJaSsAIXU8ekHPFKtwli0.uCCZV1SVtEtYZB0K7lw; HttpOnly; SameSite=None; Secure; Path=/; Domain=apnews.com; Expires=Sat, 10 Oct 2026 08:14:54 GMT'
+[mini_browser] cookie store: __cf_bm=k6ncd1bCJ_Ae3CzaXKXhnCd6Q9h.9emTXjnEdqa16VU-1791618294.6247373-1.0.1.1-HcLY9sQohwjCS_m660cnOQPj5sgG68U8kLUVS.7ZaT7FDFKkx86TXKqtEtZPNkx221VckSBvlZw1QfeGJ6X1QkDT_AHASEIB5bt2ROax0MLaQoJaSsAIXU8ekHPFKtwli0.uCCZV1SVtEtYZB0K7lw domain=apnews.com path=/ secure=1 count=20
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 20480 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://aljazeera.com (1 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 50 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 48 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 0 links from https://apnews.com
+[mini_browser] page title: Associated Press News: Breaking News, Latest Headlines and Videos  | AP News
+[mini_browser] parser: links=0 actions=0 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] display: mode=Colors + Image images_seen=0 images_retained=0 images_loaded=0
+[mini_browser] cookies: count=20
+
+--- CONTENT START ---
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 13 of 20
+Init: Free main memory: 172364, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+W (28379167) ESP_CURL: Parsing header 'bm_s=YAAQ4/USAqnbrP2gAQAATsjFJAb1IxzJPZHxiF4jJHArDGC7q+PHTP5dxKIQo/i1/7B1r64oaQzIelYLshqMm29XgoCAiDQljlbNSBKRuh5n2wxEhHqXp70HTd4Rd50PRL0Lk0gECim2WakdVE7y4GmRbiK5eHaegdbr71BYzJcPzAEd6y4J8B/xqrKG6nvzBzkSh2q+fqcvJr/7XlDgTkcUghENwS7+S3leb6dJtWzKWF9r/IpM+JwLwOTLGVC04tNJp1z3ApCwexR5LuwaPsCvwH+08J+haBwZeY14hT9laFMpUsgxHaEK+PlDep36cOJkFegeMUPOe73tZ6Opy3LorQXzPTZUorUl+tPlagizD8yxzxvzsZ36Ru4Z9aH/qf6U94hPyAvMcEfXNZHnM5BiipKWAIjAAvhcz9D4wNSlxPr8JoyHrcA53LMuK2gtQ8WjDZrZm71TuHC7cUHtk/7vvx0NInkOkhoC5KzBAMXkieVkWZbyVPtBwlSjQRsa6s+KsvoxSANXPcAUyN1q0bJhKsFrYq0wm2yq4YpU5frO0blwViMVVvFQR++tZON6FETZqIIl4ZoWE8/JcNKO5jWz; Domain=.tweakers.net; Path=/; Expires=Tue, 10 Nov 2026 07:45:04 GMT; Max-Age=2678400; Secure; HttpOnly'
+[mini_browser] cookie ignored: name/value too long
+W (28379227) ESP_CURL: Parsing header 'bm_so=AD3DECBB98331F143FBA29CF3673B9D5FA5FB6AE20C70213E51F76C44E3C9275~YAAQ4/USAqrbrP2gAQAATsjFJAnRMrbDd6Xa/1dgns214uxfpFA/pSeq5xkk00Q6ClhBTxRQe4AlfvNlAuOmlYZ46uzIi1FApziEdBbqgSYpnoLOWLr8DMubnOozs15c0XZo0FcQ9SlKHh4PJvVWYRP2Z4WolZUxNyJa5+gNqUaXfaD9+iYUIdKSpnfsOsoqWfp4UbJ7eDQDFisrCF8k5KqCPBrt/Pb+YhDz84CfmcrZxvXTNqSKt/uoIJbYXdIlCu60pYXvIexS7i26ifB8Wly49L2OHHUH9I8UiM1dK968k2la2expYy6GSdBNnsM8biv1nD0Zp+TCzet9tluReohsByaXZe6Q5rY9k2ZNM4VB0LE1APGwQuk7jemKr2nRw6YNh+dv7M4H6Xb1q+t+WuSf/TshbKjvCKFEC6LLJdHiYcG091OJJ5pazZy8jIiNafuzqia+mml9fupe6Q9w/g5/DATUuUXR8Q5neQ==~9; Domain=.tweakers.net; Path=/; Expires=Sun, 11 Oct 2026 07:45:04 GMT; Max-Age=86400; Secure'
+[mini_browser] cookie ignored: name/value too long
+[mini_browser] redirect 302 -> https://myprivacy.dpgmedia.nl/consent?siteKey=kzz6o4y8ybwvpkea&callbackUrl=https%3A%2F%2Ftweakers.net%2Fprivacygate-confirm%3FredirectUri%3D%252F&isLoggedIn=false
+[mini_browser] cookie send: xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0
+Init: Free main memory: 137188, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+E (28380107) HTTP_HEADER: Buffer length is small to fit all the headers
+W (28380167) ESP_CURL: Parsing header 'xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=33696000; Path=/; Secure; HttpOnly; SameSite=Lax'
+[mini_browser] cookie store: xAuthId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=myprivacy.dpgmedia.nl path=/ secure=1 count=19
+W (28380177) ESP_CURL: Parsing header 'authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=33696000; Path=/; Secure; SameSite=Lax'
+[mini_browser] cookie store: authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=myprivacy.dpgmedia.nl path=/ secure=1 count=19
+[mini_browser] redirect 303 -> https://tweakers.net/privacygate-confirm?redirectUri=%2F&authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0
+W (28381037) ESP_CURL: Parsing header 'authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0; Max-Age=2678400; Path=/; Secure; SameSite=Lax; Domain=tweakers.net'
+[mini_browser] cookie store: authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0 domain=tweakers.net path=/ secure=1 count=20
+W (28381047) ESP_CURL: Parsing header 'bm_s=YAAQ0PUSArkNvv2gAQAApM/FJAa9o11SNhM2oTkkVXvivHiFIERDjCcAFPz26zmrNJo3PjEe8b/yR4Rx9ru3hzWufatjWDI89WtUpCtH8KTbQrVdfab8lB7u46dvOsSlzOxoJaybDZA6dOH6Armr6VQPPKa+fZX3ji8GV8zuoV57B7RVC7akVGTCzERJQsT/Lu5eRl7IoB3WB7ugFnvPSFF3Cn1lwJ0E0OG84wkkQ4I+6jHja7LwFOEkOB3vYsveRNeR0CWG4jwz6yB+zlG8WKUe4w3ZJHfkvmufPqFpvd0fLtDnvj9vm21DoH+DRgF1+dhDSqvIhVGsBKh0UUPIPnNDzfUT8ZH+/C/lvXtXXZGY3ZHpcAcDEjZz2TDrT0U+DnlN51MomE1pqjgnibJ8UhfvUmz8C4WUwYiZAWCNwlLVElzjjp48DpsBHMYcDB+SNikSxUQoJyOabMQRk5TcvOifiYO2/kBqC0pcU2JasopioZuWephg6ggtiqC8YA8FiFEvqmqyUh/VFzxJrS3hfPHD4G4pnBoAo2naDS65kPOBlnVWdCDitGZT5v2GRGH0usZcV0vFI+47+rMcRkw/11QaCL33ugSOoq446xs=; Domain=.tweakers.net; Path=/; Expires=Tue, 10 Nov 2026 07:45:05 GMT; Max-Age=2678400; Secure; HttpOnly'
+[mini_browser] cookie ignored: name/value too long
+W (28381117) ESP_CURL: Parsing header 'bm_so=D04F0013AE57139B52E8F16B9FA1E8DCF699ACFD0EBF361F5406000C149E6619~YAAQ0PUSAroNvv2gAQAApM/FJAmnE/sAR2z8u3CQE360V+1q2Qr0KFpLZmsW0lkcatbmzljhErFD4/7JupaCpjP5ESbWslutV1tmUNzzP7KpV//wVAsiAFcCK4PblVhRTiqJw1PTOB9i13HeQ+0KK9fMQsV5nm4qAvPsuobxiiBnfA7+Cc5Rv8pvfuLAAxcJ/nhBamWuuQQgRZANnUeTvHVuAa0Yg+ENKNbIC4uXopYp+0IxgnXuOAzbPZPxbEF8z5uaSL13yZUjWBsMR7rPeCx+tRXEqWptKww9+m4463nYvvrgfY66CaGc0om7oqq14Bt5y3vmZ5USy8g4ywXUSvZ76Lo5DES2NkWfSBLquZNAB226uO16LeeRdYU4KRO2ZRbfCXqFJ7CLPlnDOy839c29T4GoaItXGWfQiUySeUy4ekWq1lsTKMBOGL0X/FlaUHixb/cmxuZrOKfachus7cE+ALMzpojMwZQNtw==~9; Domain=.tweakers.net; Path=/; Expires=Sun, 11 Oct 2026 07:45:05 GMT; Max-Age=86400; Secure'
+[mini_browser] cookie ignored: name/value too long
+[mini_browser] redirect 303 -> https://tweakers.net/
+[mini_browser] cookie send: authId=976d0200-8db3-4064-9ef6-bdfbbe7234e0
+W (28381327) ESP_CURL: Parsing header '__Secure-TnetID=.0emTo1lcdiyjKhTWEdDDoSnaQiIrZVo.; expires=Sun, 07 Feb 2027 08:45:06 GMT; Max-Age=10371600; path=/; domain=.tweakers.net; secure; httponly; samesite=lax'
+[mini_browser] cookie store: __Secure-TnetID=.0emTo1lcdiyjKhTWEdDDoSnaQiIrZVo. domain=tweakers.net path=/ secure=1 count=21
+W (28381347) ESP_CURL: Parsing header 'ssa-did=01a124c5-d078-75ff-ab4c-f44912bc9d8e; expires=Sun, 10 Oct 2027 07:45:06 GMT; Max-Age=31536000; path=/; domain=.tweakers.net; secure; httponly; samesite=lax'
+[mini_browser] cookie store: ssa-did=01a124c5-d078-75ff-ab4c-f44912bc9d8e domain=tweakers.net path=/ secure=1 count=22
+W (28381377) ESP_CURL: Parsing header 'ssa-sid=01a124c5-d078-7643-ab4c-f449135f130d; expires=Sat, 10 Oct 2026 08:15:06 GMT; Max-Age=1800; path=/; domain=.tweakers.net; secure; httponly; samesite=lax'
+[mini_browser] cookie store: ssa-sid=01a124c5-d078-7643-ab4c-f449135f130d domain=tweakers.net path=/ secure=1 count=23
+W (28381407) ESP_CURL: Parsing header '_csrf=1CftBdT2u2PNjsM9tMajTN; path=/; domain=.tweakers.net; secure; httponly; samesite=lax'
+[mini_browser] cookie store: _csrf=1CftBdT2u2PNjsM9tMajTN domain=tweakers.net path=/ secure=1 count=24
+W (28381427) ESP_CURL: Parsing header 'pl=4466%3A0; expires=Mon, 09 Nov 2026 08:45:06 GMT; Max-Age=2595600; path=/; domain=.tweakers.net; secure; httponly; samesite=lax'
+[mini_browser] cookie store: pl=4466%3A0 domain=tweakers.net path=/ secure=1 count=25
+W (28381447) ESP_CURL: Parsing header 'bm_s=YAAQ0PUSAiwOvv2gAQAArtDFJAbRPc+Q4LUeSfEPBRlnP8n5XS0i19G+wVxe2WP4I09tHnBgDDbJB1KOgdZgKpjT2gJM1WPcxY0SD2IZC4PdmaaYJWii12NLOxN+yjVCnBlyE8bNVOpoxxV1xF/Q5RW4YSZEUv54dE0upooOkw01EW70omTPk91YHB7Y1GfJrnxgT8DZPf8ScL7lnLOMwSFoATX+znckGwdxinckoTdnpwJc0I6AquBJ5KvfzdS1CPkAHwPTYurMYIcYyzk1pOKqkrJgPtqIohHSqlpTQzUN6wM4NTt/TonMMexnPkBKCdjx11pdHOsj4c/xuvQpkTFCS1G5inx6cw1YNRj98XViIb1GTbS5u4IIui9NDX8Pf+/nm0ygAO2VgH/lrXZq5ErBxGCByuhtCX83sqy7eIWWdSSYYyo1BUvS6TVR1QCh8FFNBFZrkr3HC5UziGfsHi7WsCG5R7vWGXrtjF/7sLg2Agf4EDYXU/5bhXUWcdwyxqpeANGuyICuoVCP3FCHzAVZZw1cjCFDE+aWw7gKE6kdh9CLJhMBlEmohXwcbXlxrOyJiTUCUvCisGGxmy+zm/31; Domain=.tweakers.net; Path=/; Expires=Tue, 10 Nov 2026 07:45:06 GMT; Max-Age=2678400; Secure; HttpOnly'
+[mini_browser] cookie ignored: name/value too long
+W (28381517) ESP_CURL: Parsing header 'bm_so=C512DA672C7A1D98B4366F5BB7BAF3CE8EA34EAE860E44F6043065A39699AA35~YAAQ0PUSAi0Ovv2gAQAArtDFJAkaeoqcutpoyWYdd3OEUAhOfNni9tm67N3Jiv3ORYkp7+8xBrRzXJQ1H2+yS/qdImlNv6rcC4n/0W+NeBtDKXTOcMAWEnQwzFv6JjYb3eq5KNICGPUigPERwnbSWQBsHd2OqEFmfo1dJOCj+OJq58GVcwLGEfu/AotILhRhpcx3vxpfGwrdsIBS2gPlPivAvZDi2H72mNx6xARSi8mwW3KebHPb1/cKnzsGOiv3MWh//r2mameaXlXPfvV8z992ESNTXVbIL+GP7CSG601aXuoycMpGH3WMdw67izTKQs0krV4OudxxT8no6tAI5j4VuzyZNfp2MfkZI7KNYAv98wgISW2dxFANuhR4If+J/waBeqcfLlNVaeD5EFfrD/7Tfl+/YdJ8UHWnkUZ9klOl/OiyoDHzpC2MPNjEO/cpdnCvBMfd/2/7uu34d/jpQR73NBu3sEGzrmiPcQ==~9; Domain=.tweakers.net; Path=/; Expires=Sun, 11 Oct 2026 07:45:06 GMT; Max-Age=86400; Secure'
+[mini_browser] cookie ignored: name/value too long
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 12288 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://apnews.com (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 7086 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 6902 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 83 links from https://tweakers.net
+[mini_browser] page title: Tweakers: tech-community, nieuws, reviews en de Pricewatch
+[mini_browser] parser: links=83 actions=105 forms=1
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=25
+
+--- CONTENT START ---
+Ga direct naar 
+1. Ga naar hoofdinhoud
+2. Ga naar de zoekbalk
+Website menu" 
+[1]  
+= Tweakers
+* [2]Frontpage
+* [3]Nieuws
+* [4]Reviews
+* Best Buy Guides
+* [5]Smartphones
+* [6]Laptops
+* [7]Desktops
+* [8]Televisies
+* [9]Tablets
+* [10]Smartwatches
+* [11]Hoofdtelefoons
+* [12]Powerbanks
+* [13]Monitoren
+* [14]Videokaarten
+* [15]Processors
+* [16]Moederborden
+* [17]Behuizingen
+* [18]Ssd's
+* [19]Voedingen
+* [20]Netwerken
+* [21]Dockingstations
+* [22]E-readers
+* [23]Pricewatch
+* [24]Vraag & Aanbod
+* [25]Forum
+* [26]Deals
+* Meer
+* [27]Video
+* [28]Podcasts
+* [29]Downloads
+* [30]IT Pro
+* [31]Profielen
+* [32]TweakersGear
+* [33]Carri&egrave;re
+* [34]Acties & Events
+* [35]Steun Tweakers
+* [36]Huisregels
+* [37]Over Tweakers
+*  
+* [38] Inloggen 
+*  0 
+*  
+[39] keyword: 
+
+[40] [Submit]
+
+Zoeken Sluiten 
+Tracker Actieve topics 
+= [41] Vergelijk producten en prijzen  
+* [42]
+[[MBIMG0]]
+
+Smartphones 
+* [43]
+[44] Image: image
+Laptops 
+* [45]
+[46] Image: image
+Tablets 
+* [47]
+[48] Image: image
+Hoofdtelefoon 
+* [49]
+[50] Image: image
+Televisies 
+* [51]
+[52] Image: image
+Gaming 
+* [53]
+[54] Image: image
+Monitors 
+* [55]
+[56] Image: image
+Opslag 
+* [57]
+[58] Image: image
+Componenten 
+* [59]
+[60] Image: image
+Camera's 
+* [61]
+[62] Image: image
+Desktops 
+* [63]
+[64] Image: image
+Videokaarten 
+* [65]
+[66] Image: image
+Ssd's 
+* [67]
+[68] Image: image
+E-readers 
+* [69]   meer 
+[70]
+[71] Image: Knallen op niveau
+[72]
+vandaag 
+= Knallen op niveau 
+Gears of War: E-Day Review 
+[73] Vanaf € 67,-  [74]  1 productreview   
+[75] 25 
+[76]
+[77] Image: De beste anc zonder eartips
+[78]
+gisteren | met video 
+= De beste anc zonder eartips 
+Apple AirPods 5 Quicktest 
+[79] Vanaf € 148,-  
+[80] 63  [81]
+[82] Image: Losbreken van big tech vraagt wat offers
+[83]
+2 dagen geleden 
+= Losbreken van big tech vraagt wat offers 
+Jolla Phone (2026) Review 
+[84] Wordt verwacht  [85]  1 productreview   
+[86] 174  [87]
+[88] Image: image
+[89]
+3 dagen geleden 
+= Ongecontroleerde bankadressen maken misbruik van
+iDIN-koppelingen mogelijk 
+[90] 71  [91]
+[92] Image: Thunderbolt 5 voor maar 200 euro
+[93]
+3 dagen geleden 
+= Thunderbolt 5 voor maar 200 euro 
+Ugreen Maxidok 10-in-1-dockingstation Review 
+[94] Vanaf € 196,-  
+[95] 63  [96]
+[97] Image: Ouderwetse Wii-pret op Switch 2
+[98]
+6 okt 2026 
+= Ouderwetse Wii-pret op Switch 2 
+Nintendo Switch Sports Resort Preview 
+[99] Vanaf € 53,-  
+[100] 36  [101]
+[102] Image: image
+[103]
+5 okt 2026 
+= Vijf jaar Windows 11: valt er wat te vieren? 
+[104] Vanaf € 110,-  [105]  2 productreviews   
+<a
+href="https://tweakers.net/reviews/15376/vijf-jaar-windows
+-11-valt-er-wat-te-vieren.html#react
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 17 of 25
+[mini_browser] image: fetching https://tweakers.net/g/fp/categories/telefoons.svg
+[mini_browser] cache: stored https://tweakers.net/g/fp/categories/telefoons.svg (1510 bytes, 212 KB used, 12 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 2024 ms
+[mini_browser] display: mode=Colors + Image images_seen=21 images_retained=21 images_loaded=0
+Init: Free main memory: 139084, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 139084, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] net: 5695 bytes received, 34700 bytes after decoding
+[mini_browser] bfcache: stored https://tweakers.net (0 images)
+[UTF8] CURL: 34700 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 21658 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 21658 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 34700 bytes, 128 links from https://news.ycombinator.com
+[mini_browser] page title: Hacker News
+[mini_browser] parser: links=128 actions=130 forms=1
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=1
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=25
+
+--- CONTENT START ---
+[1]
+[[MBIMG0]]
+
+[2]Hacker News[3]new | [4]past | [5]comments | [6]ask |
+[7]show | [8]jobs | [9]submit | [10]login
+1. | 
+[11]
+[12]REA Reverse – Engineer Anything ([13]rea.tools)
+335 points by [14]modinfo [15]7 hours ago  | [16]hide |
+[17]112 comments
+2. | 
+[18]
+[19]Telegram Desktop vulnerability allowed any user's file
+to be stolen ([20]beaksec.github.io)
+99 points by [21]g-b-r [22]4 hours ago  | [23]hide |
+[24]43 comments
+3. | 
+[25]
+[26]Cloudflare acquires Deno ([27]deno.com)
+1180 points by [28]ilreb [29]18 hours ago  | [30]hide |
+[31]606 comments
+4. | 
+[32]
+[33]Triple-A Minesweeper ([34]mikelacher.com)
+890 points by [35]robin_reala [36]15 hours ago  | [37]hide
+| [38]172 comments
+5. | 
+[39]
+[40]Computers Cannot Make Decisions ([41]cateat.fish)
+18 points by [42]heavensteeth [43]1 hour ago  | [44]hide |
+[45]6 comments
+6. | 
+[46]
+[47]Eye of Sauron: Long-Range Hidden Spy Camera Detection
+([48]usenix.org)
+116 points by [49]ortusdux [50]6 hours ago  | [51]hide |
+[52]26 comments
+7. | 
+[53]
+[54]Typesafe AI raises $870M at $7.5B ([55]typesafe.ai)
+350 points by [56]tosh [57]14 hours ago  | [58]hide |
+[59]255 comments
+8. | 
+[60]
+[61]How to head into VR without wearing a headset
+([62]kyushu-u.ac.jp)
+19 points by [63]Betelbuddy [64]3 hours ago  | [65]hide |
+[66]7 comments
+9. | 
+[67]
+[68]Can you use autoregressive diffusion to generate
+market data? ([69]janestreet.com)
+66 points by [70]jsomers [71]7 hours ago  | [72]hide |
+[73]23 comments
+10. | 
+[74]
+[75]Show HN: Carrier-Explode: iPhone, Pixel and Galaxy
+carrier settings decoded ([76]carrierexplode.com)
+296 points by [77]simplyalec [78]13 hours ago  | [79]hide
+| [80]39 comments
+11. | 
+[81]
+[82]Compiling Rust to readable C with Eurydice
+([83]lwn.net)
+62 points by [84]peter_d_sherman [85]8 hours ago  |
+[86]hide | [87]11 comments
+12. | 
+[88]
+[89]Clinical trial of a prion disease drug candidate
+begins enrolling participants ([90]broadinstitute.org)
+47 points by [91]luu [92]7 hours ago  | [93]hide | [94]7
+comments
+13. | 
+[95]
+[96]Pointing AI at archives found a forgotten meteorite,
+lost rhinos, and more ([97]jessewaites.com)
+138 points by [98]piratebroadcast [99]14 hours ago  |
+[100]hide | [101]72 comments
+14. | 
+[102]
+[103]Show HN: Proton Drive for Linux ([104]lsantos.dev)
+69 points by [105]khaosdoctor [106]11 hours ago  |
+[107]hide | [108]25 comments
+15. | 
+[109]
+[110]YouTuber Says Cops Visited Him After He Built a
+Flock-Style Camera to Track Cops ([111]gizmodo.com)
+543 points by [112]gumby [113]10 hours ago  | [114]hide |
+[115]301 comments
+16. | 
+[116]
+[117]Communication Between the Compiler, the Build System,
+and Beyond ([118]shrub.industries)
+10 points by [119]shrub900 [120]4 hours ago  | [121]hide |
+[122]2 comments
+17. | 
+[123]
+[124]I tried to move my notes out of Emacs. I failed.
+Again ([125]baty.net)
+8 points by [126]speckx [127]2 hours ago  | [128]hide | 8
+comments
+18. | 
+Vegetative Electron Microscopy WTF? (2025)
+(sciencebase.com)
+5 points by adunk 3 hours ago  | hide | discuss
+19. | 
+Scam American companies are using to manipulate ingredient
+lists (twitter.com/wallstreetapes)
+102 points by bilsbie 14 hours ago  | hide | 110 comments
+20. | 
+What mathematicians should know about the Lean Theorem
+Prover: reliability & AI (terrytao.wordpress.com)
+93 points by matt_d 14 hours ago  | hide | 18 comments
+21. | 
+Our $445M Series D (oxide.computer)
+644 points by ahlCVA 18 hours ago  | hide | 294 comments
+22. | 
+The role of cat eye narrowing movements in cat–human
+communication (2020) (nature.com)
+72 points by bushwart 13 hours ago  | hide | 29 comments
+23. | 
+Food processing influences metabolism and brain activity
+(vt.edu)
+7 points by gmays 2 hours ago  | hide | 3 comments
+24. | 
+Sorry, I'm in a meeting (iminafleeting.com)
+871 points by splintersio 22 hours ago  | hide | 247
+comments
+25. | 
+'Wallace and Gromit,' 90% Alone
+(animationobsessive.substack.com)
+197 points by vinhnx 17 hours ago  | hide | 24 comments
+26. | 
+Show HN: The rarest tech books and docs you've probably
+never read (readrare.com)
+115 points by miletus 14 hours ago  | hide | 43 comments
+27. | 
+100+ reactions to 100+ solutions (proofsandprompts.com)
+64 points by jacobedawson 17 hours ago  | hide | 56
+comments
+28. | 
+Atari Falcon (atarimuseum.nl)
+42 points by debo_ 8 hours ago  | hide | 16 comments
+29. | 
+Put a price on breakthroughs (alexwang.ai)
+14 points by ketothekingdom 5 hours ago  | hide | 5
+comments
+30. | 
+Programming Isn't Special (glyph.im)
+201 points by ingve 1 day ago  | hide | 222 comments
+More
+[129] Image: image
+
+Consider applying for YC's Winter 2027 batch! Applications
+are open till November 2.
+Guidelines | FAQ | Lists | API | Security | Legal | Apply
+to YC | Contact
+Search: [130] q: 
+
+
+--- CONTENT END ---
+[mini_browser] image: fetching https://news.ycombinator.com/y18.svg
+Init: Free main memory: 135048, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] cache: stored https://news.ycombinator.com/y18.svg (315 bytes, 216 KB used, 13 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 1436 ms
+[mini_browser] display: mode=Colors + Image images_seen=2 images_retained=2 images_loaded=0
+Init: Free main memory: 137028, free PSRAM pages: 299/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] cache: stored https://lobste.rs (58832 bytes, 276 KB used, 14 entries)
+[mini_browser] net: 8264 bytes received, 58832 bytes after decoding
+[mini_browser] bfcache: stored https://news.ycombinator.com (0 images)
+[UTF8] CURL INVALID byte 10 = DD  context: 64 6F 63 74 79 70 D0 BA DD 0A
+[UTF8] CURL: 12 bytes, 1 invalid byte(s)
+[UTF8] PAGE TEXT: 0 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 0 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 58832 bytes, 0 links from https://lobste.rs
+[mini_browser] page title: (none)
+[mini_browser] parser: links=0 actions=0 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] display: mode=Colors + Image images_seen=0 images_retained=0 images_loaded=0
+[mini_browser] cookies: count=25
+
+--- CONTENT START ---
+
+--- CONTENT END ---
+Init: Free main memory: 137676, free PSRAM pages: 351/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 134996, free PSRAM pages: 351/511, free framebuffer pages: 175/399 running processes 2
+Task 2 caused an unhandled exception, Cerberos will deal with it
+W (28416607) HADES: Stripping PID 2 of its worldy possessions
+W (28416607) task: Cleaning up open filehandle 0
+W (28416617) task: Cleaning up open filehandle 1
+W (28416617) task: Cleaning up open filehandle 2
+W (28416617) task: Cleaning up open filehandle 3
+W (28416627) task: Cleaning up window 0x4ff55fd8
+W (28416637) HADES: Task 2 escorted to my realm
+W (28416637) compositor: Destroying framebuffer 0 for window 0x4ff55fd8
+W (28416637) compositor: Destroying framebuffer 1 for window 0x4ff55fd8
+Init: Free main memory: 217092, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217092, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217092, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217092, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217304, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217728, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 runni 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Init: Free main memory: 217960, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Currently installed applications:
+Name: wifi_test
+  UID: wifi_test
+  Version: 2
+  Binary : wifi_test.elf
+Name: WHY2025 Sponsors
+  UID: why2025_sponsors
+  Version: 1
+  Binary : why2025_sponsors.elf
+Name: WHY 2025 OTA updater
+  UID: why2025_ota
+  Version: 4
+  Binary : why2025_ota.elf
+Name: Name tag
+  UID: why2025_namebadge
+  Version: 6
+  Binary : why2025_namebadge.elf
+Name: why2025_firmware_ota_c6
+  UID: why2025_firmware_ota_c6
+  Version: 1
+  Binary : 
+  -> HIDDEN
+Name: SNAKE!
+  UID: sdl_test
+  Version: 3
+  Binary : sdl_test.elf
+Name: SDL Serial Demo
+  UID: sdl_serial_demo
+  Version: 2
+  Binary : sdl_serial_demo.elf
+Name: sdl2_test
+  UID: sdl2_test
+  Version: 1
+  Binary : sdl2_test.elf
+Name: readdir_test
+  UID: readdir_test
+  Version: 1
+  Binary : readdir_test.elf
+Name: process_test
+  UID: process_test
+  Version: 1
+  Binary : process_test.elf
+Name: Mini Browser
+  UID: mini_browser
+  Version: 4.4
+  Binary : mini_browser.elf
+Name: memtester
+  UID: memtester
+  Version: 1
+  Binary : memtester.elf
+Name: I2C Scan
+  UID: i2c_scan
+  Version: 1
+  Binary : i2c_scan.elf
+Name: hello
+  UID: hello
+  Version: 5
+  Binary : hello.elf
+Name: hardware_test
+  UID: hardware_test
+  Version: 1
+  Binary : hardware_test.elf
+Name: curl_test
+  UID: curl_test
+  Version: 1
+  Binary : curl_test.elf
+Name: System settings
+  UID: badgevms_settings
+  Version: 2
+  Binary : badgevms_settings.elf
+Name: BadgeVMS Launcher
+  UID: badgevms_launcher
+  Version: 99
+  Binary : badgevms_launcher.elf
+  -> HIDDEN
+FINAL_ORDER[0]: Mini Browser (mini_browser)
+FINAL_ORDER[1]: System settings (badgevms_settings)
+FINAL_ORDER[2]: Name tag (why2025_namebadge)
+FINAL_ORDER[3]: curl_test (curl_test)
+FINAL_ORDER[4]: hardware_test (hardware_test)
+FINAL_ORDER[5]: hello (hello)
+FINAL_ORDER[6]: I2C Scan (i2c_scan)
+FINAL_ORDER[7]: memtester (memtester)
+FINAL_ORDER[8]: process_test (process_test)
+FINAL_ORDER[9]: readdir_test (readdir_test)
+FINAL_ORDER[10]: SDL Serial Demo (sdl_serial_demo)
+FINAL_ORDER[11]: sdl2_test (sdl2_test)
+FINAL_ORDER[12]: SNAKE! (sdl_test)
+FINAL_ORDER[13]: WHY 2025 OTA updater (why2025_ota)
+FINAL_ORDER[14]: WHY2025 Sponsors (why2025_sponsors)
+FINAL_ORDER[15]: wifi_test (wifi_test)
+Currently installed applications:
+Name: wifi_test
+  UID: wifi_test
+  Version: 2
+  Binary : wifi_test.elf
+Name: WHY2025 Sponsors
+  UID: why2025_sponsors
+  Version: 1
+  Binary : why2025_sponsors.elf
+Name: WHY 2025 OTA updater
+  UID: why2025_ota
+  Version: 4
+  Binary : why2025_ota.elf
+Name: Name tag
+  UID: why2025_namebadge
+  Version: 6
+  Binary : why2025_namebadge.elf
+Name: why2025_firmware_ota_c6
+  UID: why2025_firmware_ota_c6
+  Version: 1
+  Binary : 
+  -> HIDDEN
+Name: SNAKE!
+  UID: sdl_test
+  Version: 3
+  Binary : sdl_test.elf
+Name: SDL Serial Demo
+  UID: sdl_serial_demo
+  Version: 2
+  Binary : sdl_serial_demo.elf
+Name: sdl2_test
+  UID: sdl2_test
+  Version: 1
+  Binary : sdl2_test.elf
+Name: readdir_test
+  UID: readdir_test
+  Version: 1
+  Binary : readdir_test.elf
+Name: process_test
+  UID: process_test
+  Version: 1
+  Binary : process_test.elf
+Name: Mini Browser
+  UID: mini_browser
+  Version: 4.4
+  Binary : mini_browser.elf
+Name: memtester
+  UID: memtester
+  Version: 1
+  Binary : memtester.elf
+Name: I2C Scan
+  UID: i2c_scan
+  Version: 1
+  Binary : i2c_scan.elf
+Name: hello
+  UID: hello
+  Version: 5
+  Binary : hello.elf
+Name: hardware_test
+  UID: hardware_test
+  Version: 1
+  Binary : hardware_test.elf
+Name: curl_test
+  UID: curl_test
+  Version: 1
+  Binary : curl_test.elf
+Name: System settings
+  UID: badgevms_settings
+  Version: 2
+  Binary : badgevms_settings.elf
+Name: BadgeVMS Launcher
+  UID: badgevms_launcher
+  Version: 99
+  Binary : badgevms_launcher.elf
+  -> HIDDEN
+FINAL_ORDER[0]: Mini Browser (mini_browser)
+FINAL_ORDER[1]: System settings (badgevms_settings)
+FINAL_ORDER[2]: Name tag (why2025_namebadge)
+FINAL_ORDER[3]: curl_test (curl_test)
+FINAL_ORDER[4]: hardware_test (hardware_test)
+FINAL_ORDER[5]: hello (hello)
+FINAL_ORDER[6]: I2C Scan (i2c_scan)
+FINAL_ORDER[7]: memtester (memtester)
+FINAL_ORDER[8]: process_test (process_test)
+FINAL_ORDER[9]: readdir_test (readdir_test)
+FINAL_ORDER[10]: SDL Serial Demo (sdl_serial_demo)
+FINAL_ORDER[11]: sdl2_test (sdl2_test)
+FINAL_ORDER[12]: SNAKE! (sdl_test)
+FINAL_ORDER[13]: WHY 2025 OTA updater (why2025_ota)
+FINAL_ORDER[14]: WHY2025 Sponsors (whL_ORDER[15]: wifi_test (wifi_test)
+Init: Free main memory: 217936, free PSRAM pages: 427/511, free framebuffer pages: 239/399 running processes 1
+Launching: Mini Browser
+W (28674077) ELF: No VMEM info found
+W (28674107) task: Start ELF file entrypoint at 0x4a0b58c8
+[mini_browser] enter main (version 4.4-dev3, built Oct 10 2026 01:04:26)
+BADGEVMS: Video device created successfully
+BADGEVMS_VideoInit: Starting initialization...
+BADGEVMS_VideoInit: Adding display mode 720x720, format=SDL_PIXELFORMAT_RGB565
+BADGEVMS_VideoInit: Successfully added display ID 1
+W (28674167) compositor: Allocated framebuffer at 0x4ff65f44, pixels at 0x48f10000, size 17, dimensions 720 x 720
+W (28674177) compositor: Allocated framebuffer at 0x4ff5f1c0, pixels at 0x49110000, size 17, dimensions 720 x 720
+W (28674187) wifi: Already connected
+[mini_browser] loaded 0 bookmarks from APPS:[mini_browser]bookmarks.txt
+[mini_browser] history: loaded 55 entries
+[mini_browser] cookies: loaded 17 saved
+[mini_browser] cache: 29 entries, 504 KB of 2048 KB
+[mini_browser] net: progress, stop, gzip and keep-alive available
+[mini_browser] clock: set from the server Date header
+[mini_browser] cache: 304 not modified https://minibrowser.macip.net (8078 bytes)
+[UTF8] CURL: 8078 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 7478 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 7443 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 8078 bytes, 11 links from https://minibrowser.macip.net
+[mini_browser] page title: Mini Browser for WHY2025 badge
+[mini_browser] parser: links=11 actions=15 forms=2
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=17
+
+--- CONTENT START ---
+Mini Browser
+[[MBIMG0]]
+
+Welcome to Mini Browser, a compact web browser for the
+WHY2025 badge. It is designed to explore lightweight and
+server-rendered websites while staying small enough to run
+comfortably on the badge. It supports links, bookmarks,
+Back/Forward history, simple GET and POST forms, bounded
+cookie support, PNG/JPEG/GIF images, inline image
+rendering, multiple display modes, 56,352 Unicode glyphs,
+word-aware wrapping, RTL/Bidi text, Arabic shaping,
+monochrome emoji, real bold text, HTTP/TLS page
+information and full-page screenshots. 
+The current version is Mini Browser 4.4. It adds find in
+page, a simplified view for long articles, text zoom, a
+focus ring for links and fields, pages saved for offline
+reading, sharing a page as a QR code, a page information
+screen with a lock for secure pages, and a built-in help
+page: press WHY+/ (the /? key) to see every key. 
+Version 4.3 brought loading progress with a stop key
+(Esc), clear error pages, an instant Back/Forward cache,
+compressed pages, cookies that stay after a restart, a 2
+MB disk cache, downloads, and images that load after the
+text so you can start reading at once. Version 4.1 added
+the omnibox (one bar for addresses and searches, with
+suggestions), a history that survives a restart, and up to
+five tabs. 
+= Search the small web
+[1] q: 
+[2] [Search Wiby]
+
+Wiby is a search engine focused on simple, lightweight
+websites and is a good match for Mini Browser. 
+
+= Search with Google
+[3] q: 
+[4] [Search Google]
+
+Google can also be searched directly from Mini Browser.
+Search result pages may be more complex than Wiby because
+Google is designed for modern web browsers. 
+
+= Recommended
+* [5]Wiby - search the classic web
+* [6]Marginalia Search - lightweight search
+* [7]FrogFind - search and simplify pages
+* [8]Hacker News - technology news and discussion
+* [9]NPR Text - text-oriented news
+* [10]TEXTFILES.COM - historic text files
+* [11]curl - curl project website
+* [12]ifconfig.co - network information
+= How to browse
+Links and form controls have numbers. Type a number and
+press Enter to activate it. Use Up and Down to scroll;
+hold an arrow for continuous scrolling. J and K also
+scroll one line at a time. 
+Press WHY+L and type a web address or just some words. An
+address such as wiby.me opens directly; words such as
+esp32 badge become a Google search. While you type,
+matching bookmarks and visited pages appear under the bar:
+use Down and Up to pick one and Enter to open it, or Esc
+to cancel. 
+WHY+T opens a new tab with your bookmarks and recent
+pages. WHY+Tab or WHY+1 to WHY+5 switch tabs, WHY+A shows
+all tabs and WHY+W closes one. 
+While a page loads, the bar shows its progress; press Esc
+to stop. If a page cannot be loaded, an error page tells
+you why; press R or Enter to try again. The text appears
+first and the images follow; the bar shows [img 2/5] while
+they arrive. 
+Press WHY+F to find a word on the page: matches light up
+while you type, n and Shift+N jump to the next and
+previous match, Esc turns them off. Tab and Shift+Tab move
+a ring over the links and fields, Enter opens the one with
+the ring. On a long article a chip offers a simplified
+view: press WHY+V to read just the article, without menus
+and sidebars. WHY+= and WHY+- make the text bigger or
+smaller, WHY+0 returns to 100%. 
+WHY+P saves the text of a page to read later without a
+network; WHY+D lists your saved pages and downloads. WHY+U
+shows a QR code of the page address, so you can open it on
+your phone. WHY+I shows whether the connection is secure,
+how long the page took and which cookies the site set.
+Forgot a key? Press WHY+/ for help. 
+= Browser keys
+* WHY+/ - help with all the keys
+* WHY+L - omnibox: type an address or a search
+* WHY+E - enter a new URL
+* WHY+C - edit the current URL
+* WHY+H - home
+* WHY+R - reload
+* WHY+B - back
+* WHY+G - forward
+* Esc - stop loading
+* WHY+T - new tab
+* WHY+W - close tab
+* WHY+Tab - next tab
+* WHY+1 ... WHY+5 - go to tab 1 to 5
+* WHY+A - tab overview
+* WHY+F  page (n next, Shift+N previous)
+* Tab / Shift+Tab - next / previous link or field
+* WHY+V - simplified view
+* WHY+= / WHY+- / WHY+0 - bigger / smaller / normal text
+* WHY+K - add or remove bookmark
+* WHY+M - bookmarks
+* WHY+Y - history of visited pages
+* WHY+P - save the page for offline reading
+* WHY+D - downloads and saved pages
+* WHY+U - share the page as a QR code
+* WHY+I - page information
+* WHY+X - clear: history (on the history page), downloads
+and saved pages (on the downloads page), cookies and cache
+(on page information)
+* WHY+O - display mode options
+* WHY+S - capture the visible 716x716 viewport
+* WHY+Z - capture the complete rendered page
+* WHY+Q - quit
+= Screenshots
+Press WHY+S to capture the visible 716x716 Mini Browser
+view, or WHY+Z to capture the complete rendered page.
+Screenshots are transmitted over USB serial. The
+repository includes badge_screenshot.py, a standalone
+macOS/Linux receiver that validates the CRC/FEC-protected
+transfer and saves it as a PNG. 
+./badge_screenshot.py /dev/cu.wchusbserial10
+./badge_screenshot.py /dev/cu.wchusbserial10 --full-page
+Physical WHY+S and WHY+Z screenshots do not require custom
+firmware. An optional customized WHY2025 firmware adds
+host-to-badge keyboard control, so a computer can operate
+Mini Browser remotely. It also includes scripts for
+automated browser tests and automatic screenshots. 
+[13] Customized WHY2025 firmware and test tools  
+= About Mini Browser
+Mini Browser combines a built-in ASCII font with an
+external GNU Unifont-based MBCJ font containing 56,352
+usable glyphs across 101 ranges. Text wrapping preserves
+complete words where possible, while CJK and overlong
+tokens safely fall back to glyph wrapping. Hebrew and
+Arabic are rendered right-to-left, with contextual Arabic
+shaping. HTML b and strong text are rendered as genuine
+bold text. 
+Unordered list markers deliberately remain ASCII *
+characters, so basic list rendering does not depend on the
+external Unicode font. 
+Mini Browser intentionally has no JavaScript engine, CSS
+layout engine or full HTML DOM. It focuses on ordinary
+server-rendered HTML, text content, links, PNG, JPEG and
+GIF images and simple GET and POST forms. Pages that need
+JavaScript often still read well in the simplified view
+(WHY+V). 
+[14]Full documentation 
+[15]Source code on GitHub 
+
+Mini Browser 4.4 - WHY2025 BadgeVMS 
+
+--- CONTENT END ---
+[mini_browser] image: fetching https://minibrowser.macip.net/img/mb.png
+[mini_browser] cache: 304 not modified https://minibrowser.macip.net/img/mb.png (26622 bytes)
+[mini_browser] image: decoded source=320x320 retained=240x240 RGB565=115200 bytes
+[mini_browser] image: loaded compressed=26622 bytes
+[mini_browser] images: 1 of 1 loaded in 1033 ms
+[mini_browser] display: mode=Colors + Image images_seen=1 images_retained=1 images_loaded=1
+Init: Free main memory: 141908, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] redirect 301 -> https://www.heise.de/
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 16384 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://minibrowser.macip.net (1 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 2442 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 2443 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 23 links from https://heise.de
+[mini_browser] page title: heise online - IT-News, Nachrichten und Hintergründe | heise online
+[mini_browser] parser: links=23 actions=28 forms=2
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=17
+
+--- CONTENT START ---
+[1]
+[2]heise+ entdecken
+Suchen[3] q: 
+[4] [Submit]
+
+[5]
+[[MBIMG0]]
+
+[6] Image: heise Plus
+Abo
+Suchen[7] q: 
+[8] [Submit]
+
+* [9]
+* [10]
+* [11]
+* [12]
+* [13]
+* [14]Alle Magazine im Browser lesen
+IT News
+* [15]Newsticker
+* [16]Hintergründe
+* [17]Ratgeber
+* [18]Testberichte
+* [19]Meinungen
+Online-Magazine
+* [20]heise+
+* [21]Telepolis
+* [22]heise autos
+* [23]bestenlisten
+* [24]tipps+tricks
+Services
+* [25]heise shop
+* [26]heise jobs
+* [27]heise academy
+* [28]heise download
+* <a class="ho-text mb-1 p-2 no-underline hover:bg-gray-50
+focus:bg-gray-50 active:bg-gray-50
+max-md:dark:hover:bg-gray-600
+max-md:dark:focus:bg-gray-600
+max-md:dark:active:bg-gray-600 md:p-0 md:hover:bg-tran
+
+--- CONTENT END ---
+Mini Browser: Unicode font opened: APPS:[mini_browser]unifont_cjk.bin (101 ranges)
+[mini_browser] image: fetching https://www.heise.de/icons/svg/logos/svg/heise_plus_blue.svg
+Init: Free main memory: 132088, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] cache: stored https://www.heise.de/icons/svg/logos/svg/heise_plus_blue.svg (243 bytes, 508 KB used, 30 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 983 ms
+[mini_browser] display: mode=Colors + Image images_seen=2 images_retained=2 images_loaded=0
+Init: Free main memory: 135892, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 136188, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+W (28702837) ESP_CURL: Parsing header '_gh_sess=iSuxYhegZPU36bcTScsZaDHcswqcBvqPmpi1UgsBIYuQzI1BqBiaDhrn5hQcanw8UlVXnHxb1PcPU6Kx8LcjO4e6e3ei5Dv9G4j17wW76RyTvOO9OoRZyuRV4gR56hkueAGS4pxddT0OI%2FUX0Pet7wawo3ZNNtsUNkK%2FlErutKf%2FvnGyjCkFnDDg%2BygLBj%2BsirWGAkTh3OSQ5J8GQC1R0uxBLwrEN8GQpA58YKnEaRRnDN0sZRc2fBUVgEYb15mx796XZESCNExvNCCBe1%2Fwyg%3D%3D--qaIcBuVqg1N%2FFAFw--hAcyr5Zyj65AICkgSU2MWw%3D%3D; path=/; HttpOnly; secure; SameSite=Lax'
+[mini_browser] cookie ignored: name/value too long
+W (28702867) ESP_CURL: Parsing header '_octo=GH1.1.489325877.1791618626; expires=Sun, 10 Oct 2027 07:50:26 GMT; domain=.github.com; path=/; secure; SameSite=Lax'
+[mini_browser] cookie store: _octo=GH1.1.489325877.1791618626 domain=github.com path=/ secure=1 count=18
+W (28702887) ESP_CURL: Parsing header 'logged_in=no; expires=Sun, 10 Oct 2027 07:50:26 GMT; domain=.github.com; path=/; HttpOnly; secure; SameSite=Lax'
+[mini_browser] cookie store: logged_in=no domain=github.com path=/ secure=1 count=19
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 16384 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://heise.de (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 2286 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 2276 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 11 links from https://github.com/mactjaap/mini_browser
+[mini_browser] page title: GitHub - mactjaap/mini_browser · GitHub
+[mini_browser] parser: links=11 actions=11 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] display: mode=Colors + Image images_seen=0 images_retained=0 images_loaded=0
+[mini_browser] cookies: count=19
+
+--- CONTENT START ---
+Skip to content   
+= Navigation Menu
+[1]
+[2]Sign in
+Appearance settings
+*
+Platform
+*
+AI CODE CREATION
+* [3]GitHub CopilotWrite better code with AI
+* [4]GitHub Copilot appDirect agents from issue to merge
+* [5]MCP RegistryIntegrate external tools
+*
+DEVELOPER WORKFLOWS
+* [6]ActionsAutomate any workflow
+* [7]CodespacesInstant dev environments
+* [8]IssuesPlan and track work
+* [9]Code ReviewManage code changes
+* [10]Code QualityEnforce quality at merge
+*
+APPLICATION SECURITY
+* [11]GitHub Advanced Se
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 19 of 19
+Init: Free main memory: 173128, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 173128, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 173416, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] cookie send: WMF-Last-Access=10-Oct-2026; WMF-Last-Access-Global=10-Oct-2026; WMF-Uniq=yrmpXcgLHH4Q25ohFRH9IwP1AAAAAFvdtfrrCiRwQvftqNIUIRVrXyvxfEJ9I0y2
+W (28718627) ESP_CURL: Parsing header 'WMF-DP=6e0;Path=/;HttpOnly;secure;Expires=Sat, 10 Oct 2026 00:00:00 GMT'
+[mini_browser] cookie delete: WMF-DP count=19
+W (28718627) ESP_CURL: Parsing header 'GeoIP=NL:NH:Amstelveen:52.30:4.87:v4; Path=/; secure; Domain=.wikipedia.org'
+[mini_browser] cookie store: GeoIP=NL:NH:Amstelveen:52.30:4.87:v4 domain=wikipedia.org path=/ secure=1 count=20
+W (28718647) ESP_CURL: Parsing header 'NetworkProbeLimit=0.001;Path=/;Secure;SameSite=None;Max-Age=3600'
+[mini_browser] cookie store: NetworkProbeLimit=0.001 domain=en.wikipedia.org path=/ secure=1 count=21
+W (28718667) ESP_CURL: Parsing header 'WMF-Uniq=yrmpXcgLHH4Q25ohFRH9IwP1AAEBAFvdD61uKgAqyO5gRwpTXiw4XbHmvDshDah-;Domain=.wikipedia.org;Path=/;HttpOnly;secure;SameSite=None;Expires=Sun, 10 Oct 2027 00:00:00 GMT'
+[mini_browser] cookie store: WMF-Uniq=yrmpXcgLHH4Q25ohFRH9IwP1AAEBAFvdD61uKgAqyO5gRwpTXiw4XbHmvDshDah- domain=wikipedia.org path=/ secure=1 count=21
+[mini_browser] download truncated at 65536 bytes
+[mini_browser] net: 16384 bytes received, 65536 bytes after decoding
+[mini_browser] bfcache: stored https://github.com/mactjaap/mini_browser (0 images)
+[UTF8] CURL: 65536 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 14405 bytes, 0 invalid byte(s)
+[mini_browser] reader: offered (1431 of 2698 characters, 7 paragraphs)
+[UTF8] WRAPPED: 14109 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 65536 bytes, 84 links from https://en.wikipedia.org/wiki/ESP32
+[mini_browser] page title: ESP32 - Wikipedia
+[mini_browser] parser: links=84 actions=90 forms=1
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=21
+
+--- CONTENT START ---
+Jump to content
+Main menu
+Main menu
+move to sidebar hide 
+Navigation 
+* [1]Main page
+* [2]Contents
+* [3]Current events
+* [4]Random article
+* [5]About Wikipedia
+* [6]Contact us
+Contribute 
+* [7]Help
+* [8]Learn to edit
+* [9]Community portal
+* [10]Recent changes
+* [11]Upload file
+* [12]Special pages
+[13]
+[[MBIMG0]]
+
+[14] Image: Wikipedia
+
+[15] Image: The Free Encyclopedia
+
+[16] Search 
+[17] search: 
+
+[18] [Search]
+
+Appearance
+* [19]Donate
+* [20]Create account
+* [21]Log in
+Personal tools
+* [22] Donate
+* [23] Create account
+* [24] Log in
+= Contents
+move to sidebar hide 
+* 
+(Top)
+* 
+1 Features 
+* 
+2 QFN packaged chip and module 
+Toggle QFN packaged chip and module subsection
+* 
+2.1 Chips 
+* 
+2.2 Modules 
+* 
+3 Printed circuit boards 
+Toggle Printed circuit boards subsection
+* 
+3.1 Surface-mount module boards 
+* 
+3.2 Development and other boards 
+* 
+4 Programming 
+* 
+5 Reception and use 
+Toggle Reception and use subsection
+* 
+5.1 Use in commercial devices 
+* 
+5.2 Use in industrial devices 
+* 
+5.3 Academic uses 
+* 
+6 Undocumented HCI commands in ESP32 
+* 
+7 See also 
+* 
+8 References 
+* 
+9 External links 
+Toggle the table of contents
+= ESP32
+22 languages
+* [25]العربية
+* [26]Català
+* [27]Čeština
+* [28]Deutsch
+* [29]Español
+* [30]Eesti
+* [31]فارسی
+* [32]Suomi
+* [33]Français
+* [34]עברית
+* [35]हिन्दी
+* [36]Bahasa Indonesia
+* [37]日本語
+* [38]한국어
+* [39]Nederlands
+* [40]Polski
+* [41]Português
+* [42]Русский
+* [43]Türkçe
+* [44]Українська
+* [45]Tiếng Việt
+* [46]中文
+[47]Edit links
+* [48]Article
+* [49]Talk
+English
+* [50]Read
+* [51]Edit
+* [52]View history
+Tools
+Tools
+move to sidebar hide 
+Actions 
+* [53] Read
+* [54] Edit
+* [55] View history
+General 
+* [56]What links here
+* [57]Related changes
+* [58]Upload file
+* [59]Permanent link
+* [60]Page information
+* [61]Cite this page
+* [62]Get shortened URL
+* [63]Switch to legacy parser
+Print/export 
+* [64]Download as PDF
+* [65]Printable version
+In other projects 
+* [66]Wikimedia Commons
+* [67]Wikidata item
+Appearance
+move to sidebar hide 
+From Wikipedia, the free encyclopedia
+Low-cost, low-power SoC microcontrollers with Bluetooth
+and Wi-Fi
+ESP32
+[68]
+[69] Image: image
+
+ESP-WROOM-32 module with ESP32-D0WDQ6 chip
+Manufacturer | [70]Espressif Systems
+Type | Microcontroller
+Released | September 6, 2016 (2016-09-06)[1]
+[71]CPU | 
+* [72]Tensilica Xtensa LX6
+* Tensilica Xtensa LX7
+* [73]RISC-V
+Memory | 520 KiB SRAM
+Power | 3.3 V DC
+Predecessor | [74]ESP8266
+ESP32 is a family of low-cost, energy-efficient
+[75]microcontrollers that support both [76]Wi-Fi and
+[77]Bluetooth. These chips feature several processing
+options, including the [78]Tensilica Xtensa LX6
+microprocessor available in dual-core and single-core
+variants, the Xtensa LX7 dual-core processor, or a
+[79]RISC-V microprocessor. The ESP32 incorporates
+components for wireless data communication such as
+built-in antenna switches, an RF [80]balun, power
+amplifiers, low-noise receivers, filters, and
+power-management modules.
+Typically, the ESP32 is embedded on device-specific
+[81]printed circuit boards (PCBs) or offered as part of
+development kits that include a variety of [82]GPIO pins
+and connectors, with configurations varying by model and
+manufacturer. The ESP32 was designed by [83]Espressif
+Systems and is manufactured by [84]TSMC using their 40 nm
+process.[2] It is a successor to the [85]ESP8266
+microcontroller.
+= Features
+[[86]edit]
+[87]
+[88] Image: image
+ESP32 [89]die shot. Most of the chip area is covered by a
+[90]power distribution network on the top metal layers.
+Since the release of the original ESP32, a number of
+variants have been introduced and announced. They form the
+ESP32 family of microcontrollers.[3] These chips have
+different CPUs and capabilities, but all share the same
+SDK and are largely code-compatible. Additionally, the
+original ESP32 was revised (see ESP32 ECO V3, for
+example). 
+
+--- CONTENT END ---
+[mini_browser] cookies: saved 20 of 21
+[mini_browser] image: fetching https://en.wikipedia.org/static/images/icons/enwiki-25.svg
+W (28720957) ESP_CURL: Parsing header 'WMF-Last-Access=10-Oct-2026;Path=/;HttpOnly;secure;Expires=Wed, 11 Nov 2026 00:00:00 GMT'
+W (28720957) ESP_CURL: Parsing header 'WMF-Last-Access-Global=10-Oct-2026;Path=/;Domain=.wikipedia.org;HttpOnly;secure;Expires=Wed, 11 Nov 2026 00:00:00 GMT'
+W (28720977) ESP_CURL: Parsing header 'GeoIP=NL:NH:Amstelveen:52.30:4.87:v4; Path=/; secure; Domain=.wikipedia.org'
+W (28720987) ESP_CURL: Parsing header 'NetworkProbeLimit=0.001;Path=/;Secure;SameSite=None;Max-Age=3600'
+W (28720997) ESP_CURL: Parsing header 'WMF-Uniq=U1PUJnJSsg8fdDjwqaeJlgP1AAAAAFvd2duq_AnorcnokdL1u1sbeYNasNIdN6D7;Domain=.wikipedia.org;Path=/;HttpOnly;secure;SameSite=None;Expires=Sun, 10 Oct 2027 00:00:00 GMT'
+Init: Free main memory: 131820, free PSRAM pages: 346/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] cache: stored https://en.wikipedia.org/static/images/icons/enwiki-25.svg (115918 bytes, 624 KB used, 31 entries)
+[mini_browser] image: stb info failed: unknown image type
+[mini_browser] image: unsupported, invalid, or outside memory budget
+[mini_browser] images: 0 of 1 loaded in 4225 ms
+[mini_browser] display: mode=Colors + Image images_seen=5 images_retained=5 images_loaded=0
+Init: Free main memory: 135704, free PSRAM pages: 346/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 136008, free PSRAM pages: 346/511, free framebuffer pages: 175/399 running processes 2
+W (28739047) ESP_CURL: Parsing header '__cf_bm=ebIPE_Eg82OntOtyI3ANU0_XbzDTRy1OSGBesnbCLeI-1791618663.9547653-1.0.1.1-c6frwCnhIrUt.4ha3C77lvLuZiRWbY2.meSD.ukQ_KO0z_aAhD_BQyy1iXGNLQVJfFLurZa_N1f7349xuSmVushFm1ffmtGuqqgs0Xy0suRq81Ekvvg4rX6CmKDM7QEKx8QbjWDepE8t3ySY4Lq3GfZSBAGvJ76SSQk_NKrsUYE; HttpOnly; SameSite=None; Secure; Path=/; Domain=stackoverflow.com; Expires=Sat, 10 Oct 2026 08:21:03 GMT'
+[mini_browser] cookie store: __cf_bm=ebIPE_Eg82OntOtyI3ANU0_XbzDTRy1OSGBesnbCLeI-1791618663.9547653-1.0.1.1-c6frwCnhIrUt.4ha3C77lvLuZiRWbY2.meSD.ukQ_KO0z_aAhD_BQyy1iXGNLQVJfFLurZa_N1f7349xuSmVushFm1ffmtGuqqgs0Xy0suRq81Ekvvg4rX6CmKDM7QEKx8QbjWDepE8t3ySY4Lq3GfZSBAGvJ76SSQk_NKrsUYE domain=stackoverflow.com path=/ secure=1 count=22
+[mini_browser] net: 3019 bytes received, 5334 bytes after decoding
+[mini_browser] bfcache: stored https://en.wikipedia.org/wiki/ESP32 (0 images)
+[mini_browser] HTTP 403 URL='https://stackoverflow.com/questions/tagged/esp32'
+
+--- CONTENT START ---
+
+:(
+
+Access denied
+
+You don't have permission to view this page on
+stackoverflow.com.
+
+HTTP ERROR 403
+
+https://stackoverflow.com/questions/tagged/esp32
+
+Press R or Enter to reload, WHY+B to go back.
+--- CONTENT END ---
+[mini_browser] cookies: saved 21 of 22
+Init: Free main memory: 173068, free PSRAM pages: 346/511, free framebuffer pages: 175/399 running processes 2

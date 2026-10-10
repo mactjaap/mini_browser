@@ -55,3 +55,6 @@ dkms.conf
 *.dwo
 minibrowser-full-*.png
 url.txt
+
+# Python stuff
+__pycache__/

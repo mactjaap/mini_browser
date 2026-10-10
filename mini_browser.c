@@ -172,10 +172,14 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.4-dev3"
+#define MINI_BROWSER_VERSION "4.5-dev1"
 
 /* ---------- Limits & layout ---------- */
-#define MAX_BYTES     (64 * 1024)
+/* 4.5: page HTML kept after scripts, styles, SVG and comments are removed
+ * while it downloads (see html_filter_feed).  4.4 kept the first 64 KB as
+ * received, which on many news sites was all <head>. */
+#define MAX_BYTES     (256 * 1024)
+#define RAW_PAGE_MAX  (2 * 1024 * 1024)   /* stop a page download after this much */
 #define TIMEOUT_S     10
 #define URL_MAX       256
 #define PAD_LR        10
@@ -185,8 +189,8 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #define VIEW_H        716
 #define URLBAR_H      24
 #define LINE_SPACING  2
-#define MAX_LINKS     128
-#define MAX_ACTIONS   160
+#define MAX_LINKS     384   /* 4.5: was 128 (news front pages have 300+) */
+#define MAX_ACTIONS   448   /* 4.5: was 160 */
 #define MAX_FORMS       4
 #define MAX_FORM_FIELDS 8
 #define FORM_VALUE_MAX 128
@@ -389,12 +393,28 @@ static int g_page_scale = 2;
  * 0 then, which makes libcurl stop the transfer; BadgeVMS's curl ignores
  * the return value, so there the rest is downloaded and discarded.
  */
+/* 4.5: HTML filter state (html_filter_feed). */
+typedef enum { HF_TEXT, HF_TAG, HF_OPEN_TAG, HF_COMMENT, HF_SKIP, HF_SKIP_END } hf_state_t;
+
 typedef struct {
     char *buf;
     size_t len;
     size_t cap;
     size_t limit;      /* 0 = decide on the first bytes (page fetches) */
     bool truncated;
+    /* 4.5: page fetches of HTML drop scripts, styles, SVG and comments as
+     * they arrive, so `limit` is spent on content. */
+    bool filter;
+    size_t raw;        /* bytes received before filtering */
+    size_t dropped;    /* bytes the filter left out */
+    int jsonld;        /* JSON-LD blocks kept (for the simplified view) */
+    hf_state_t hf;
+    char hf_pend[512]; /* the start of a tag while deciding about it */
+    size_t hf_pend_len;
+    char hf_name[12];  /* element whose start tag is being read */
+    char hf_close[12]; /* "</script" etc. while skipping an element */
+    size_t hf_match;
+    int hf_dashes;
 } mem_t;
 
 static void mem_reset(mem_t *m) {
@@ -403,6 +423,14 @@ static void mem_reset(mem_t *m) {
     m->len = 0;
     m->cap = 0;
     m->truncated = false;
+    m->filter = false;
+    m->raw = 0;
+    m->dropped = 0;
+    m->jsonld = 0;
+    m->hf = HF_TEXT;
+    m->hf_pend_len = 0;
+    m->hf_match = 0;
+    m->hf_dashes = 0;
 }
 
 static bool bytes_look_like_image(const unsigned char *b, size_t n) {
@@ -437,6 +465,8 @@ typedef struct {
     fetch_source_t source;        /* 4.3: network or disk cache */
     unsigned load_ms;             /* 4.4: request to page shown */
     double wire_bytes;            /* 4.4: bytes received (compressed), 0: unknown */
+    unsigned filtered_bytes;      /* 4.5: scripts, styles, SVG, comments left out */
+    bool cut;                     /* 4.5: the page was longer than MAX_BYTES */
 } fetch_meta_t;
 
 static fetch_meta_t g_fetch_meta;
@@ -584,6 +614,191 @@ static void response_check_download(void) {
         g_resp.download = true;
 }
 
+/* Append bytes to the buffer, up to m->limit.  Returns false when full. */
+static bool mem_append(mem_t *m, const char *p, size_t n) {
+    if (m->truncated) return false;
+    size_t keep = n;
+    if (m->len + keep > m->limit) {
+        keep = m->limit - m->len;
+        m->truncated = true;
+    }
+    if (m->len + keep + 1 > m->cap) {
+        size_t cap = m->cap ? m->cap : 4096;
+        while (cap < m->len + keep + 1) cap *= 2;
+        if (cap > m->limit + 1) cap = m->limit + 1;
+        char *q = (char*)realloc(m->buf, cap);
+        if (!q) {
+            m->truncated = true;
+            return false;
+        }
+        m->buf = q;
+        m->cap = cap;
+    }
+    memcpy(m->buf + m->len, p, keep);
+    m->len += keep;
+    m->buf[m->len] = 0;
+    return !m->truncated;
+}
+
+/*
+ * 4.5: streaming HTML filter.  Removes, while the page downloads,
+ *   <script>...</script>  (except JSON-LD: <script type="application/ld+json">,
+ *                          which often holds the article text)
+ *   <style>...</style>, <svg>...</svg>, <template>...</template>, <!-- -->
+ * The parser ignored all of these anyway, but on modern sites they are most
+ * of the first 64 KB.  Tags are decided on their name (and, for <script>,
+ * their attributes); a chunk may end anywhere, the state carries over.
+ */
+static bool hf_skipped_tag(const char *name) {
+    return !strcmp(name, "style") || !strcmp(name, "svg") || !strcmp(name, "template");
+}
+
+static void hf_flush_pending(mem_t *m) {
+    if (m->hf_pend_len) mem_append(m, m->hf_pend, m->hf_pend_len);
+    m->hf_pend_len = 0;
+}
+
+static void hf_start_skip(mem_t *m, const char *name) {
+    m->dropped += m->hf_pend_len;
+    m->hf_pend_len = 0;
+    snprintf(m->hf_close, sizeof m->hf_close, "</%s", name);
+    m->hf_match = 0;
+    m->hf = HF_SKIP;
+}
+
+/* The tag name in hf_pend ("<name" or "</name"), lower case; "" if none. */
+static void hf_pending_name(const mem_t *m, char *out, size_t cap) {
+    size_t i = 1, o = 0;
+    if (i < m->hf_pend_len && m->hf_pend[i] == '/') i++;
+    while (i < m->hf_pend_len && o + 1 < cap && isalnum((unsigned char)m->hf_pend[i]))
+        out[o++] = (char)tolower((unsigned char)m->hf_pend[i++]);
+    out[o] = 0;
+}
+
+static void html_filter_feed(mem_t *m, const char *p, size_t n) {
+    size_t run = 0;                 /* start of a run of plain text to copy */
+    for (size_t i = 0; i < n && !m->truncated; i++) {
+        char c = p[i];
+        switch (m->hf) {
+        case HF_TEXT:
+            if (c == '<') {
+                if (i > run) mem_append(m, p + run, i - run);
+                m->hf_pend[0] = '<';
+                m->hf_pend_len = 1;
+                m->hf = HF_TAG;
+            }
+            continue;               /* text is copied in runs */
+
+        case HF_TAG: {
+            if (m->hf_pend_len == 1 && c == '<') {          /* "<<": the first was text */
+                mem_append(m, "<", 1);
+                break;
+            }
+            m->hf_pend[m->hf_pend_len++] = c;
+            if (m->hf_pend[1] == '!') {
+                if (m->hf_pend_len <= 4 && !strncmp(m->hf_pend, "<!--", m->hf_pend_len)) {
+                    if (m->hf_pend_len == 4) {                 /* a comment */
+                        m->dropped += 4;
+                        m->hf_pend_len = 0;
+                        m->hf_dashes = 0;
+                        m->hf = HF_COMMENT;
+                    }
+                    break;
+                }
+                hf_flush_pending(m);                            /* <!doctype ...> */
+                m->hf = HF_TEXT;
+                break;
+            }
+            if (isalnum((unsigned char)c) || (c == '/' && m->hf_pend_len == 2)) {
+                if (m->hf_pend_len < 16) break;                 /* still in the name */
+                hf_flush_pending(m);
+                m->hf = HF_TEXT;
+                break;
+            }
+            /* The name is complete. */
+            char name[16];
+            hf_pending_name(m, name, sizeof name);
+            bool closing = m->hf_pend[1] == '/';
+            if (!closing && (!strcmp(name, "script") || hf_skipped_tag(name))) {
+                /* Read the whole start tag first: <script type="ld+json"> is
+                 * kept, and <svg .../> has no end tag to wait for. */
+                snprintf(m->hf_name, sizeof m->hf_name, "%s", name);
+                m->hf = HF_OPEN_TAG;
+                if (c != '>') break;
+                /* fall through to decide on "<script>" right away */
+            } else {
+                bool restart = c == '<';                        /* "<a<b": start again */
+                if (restart) m->hf_pend_len--;
+                hf_flush_pending(m);
+                m->hf = HF_TEXT;
+                if (restart) {
+                    m->hf_pend[0] = '<';
+                    m->hf_pend_len = 1;
+                    m->hf = HF_TAG;
+                }
+                break;
+            }
+        }
+        /* fall through */
+
+        case HF_OPEN_TAG:
+            if (m->hf == HF_OPEN_TAG && c != '>' ) {
+                if (m->hf_pend_len + 1 < sizeof m->hf_pend) m->hf_pend[m->hf_pend_len++] = c;
+                break;
+            }
+            if (m->hf_pend[m->hf_pend_len - 1] != '>' && m->hf_pend_len + 1 < sizeof m->hf_pend)
+                m->hf_pend[m->hf_pend_len++] = c;
+            m->hf_pend[m->hf_pend_len] = 0;
+            if (!strcmp(m->hf_name, "script")) {
+                bool jsonld = false;
+                for (size_t k = 0; k + 7 <= m->hf_pend_len; k++)
+                    if (!strncasecmp(m->hf_pend + k, "ld+json", 7)) { jsonld = true; break; }
+                if (jsonld && m->jsonld < 8) {                  /* keep it, as text */
+                    m->jsonld++;
+                    hf_flush_pending(m);
+                    m->hf = HF_TEXT;
+                    break;
+                }
+            } else if (m->hf_pend_len >= 2 && m->hf_pend[m->hf_pend_len - 2] == '/') {
+                m->dropped += m->hf_pend_len;                   /* <svg ... />: nothing to skip */
+                m->hf_pend_len = 0;
+                m->hf = HF_TEXT;
+                break;
+            }
+            hf_start_skip(m, m->hf_name);
+            break;
+
+        case HF_COMMENT:
+            m->dropped++;
+            if (c == '-') m->hf_dashes++;
+            else if (c == '>' && m->hf_dashes >= 2) m->hf = HF_TEXT;
+            else m->hf_dashes = 0;
+            break;
+
+        case HF_SKIP: {
+            m->dropped++;
+            size_t cl = strlen(m->hf_close);
+            char lc = (char)tolower((unsigned char)c);
+            if (lc == m->hf_close[m->hf_match]) m->hf_match++;
+            else m->hf_match = lc == '<' ? 1 : 0;
+            if (m->hf_match == cl) m->hf = HF_SKIP_END;
+            break;
+        }
+
+        case HF_SKIP_END:
+            m->dropped++;
+            if (c == '>') m->hf = HF_TEXT;
+            break;
+        }
+        run = i + 1;
+    }
+    if (m->hf == HF_TEXT && run < n && !m->truncated) mem_append(m, p + run, n - run);
+}
+
+static bool content_type_is_html(const char *ct) {
+    return ct && (strstr(ct, "html") != NULL || strstr(ct, "HTML") != NULL);
+}
+
 static size_t wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
     size_t n = sz * nm;
     mem_t *m = (mem_t*)ud;
@@ -591,38 +806,31 @@ static size_t wr_cb(void *ptr, size_t sz, size_t nm, void *ud) {
     if (m->truncated) return 0;
 
     /* 4.3: a file to download is not read into memory: stop here and ask. */
-    if (m->len == 0 && !g_resp.download) response_check_download();
+    if (m->len == 0 && m->raw == 0 && !g_resp.download) response_check_download();
     if (g_resp.download) return 0;
 
     if (!m->limit) {
         /* A page fetch that turns out to be a JPEG/PNG/GIF may use the image
          * cap, so a direct image URL is decoded from this download instead of
          * being fetched a second time. */
-        m->limit = bytes_look_like_image((const unsigned char *)ptr, n)
-                       ? IMAGE_DOWNLOAD_MAX : MAX_BYTES;
+        bool image = bytes_look_like_image((const unsigned char *)ptr, n);
+        m->limit = image ? IMAGE_DOWNLOAD_MAX : MAX_BYTES;
+        /* 4.5: HTML pages are filtered while they arrive. */
+        const char *ct = g_fetch_meta.content_type;
+        size_t k = 0;
+        while (k < n && isspace((unsigned char)((const char *)ptr)[k])) k++;
+        m->filter = !image && (content_type_is_html(ct) ||
+                               (!ct[0] && k < n && ((const char *)ptr)[k] == '<'));
+        m->hf = HF_TEXT;
     }
 
-    size_t keep = n;
-    if (m->len + keep > m->limit) {
-        keep = m->limit - m->len;
-        m->truncated = true;
+    m->raw += n;
+    if (m->filter) {
+        html_filter_feed(m, (const char *)ptr, n);
+        if (m->raw >= RAW_PAGE_MAX) m->truncated = true;   /* enough waiting */
+        return m->truncated ? 0 : n;
     }
-
-    if (m->len + keep + 1 > m->cap) {
-        size_t cap = m->cap ? m->cap : 4096;
-        while (cap < m->len + keep + 1) cap *= 2;
-        if (cap > m->limit + 1) cap = m->limit + 1;
-        char *p = (char*)realloc(m->buf, cap);
-        if (!p) {
-            m->truncated = true;
-            return 0;
-        }
-        m->buf = p;
-        m->cap = cap;
-    }
-    memcpy(m->buf + m->len, ptr, keep);
-    m->len += keep;
-    m->buf[m->len] = 0;
+    mem_append(m, (const char *)ptr, n);
     return m->truncated ? 0 : n;
 }
 
@@ -698,9 +906,11 @@ typedef struct {
     char *html;                   /* 4.4: the HTML, for reader mode */
     size_t html_len;
     bool reader_offer;            /* 4.4: show the "Simplified view" chip */
+    char refresh[URL_MAX];        /* 4.5: <meta http-equiv="refresh"> target */
+    int refresh_delay;            /* its delay in seconds, -1: none */
 } page_t;
 
-#define PAGE_STRINGS_MAX (64 * 1024)
+#define PAGE_STRINGS_MAX (128 * 1024)
 
 /* Store s in the page's string pool. Returns its offset, or -1 when out of
  * memory / over the pool limit. Offset 0 is always the empty string. */
@@ -1886,7 +2096,7 @@ static bool html_head_tag(const char *tag) {
 #define PARSE_STACK_MAX  64   /* open elements tracked by the parser */
 #define PARSE_PUSH_MAX   30   /* marker pushes; renderer stacks hold 32 */
 #define PARSE_LIST_MAX    8
-#define TEMPLATE_MAX     (320 * 1024)
+#define TEMPLATE_MAX     (1024 * 1024)
 
 typedef struct {
     char tag[12];
@@ -2159,6 +2369,37 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
     if (ps->in_head && !html_head_tag(tag)) ps->in_head = false;
     if (!strcmp(tag, "body")) ps->in_head = false;
     if (!strcmp(tag, "head")) { ps->in_head = true; return; }
+
+    /* 4.5: <meta http-equiv="refresh" content="0; url=...">, the redirect
+     * pages use instead of JavaScript. */
+    if (!strcmp(tag, "meta")) {
+        static char equiv[16], content[URL_MAX + 32];   /* static: small app stack */
+        if (tag_attribute(attributes, tag_end, "http-equiv", equiv, sizeof equiv) == 1 &&
+            !strcasecmp(equiv, "refresh") &&
+            tag_attribute(attributes, tag_end, "content", content, sizeof content) == 1) {
+            int delay = atoi(content);
+            const char *u = strchr(content, ';');
+            if (!u) u = strchr(content, ',');
+            if (u) {
+                u++;
+                while (*u == ' ') u++;
+                if (!strncasecmp(u, "url", 3)) {
+                    u += 3;
+                    while (*u == ' ') u++;
+                    if (*u == '=') u++;
+                    while (*u == ' ') u++;
+                }
+                size_t n = strlen(u);
+                if (n && (u[0] == '\'' || u[0] == '"')) { u++; n -= 2; }   /* url='...' */
+                if (n > 0 && n < sizeof page->refresh && page->refresh_delay < 0) {
+                    memcpy(page->refresh, u, n);
+                    page->refresh[n] = 0;
+                    page->refresh_delay = delay < 0 ? 0 : delay;
+                }
+            }
+        }
+        return;
+    }
 
     /* Raw-text elements: their content is never markup or page text. */
     if (!strcmp(tag, "script") || !strcmp(tag, "style") || !strcmp(tag, "title")) {
@@ -2457,6 +2698,7 @@ __attribute__((noinline)) static page_t *html_to_page(const char *html, const ch
     size_t length = strlen(html);
     page_t *page = (page_t*)calloc(1, sizeof(page_t));
     if (!page) return NULL;
+    page->refresh_delay = -1;
 
     html_parser_t *ps = (html_parser_t *)calloc(1, sizeof(html_parser_t));
     if (!ps) { free(page); return NULL; }
@@ -6279,6 +6521,14 @@ __attribute__((noinline)) static char *page_info_extend(char *text, size_t cap, 
         format_kb(size_b, sizeof size_b, (curl_off_t)g_fetch_meta.wire_bytes);
         PI_APPEND("Transferred: %s (compressed)\n", size_b);
     }
+    if (g_fetch_meta.filtered_bytes) {
+        format_kb(size_b, sizeof size_b, (curl_off_t)g_fetch_meta.filtered_bytes);
+        PI_APPEND("Left out: %s of scripts, styles and SVG\n", size_b);
+    }
+    if (g_fetch_meta.cut) {
+        format_kb(size_b, sizeof size_b, (curl_off_t)MAX_BYTES);
+        PI_APPEND("Cut off: the page is longer than %s\n", size_b);
+    }
     if (source && source->html) {
         format_kb(size_b, sizeof size_b, (curl_off_t)source->html_len);
         PI_APPEND("HTML: %s, %d images, %d links\n", size_b, source->image_count, source->link_count);
@@ -7598,6 +7848,9 @@ typedef struct browser_s {
     long long dl_size;          /* -1: unknown */
 
     bool reader_chip_hidden;    /* 4.4: "Simplified view" chip dismissed */
+    bool refresh_pending;       /* 4.5: this load follows a <meta refresh> */
+    int refresh_hops;           /* 4.5: meta refreshes followed in a row */
+    bool refresh_replace;       /* 4.5: the next page replaces the history entry */
 
     char status_message[64];
     Uint64 status_message_until;
@@ -8782,8 +9035,13 @@ __attribute__((noinline)) static void bg_step(browser_t *b) {
 static void browser_commit_navigation(browser_t *b, int hist_target, bool history_navigation) {
     if (hist_target >= 0 && hist_target < g_hist_len)
         g_hist_pos = hist_target;             /* Back / Forward */
+    else if (b->refresh_replace && g_hist_pos >= 0 && g_hist_pos < g_hist_len)
+        /* 4.5: an immediate <meta refresh> replaces the page it came from,
+         * so Back does not land on the redirect page again. */
+        snprintf(g_hist[g_hist_pos], sizeof g_hist[g_hist_pos], "%s", b->url_buf);
     else if (!history_navigation)
         history_push(b->url_buf);
+    b->refresh_replace = false;
     b->view = VIEW_WEB;
     b->view_return_url[0] = 0;
     b->error_page = false;
@@ -9270,7 +9528,7 @@ __attribute__((noinline)) static void browser_set_zoom(browser_t *b, int scale) 
  * The best container becomes the simplified page: title, text and images,
  * without the navigation, footers and widgets inside it.
  */
-#define RD_MAX_NODES 512
+#define RD_MAX_NODES 1536   /* 4.5: was 512, pages are up to 256 KB now */
 
 typedef struct {
     int parent;
@@ -9282,7 +9540,7 @@ typedef struct {
     char tag[12];
 } rd_node_t;
 
-static rd_node_t g_rd[RD_MAX_NODES];
+static rd_node_t *g_rd;   /* RD_MAX_NODES entries, allocated on first use */
 static int g_rd_count;
 
 static bool rd_name_is(const char *name, const char *const *list) {
@@ -9334,6 +9592,8 @@ __attribute__((noinline)) static int rd_analyze(const char *html, size_t n) {
     int depth = 0;
     g_rd_count = 0;
     if (!html || !n) return -1;
+    if (!g_rd) g_rd = (rd_node_t *)malloc(RD_MAX_NODES * sizeof(rd_node_t));
+    if (!g_rd) return -1;
     memset(&g_rd[0], 0, sizeof g_rd[0]);
     g_rd[0].parent = -1;
     g_rd[0].end = n;
@@ -9478,19 +9738,178 @@ static void html_escape_into(char *out, size_t cap, const char *in) {
     out[o] = 0;
 }
 
+/* 4.5: many news sites put the whole article in JSON-LD for search engines
+ * (<script type="application/ld+json"> {"articleBody": "..."}), also when
+ * the page itself is built by JavaScript.  The HTML filter keeps those
+ * blocks.  Returns a malloc'd UTF-8 copy of the longest articleBody (or
+ * NULL), and the "headline" in title. */
+static const char *mb_memmem(const char *h, size_t hn, const char *n, size_t nn) {
+    if (!nn) return h;
+    for (size_t i = 0; i + nn <= hn; i++)
+        if (h[i] == n[0] && !memcmp(h + i, n, nn)) return h + i;
+    return NULL;
+}
+
+static size_t json_string_decode(const char *p, const char *end, char *out, size_t cap,
+                                 const char **after) {
+    size_t o = 0;
+    while (p < end && *p != '"') {
+        unsigned cp;
+        if (*p == '\\' && p + 1 < end) {
+            p++;
+            switch (*p) {
+                case 'n': cp = '\n'; p++; break;
+                case 't': cp = ' '; p++; break;
+                case 'r': cp = ' '; p++; break;
+                case 'b': case 'f': cp = ' '; p++; break;
+                case 'u': {
+                    cp = 0;
+                    int k = 0;
+                    for (p++; k < 4 && p < end && isxdigit((unsigned char)*p); k++, p++)
+                        cp = cp * 16 + (unsigned)(isdigit((unsigned char)*p) ? *p - '0'
+                                                                             : (tolower((unsigned char)*p) - 'a' + 10));
+                    if (cp >= 0xD800 && cp < 0xDC00 && p + 6 <= end && p[0] == '\\' && p[1] == 'u') {
+                        unsigned lo = (unsigned)strtoul((char[5]){ p[2], p[3], p[4], p[5], 0 }, NULL, 16);
+                        if (lo >= 0xDC00 && lo < 0xE000) {
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            p += 6;
+                        }
+                    }
+                    break;
+                }
+                default: cp = (unsigned char)*p++; break;   /* \" \\ \/ */
+            }
+        } else {
+            cp = (unsigned char)*p++;
+            if (out && o < cap) out[o] = (char)cp;
+            o++;
+            continue;
+        }
+        char tmp[4];
+        size_t k = utf8_encode(cp, tmp);
+        for (size_t j = 0; j < k; j++) {
+            if (out && o < cap) out[o] = tmp[j];
+            o++;
+        }
+    }
+    if (after) *after = p < end ? p + 1 : end;
+    return o;
+}
+
+/* The value of "key": "..." after p (within end), or NULL. */
+static const char *json_find_string(const char *p, const char *end, const char *key) {
+    size_t kl = strlen(key);
+    while (p && p < end) {
+        const char *k = mb_memmem(p, (size_t)(end - p), key, kl);
+        if (!k) return NULL;
+        const char *q = k + kl;
+        if (k > p && k[-1] == '"' && q < end && *q == '"') {
+            q++;
+            while (q < end && (*q == ' ' || *q == '\n' || *q == '\r' || *q == '\t')) q++;
+            if (q < end && *q == ':') {
+                q++;
+                while (q < end && (*q == ' ' || *q == '\n' || *q == '\r' || *q == '\t')) q++;
+                if (q < end && *q == '"') return q + 1;
+            }
+        }
+        p = k + kl;
+    }
+    return NULL;
+}
+
+static char *jsonld_article(const char *html, size_t n, char *title, size_t tcap, size_t *chars) {
+    const char *end = html + n;
+    const char *best = NULL;
+    size_t best_len = 0;
+    if (title && tcap) title[0] = 0;
+    if (chars) *chars = 0;
+    for (const char *p = html; p && p < end; ) {
+        const char *s0 = mb_memmem(p, (size_t)(end - p), "ld+json", 7);
+        if (!s0) break;
+        const char *open = memchr(s0, '>', (size_t)(end - s0));
+        if (!open) break;
+        const char *close = mb_memmem(open, (size_t)(end - open), "</script", 8);
+        if (!close) close = end;
+        const char *v = json_find_string(open, close, "articleBody");
+        if (v) {
+            size_t len = json_string_decode(v, close, NULL, 0, NULL);
+            if (len > best_len) {
+                best = v;
+                best_len = len;
+                const char *h = json_find_string(open, close, "headline");
+                if (h && title && tcap) {
+                    size_t tl = json_string_decode(h, close, title, tcap - 1, NULL);
+                    title[tl < tcap - 1 ? tl : tcap - 1] = 0;
+                }
+            }
+        }
+        p = close;
+        if (p < end) p++;
+    }
+    if (!best || best_len < 200) return NULL;
+    char *out = (char *)malloc(best_len + 1);
+    if (!out) return NULL;
+    json_string_decode(best, end, out, best_len, NULL);
+    out[best_len] = 0;
+    if (chars) *chars = best_len;
+    return out;
+}
+
 /* Called for every new page: should the "Simplified view" chip show? */
 static void reader_check_offer(page_t *pg) {
     pg->reader_offer = false;
     if (!pg->html) return;
     int best = rd_analyze(pg->html, pg->html_len);
-    if (best < 0) return;
-    const rd_node_t *nd = &g_rd[best];
-    int all = g_rd[0].total_text;
-    if (nd->total_text >= 1000 && nd->total_paras >= 4 && all >= nd->total_text + nd->total_text / 4) {
-        pg->reader_offer = true;
-        printf("[mini_browser] reader: offered (%d of %d characters, %d paragraphs)\n",
-               nd->total_text, all, nd->total_paras);
+    if (best >= 0) {
+        const rd_node_t *nd = &g_rd[best];
+        int all = g_rd[0].total_text;
+        if (nd->total_text >= 1000 && nd->total_paras >= 4 && all >= nd->total_text + nd->total_text / 4) {
+            pg->reader_offer = true;
+            printf("[mini_browser] reader: offered (%d of %d characters, %d paragraphs)\n",
+                   nd->total_text, all, nd->total_paras);
+            return;
+        }
     }
+    /* 4.5: or an article in the JSON-LD that the page text does not show. */
+    size_t chars = 0;
+    char *body = jsonld_article(pg->html, pg->html_len, NULL, 0, &chars);
+    if (body && chars >= 800 && (best < 0 || (int)chars > g_rd[best].total_text)) {
+        pg->reader_offer = true;
+        printf("[mini_browser] reader: offered (JSON-LD article, %u characters)\n", (unsigned)chars);
+    }
+    free(body);
+}
+
+/* 4.5: a simplified page from plain article text: blank lines start a new
+ * paragraph, single line breaks stay. */
+static page_t *reader_from_text(const page_t *src, const char *headline, const char *body) {
+    static char title[400], head[400];
+    html_escape_into(title, sizeof title, src->title[0] ? src->title : "Simplified view");
+    html_escape_into(head, sizeof head, headline && headline[0] ? headline : title);
+    size_t n = strlen(body);
+    size_t cap = n * 6 + 2 * sizeof title + 200;
+    char *html = (char *)malloc(cap);
+    if (!html) return NULL;
+    size_t o = (size_t)snprintf(html, cap, "<html><head><title>%s</title></head><body><h1>%s</h1><p>",
+                                title, head);
+    for (size_t i = 0; i < n && o + 16 < cap; i++) {
+        char c = body[i];
+        if (c == '\n') {
+            if (i + 1 < n && body[i + 1] == '\n') {
+                while (i + 1 < n && body[i + 1] == '\n') i++;
+                memcpy(html + o, "</p><p>", 7); o += 7;
+            } else {
+                memcpy(html + o, "<br>", 4); o += 4;
+            }
+        } else if (c == '<') { memcpy(html + o, "&lt;", 4); o += 4; }
+        else if (c == '>') { memcpy(html + o, "&gt;", 4); o += 4; }
+        else if (c == '&') { memcpy(html + o, "&amp;", 5); o += 5; }
+        else html[o++] = c;
+    }
+    o += (size_t)snprintf(html + o, cap - o, "</p></body></html>");
+    page_t *pg = html_to_page(html, src->base);
+    free(html);
+    return pg;
 }
 
 /* The simplified page for the page on screen, or NULL. */
@@ -9498,6 +9917,19 @@ __attribute__((noinline)) static page_t *reader_build(const page_t *src) {
     static char title[400];
     if (!src || !src->html) return NULL;
     int best = rd_analyze(src->html, src->html_len);
+    {   /* 4.5: the JSON-LD article, when it has more text than the page shows */
+        static char headline[256];
+        size_t chars = 0;
+        char *body = jsonld_article(src->html, src->html_len, headline, sizeof headline, &chars);
+        if (body && (best < 0 || (int)chars > g_rd[best].total_text)) {
+            page_t *pg = reader_from_text(src, headline, body);
+            free(body);
+            if (pg) printf("[mini_browser] reader: built from JSON-LD articleBody, %u characters\n",
+                           (unsigned)chars);
+            return pg;
+        }
+        free(body);
+    }
     if (best < 0) return NULL;
     const rd_node_t *nd = &g_rd[best];
     size_t len = nd->end > nd->start ? nd->end - nd->start : 0;
@@ -9898,7 +10330,9 @@ static const char k_help_html[] =
     "<br><h2>Good to know</h2><p>"
     "- No JavaScript: pages that need it may show little or nothing; "
     "the simplified view (WHY+V) often helps.<br>"
-    "- The first 64 KB of a page is shown.<br>"
+    "- Scripts, styles and SVG are left out while a page loads; up to "
+    "256 KB of the rest is shown (WHY+I says how much was left out).<br>"
+    "- A page that redirects with a refresh tag is followed automatically.<br>"
     "- The badge has no clock: cookie and cache times start from the "
     "first web page that sends the date.<br>"
     "- The last 3 pages are kept for a fast WHY+B / WHY+G.</p>"
@@ -10027,6 +10461,8 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     b->bf_navigation = false;
     b->history_navigation = false;
     b->hist_target = -1;
+    if (!b->refresh_pending) b->refresh_hops = 0;   /* 4.5: a new chain of meta refreshes */
+    b->refresh_pending = false;
 
     trim_inplace(b->url_buf);
     if (!b->url_buf[0]) return;
@@ -10149,6 +10585,8 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     browser_commit_navigation(b, hist_target, history_navigation);
     b->reader_chip_hidden = false;
     g_fetch_meta.wire_bytes = g_net_wire_bytes;
+    g_fetch_meta.filtered_bytes = (unsigned)m.dropped;
+    g_fetch_meta.cut = m.truncated && !g_load.stopped;
     int stale = bfcache_find(b->url_buf);   /* superseded by this load */
     if (stale >= 0) bfcache_free(&g_bfcache[stale]);
     b->last_http_status = http_status;
@@ -10231,6 +10669,28 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
 
             if (!was_post) visit_record(b->url_buf, pg->title);
             browser_log_page(b, http_status, (unsigned)m.len, m.truncated && g_load.stopped ? " (stopped)" : "");
+            /* 4.5: what the filter did, for the site survey. */
+            printf("[mini_browser] page stats: received=%u kept=%u dropped=%u cut=%s text=%u "
+                   "links=%d/%d jsonld=%d%s\n",
+                   (unsigned)m.raw, (unsigned)m.len, (unsigned)m.dropped,
+                   m.truncated && !g_load.stopped ? "yes" : "no",
+                   (unsigned)(pg->text ? strlen(pg->text) : 0), pg->link_count, MAX_LINKS,
+                   m.jsonld, m.raw ? "" : " (cache)");
+            /* 4.5: <meta http-equiv="refresh"> with a short delay: follow it,
+             * at most three times in a row (no loops). */
+            if (pg->refresh[0] && pg->refresh_delay <= 5 && !was_post) {
+                static char target[URL_MAX];
+                if (b->refresh_hops < 3 && resolve_url(pg->base, pg->refresh, target, sizeof target) &&
+                    is_http_scheme(target) && strcmp(target, b->url_buf) != 0) {
+                    printf("[mini_browser] meta refresh: %s\n", target);
+                    b->refresh_hops++;
+                    b->refresh_pending = true;
+                    browser_navigate(b, target);
+                    b->refresh_replace = pg->refresh_delay == 0;
+                } else {
+                    printf("[mini_browser] meta refresh: not followed (%s)\n", pg->refresh);
+                }
+            }
         }
     }
 

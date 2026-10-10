@@ -81,6 +81,16 @@ CONFIG = {
         "test_cookie_restart": False,
     },
 
+    # Mini Browser 4.5: test pages to upload to minibrowser.macip.net
+    # (phase45-heavy.html, phase45-jsonld.html, phase45-refresh.html).
+    "v45": {
+        "heavy_page": "phase45-heavy.html",
+        "jsonld_page": "phase45-jsonld.html",
+        "refresh_page": "phase45-refresh.html",
+        "refresh_target": "phase5-info.php",
+        "max_links": 384,
+    },
+
     # Mini Browser 4.4: find, focus, zoom, simplified view, saved pages, share.
     "v44": {
         # Page on minibrowser.macip.net for find, zoom, save, share and page
@@ -1978,10 +1988,11 @@ def phase2_link_limits(badge):
     require_content(content, "START LIMITS", "END LIMITS")
 
     links, actions, forms = phase2_parser_counts(badge)
-    if links != 128:
-        raise RuntimeError(f"MAX_LINKS expected 128, parser reported {links}")
-    if actions != 128:
-        raise RuntimeError(f"Expected 128 link actions, parser reported {actions}")
+    # 4.5 raised MAX_LINKS from 128 to 384: the page's links all fit now.
+    if links < 128 or links > CONFIG["v45"]["max_links"]:
+        raise RuntimeError(f"Expected 128..{CONFIG['v45']['max_links']} links, parser reported {links}")
+    if actions != links:
+        raise RuntimeError(f"Expected {links} link actions, parser reported {actions}")
     if forms != 0:
         raise RuntimeError(f"Expected no forms, parser reported {forms}")
 
@@ -3395,6 +3406,73 @@ def v44_cases(badge):
     ]
 
 
+def v45_page_stats(badge):
+    line = badge.wait_for(r"\[mini_browser\] page stats: received=(\d+) kept=(\d+) dropped=(\d+) cut=(yes|no) "
+                          r"text=(\d+) links=(\d+)/(\d+) jsonld=(\d+)", 15)
+    m = re.search(r"received=(\d+) kept=(\d+) dropped=(\d+) cut=(yes|no) text=(\d+) "
+                  r"links=(\d+)/(\d+) jsonld=(\d+)", line)
+    return {k: (m.group(i) if k == "cut" else int(m.group(i)))
+            for i, k in enumerate(["received", "kept", "dropped", "cut", "text",
+                                   "links", "max_links", "jsonld"], 1)}
+
+
+def v45_heavy_page(badge):
+    """240 KB of styles/scripts/SVG before the text: 4.4 showed nothing."""
+    page = CONFIG["v45"]["heavy_page"]
+    badge.clear_log()
+    v41_open_page(badge, page)
+    stats = v45_page_stats(badge)
+    content = latest_content_block(badge)
+    require_content(content, "START HEAVY", "END HEAVY")
+    if stats["dropped"] < 200000 or stats["cut"] != "no":
+        raise RuntimeError(f"Expected over 200 KB left out and no cut: {stats}")
+    if stats["links"] < 300:
+        raise RuntimeError(f"Expected 321 links (over the old limit of 128), got {stats['links']}")
+    return [f"{stats['dropped'] // 1024} KB of scripts, styles and SVG left out while loading",
+            f"text shown, {stats['links']} links (limit {stats['max_links']})"]
+
+
+def v45_jsonld(badge):
+    """A page built by JavaScript: the simplified view uses its JSON-LD article."""
+    page = CONFIG["v45"]["jsonld_page"]
+    badge.clear_log()
+    v41_open_page(badge, page)
+    badge.wait_for(r"reader: offered \(JSON-LD article", 10)
+    badge.clear_log()
+    badge.why("V")
+    badge.wait_for(r"reader: built from JSON-LD articleBody", 15)
+    badge.wait_for(r"END JSONLD ARTICLE", 15)
+    badge.view("simplified view from JSON-LD")
+    badge.why("V")
+    badge.settle(0.8)
+    return ["Simplified view offered for a JavaScript-only page",
+            "WHY+V showed the article from its JSON-LD"]
+
+
+def v45_meta_refresh(badge):
+    """<meta http-equiv="refresh" content="0; url=..."> is followed."""
+    cfg = CONFIG["v45"]
+    badge.clear_log()
+    badge.why("E")
+    badge.settle(0.5)
+    badge.type_text("minibrowser.macip.net/" + cfg["refresh_page"])
+    badge.settle(0.2)
+    badge.enter()
+    badge.wait_for(r"meta refresh: \S*" + re.escape(cfg["refresh_target"]), 60)
+    badge.wait_for(r"HTTP 200.*" + re.escape(cfg["refresh_target"]), 60)
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.view(cfg["refresh_target"])
+    return [f"{cfg['refresh_page']} moved on to {cfg['refresh_target']}"]
+
+
+def v45_cases(badge):
+    return [
+        ("4.5 Heavy page: scripts and styles left out while loading", lambda: v45_heavy_page(badge)),
+        ("4.5 JavaScript-only page: simplified view from JSON-LD", lambda: v45_jsonld(badge)),
+        ("4.5 Meta refresh is followed", lambda: v45_meta_refresh(badge)),
+    ]
+
+
 def v41_cases(badge):
     cases = [
         ("4.1 Omnibox: search from empty bar (WHY+L)", lambda: v41_search_empty_bar(badge)),
@@ -3527,6 +3605,7 @@ def test_catalog():
     names.extend(description for description, _ in v43_dev2_cases(None))
     names.extend(description for description, _ in v43_dev3_cases(None))
     names.extend(description for description, _ in v44_cases(None))
+    names.extend(description for description, _ in v45_cases(None))
     return names
 
 def parse_args():
@@ -4098,6 +4177,16 @@ def main():
         # Mini Browser 4.4: find, focus, zoom, simplified view, saved pages,
         # share, page information and WHY+K bookmarks.
         for description, test_func in v44_cases(badge):
+            run_test(
+                results,
+                number,
+                description,
+                test_func,
+            )
+            number += 1
+
+        # Mini Browser 4.5: filtered loading, JSON-LD articles, meta refresh.
+        for description, test_func in v45_cases(badge):
             run_test(
                 results,
                 number,

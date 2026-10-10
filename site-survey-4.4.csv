@@ -1,0 +1,21 @@
+group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds
+news,NOS,nos.nl,200,https://nos.nl,65536,,yes,21,1555,cookie,7
+news,NU.nl,nu.nl,200,https://nu.nl,7855,,no,0,10,js,8
+news,de Volkskrant,volkskrant.nl,200,https://volkskrant.nl,65536,,yes,64,1224,,13
+news,BBC News,bbc.com/news,200,https://bbc.com/news,65536,,yes,0,0,js,9
+news,The Guardian,theguardian.com,200,https://theguardian.com,65536,,yes,0,10,js,11
+news,Reuters,reuters.com,401,,,,,,131,,11
+news,CNN lite,lite.cnn.com,200,https://lite.cnn.com,65536,,yes,0,0,js,10
+news,NPR text,text.npr.org,200,https://text.npr.org,6062,,no,28,1426,,10
+news,Al Jazeera,aljazeera.com,200,https://aljazeera.com,65536,,yes,47,2307,,11
+news,AP News,apnews.com,200,https://apnews.com,65536,,yes,0,0,js,9
+tech,Tweakers,tweakers.net,200,https://tweakers.net,65536,,yes,83,1705,,12
+tech,Hacker News,news.ycombinator.com,200,https://news.ycombinator.com,34700,,no,128,3338,,15
+tech,Lobsters,lobste.rs,200,https://lobste.rs,58832,,no,0,0,js,11
+tech,LWN.net,lwn.net,timeout,,,,,,,,125
+tech,Ars Technica,arstechnica.com,timeout,,,,,,,,128
+tech,The Register,theregister.com,200,https://minibrowser.macip.net,8078,,no,11,5179,cookie,12
+tech,Heise,heise.de,200,https://heise.de,65536,,yes,23,488,,9
+tech,GitHub,github.com/mactjaap/mini_browser,200,https://github.com/mactjaap/mini_browser,65536,,yes,11,390,js,18
+tech,Wikipedia,en.wikipedia.org/wiki/ESP32,200,https://en.wikipedia.org/wiki/ESP32,65536,,yes,84,2838,,16
+tech,Stack Overflow,stackoverflow.com/questions/tagged/esp32,403,,,,,,166,,20

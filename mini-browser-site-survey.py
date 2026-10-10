@@ -19,6 +19,16 @@ Run it once on 4.4 for a baseline, and again after each 4.5 step:
     ./mini-browser-site-survey.py --label 4.5-dev1
     ./mini-browser-site-survey.py --compare site-survey-4.4.csv site-survey-4.5-dev1.csv
 
+Watching on the badge: --view 10 keeps every site on screen for 10 seconds.
+
+Screenshots: --screenshots takes a WHY+S screenshot of every site (or a
+whole-page WHY+Z one with --full-page) into site-survey-<label>/, with an
+index.html that shows all of them next to their numbers.  Screenshots use
+badge_screenshot.py (same folder) to check and repair the transfer.
+
+    ./mini-browser-site-survey.py --label 4.5-dev1-look --view 10
+    ./mini-browser-site-survey.py --label 4.5-dev1-shots --screenshots
+
 It needs the custom firmware with the serial keyboard bridge (as the
 regression suite) and reuses the regression suite's serial code.  All
 serial output goes to site-survey-<label>.log, the results to
@@ -32,6 +42,7 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -45,7 +56,7 @@ SITES = [
     ("news", "Reuters", "reuters.com"),
     ("news", "CNN lite", "lite.cnn.com"),
     ("news", "NPR text", "text.npr.org"),
-    ("news", "Al Jazeera", "aljazeera.com"),
+    ("news", "DW News", "dw.com/en"),
     ("news", "AP News", "apnews.com"),
     ("tech", "Tweakers", "tweakers.net"),
     ("tech", "Hacker News", "news.ycombinator.com"),
@@ -65,7 +76,7 @@ JS_WORDS = ("enable javascript", "javascript is disabled", "javascript is requir
             "javascript uitgeschakeld", "turn on javascript", "please enable js")
 
 FIELDS = ["group", "name", "address", "status", "final_url", "bytes", "received",
-          "cut", "links", "text", "flags", "seconds"]
+          "cut", "links", "text", "flags", "seconds", "screenshot"]
 
 
 def load_regression():
@@ -76,6 +87,91 @@ def load_regression():
     return module
 
 
+def load_screenshot_module():
+    path = os.path.join(HERE, "badge_screenshot.py")
+    spec = importlib.util.spec_from_file_location("mb_screenshot", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def take_lines(badge):
+    """All serial lines received so far, removed from the badge's log."""
+    with badge.lock:
+        lines = badge.lines
+        badge.lines = []
+    return lines
+
+
+def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
+    """WHY+S (or WHY+Z) and receive the IMG transfer from the serial log.
+    Returns a short status text."""
+    take_lines(badge)
+    badge.why("Z" if full_page else "S")
+    state = None
+    tried = []
+    last_activity = time.monotonic()
+    end_wait = None
+    error = None
+    while True:
+        lines = take_lines(badge)
+        if lines:
+            last_activity = time.monotonic()
+        for raw in lines:
+            line = raw.strip()
+            kind, value = shot.parse_line(line, state)
+            if kind == "fail":
+                return f"failed: {value}"
+            if kind == "begin":
+                state = shot.TransferState(value)
+                tried, end_wait = [], None
+            elif kind == "end" and state is not None:
+                end = shot.parse_end(value, state.header)
+                if end is not None and end not in tried:
+                    tried.append(end)
+                    try:
+                        compressed, repaired = shot.assemble(state, end)
+                    except ValueError as exc:
+                        error = exc
+                        end_wait = end_wait or time.monotonic() + 2.0
+                        continue
+                    h = state.header
+                    rgb = shot.decode_rle5(compressed, h.width, h.height)
+                    shot.write_png_rgb(Path(path), h.width, h.height, rgb)
+                    return f"ok ({h.width}x{h.height}, {repaired} repaired)"
+                end_wait = end_wait or time.monotonic() + 2.0
+        now = time.monotonic()
+        if end_wait and now > end_wait:
+            return f"damaged: {error}" if error else "damaged"
+        if now - last_activity > (20.0 if state is None else timeout):
+            return "no screenshot received"
+        time.sleep(0.05)
+
+
+def write_contact_sheet(rows, folder, label):
+    """index.html with every screenshot and its numbers."""
+    import html as htmlmod
+    cards = []
+    for i, r in enumerate(rows, 1):
+        img = r.get("screenshot", "")
+        pic = (f'<img src="{htmlmod.escape(img)}" alt="{htmlmod.escape(r["name"])}">' if img and
+               os.path.exists(os.path.join(folder, img)) else '<div class="none">no screenshot</div>')
+        cards.append(
+            f'<figure>{pic}<figcaption><b>{i}. {htmlmod.escape(r["name"])}</b> '
+            f'<span>{htmlmod.escape(r["address"])}</span><br>status {htmlmod.escape(r["status"])}, '
+            f'{htmlmod.escape(r["text"] or "0")} characters, {htmlmod.escape(r["links"] or "0")} links'
+            f'{", cut off" if r["cut"] == "yes" else ""}'
+            f'{(" - " + htmlmod.escape(r["flags"])) if r["flags"] else ""}</figcaption></figure>')
+    page = f"""<!doctype html><html><head><meta charset="utf-8"><title>Mini Browser {htmlmod.escape(label)}</title>
+<style>body{{font-family:system-ui,sans-serif;background:#111;color:#ddd;margin:16px}}
+h1{{font-size:20px}} .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}}
+figure{{margin:0;background:#1c1c1c;padding:8px;border-radius:6px}} img{{width:100%;image-rendering:pixelated}}
+figcaption{{font-size:13px;margin-top:6px}} span{{color:#888}} .none{{height:300px;display:flex;align-items:center;justify-content:center;color:#666;border:1px dashed #444}}</style>
+</head><body><h1>Mini Browser site survey - {htmlmod.escape(label)}</h1><div class="grid">{''.join(cards)}</div></body></html>"""
+    with open(os.path.join(folder, "index.html"), "w", encoding="utf-8") as f:
+        f.write(page)
+
+
 def text_of(content):
     """Readable characters in a CONTENT block (no spaces, no [n] numbers)."""
     joined = " ".join(content)
@@ -83,23 +179,51 @@ def text_of(content):
     return sum(1 for ch in joined if not ch.isspace())
 
 
+def restart_browser(badge):
+    """After a crash: Enter in the BadgeVMS menu starts Mini Browser again."""
+    badge.settle(3.0)
+    for attempt in range(3):
+        badge.clear_log()
+        badge.enter()
+        try:
+            badge.wait_for(r"\[mini_browser\] enter main", 20)
+            badge.wait_for(r"^--- CONTENT END ---$", 60)   # its home page
+            badge.settle(2.0)
+            sys.__stdout__.write("(Mini Browser crashed and was started again) ")
+            return True
+        except TimeoutError:
+            continue
+    sys.__stdout__.write("(Mini Browser crashed; start it again on the badge) ")
+    return False
+
+
 def survey_site(reg, badge, group, name, address):
     row = {"group": group, "name": name, "address": address, "status": "", "final_url": "",
            "bytes": "", "received": "", "cut": "", "links": "", "text": "", "flags": "",
-           "seconds": ""}
+           "seconds": "", "screenshot": ""}
     started = time.monotonic()
     reg.v41_type_in_omnibox(badge, address, "L")
     badge.clear_log()
     badge.enter()
     try:
         line = badge.wait_for(
-            r"\[mini_browser\] (HTTP \d+, \d+ bytes|HTTP \d+ URL=|fetch error \d+|download: offered)",
+            r"\[mini_browser\] (HTTP \d+, \d+ bytes|HTTP \d+ URL=|fetch error \d+|download: offered)"
+            r"|caused an unhandled exception",
             120)
     except TimeoutError:
         row["status"] = "timeout"
         row["seconds"] = f"{time.monotonic() - started:.0f}"
         badge.press(0x29)                      # Esc: stop the load
         badge.settle(2.0)
+        return row
+
+    if "unhandled exception" in line:
+        # Mini Browser crashed: BadgeVMS is back in its menu.  Note it, start
+        # Mini Browser again (Enter in the menu) and go on with the next site.
+        row["status"] = "CRASH"
+        row["flags"] = "crash"
+        row["seconds"] = f"{time.monotonic() - started:.0f}"
+        restart_browser(badge)
         return row
 
     m = re.search(r"HTTP (\d+), (\d+) bytes, (\d+) links from (\S+)", line)
@@ -181,6 +305,12 @@ def main():
     parser.add_argument("--compare", nargs=2, metavar=("OLD.csv", "NEW.csv"),
                         help="compare two earlier runs and exit")
     parser.add_argument("--list", action="store_true", help="list the sites and exit")
+    parser.add_argument("--view", type=float, default=0,
+                        help="seconds to keep every site on screen (to watch the badge)")
+    parser.add_argument("--screenshots", action="store_true",
+                        help="take a WHY+S screenshot of every site into site-survey-<label>/")
+    parser.add_argument("--full-page", action="store_true",
+                        help="with --screenshots: whole-page WHY+Z screenshots (slow on long pages)")
     args = parser.parse_args()
 
     if args.list:
@@ -202,6 +332,11 @@ def main():
     real_stdout = sys.stdout
     reg = load_regression()
     reg.VIEW_DELAY = 0
+    shot = None
+    shot_dir = os.path.join(HERE, f"site-survey-{args.label}")
+    if args.screenshots:
+        shot = load_screenshot_module()
+        os.makedirs(shot_dir, exist_ok=True)
     log = open(log_path, "w", encoding="utf-8", errors="replace")
     sys.stdout = log                       # the badge's serial output goes to the log
     badge = reg.Badge()
@@ -213,6 +348,18 @@ def main():
             real_stdout.flush()
             row = survey_site(reg, badge, group, name, address)
             rows.append(row)
+            if args.view > 0:
+                real_stdout.write(f"(on screen for {args.view:g} s) ")
+                real_stdout.flush()
+                time.sleep(args.view)
+            if shot is not None and row["status"] not in ("timeout",):
+                fname = f"{i:02d}-{re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-').lower()}.png"
+                badge.settle(1.5)              # let images and the bar settle
+                result = capture_screenshot(badge, shot, os.path.join(shot_dir, fname), args.full_page)
+                if result.startswith("ok"):
+                    row["screenshot"] = fname
+                real_stdout.write(f"[screenshot {result}] ")
+                real_stdout.flush()
             real_stdout.write(f"{row['status']}, {row['text']} characters"
                               f"{', cut' if row['cut'] == 'yes' else ''}"
                               f"{', ' + row['flags'] if row['flags'] else ''}\n")
@@ -228,6 +375,9 @@ def main():
         w.writerows(rows)
     print_table(rows, real_stdout)
     print(f"\nResults: {csv_path}\nSerial log: {log_path}")
+    if shot is not None:
+        write_contact_sheet(rows, shot_dir, args.label)
+        print(f"Screenshots: {os.path.join(shot_dir, 'index.html')}")
     return 0
 
 

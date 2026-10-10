@@ -10555,10 +10555,17 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
     /* 4.5: an HTML page with NUL bytes in it was damaged on the way (seen on
      * lobste.rs with the firmware's gzip decoder): drop any cached copy and
      * load it once more, uncompressed. */
-    if (rc == 0 && !was_post && m.buf && m.len && !g_load.stopped &&
-        content_type_is_html(g_fetch_meta.content_type) && memchr(m.buf, 0, m.len)) {
-        printf("[mini_browser] net: damaged page (NUL byte at %u of %u), loading it again uncompressed\n",
-               (unsigned)((const char *)memchr(m.buf, 0, m.len) - m.buf), (unsigned)m.len);
+    bool damaged_nul = rc == 0 && m.buf && m.len &&
+                       content_type_is_html(g_fetch_meta.content_type) && memchr(m.buf, 0, m.len);
+    /* The 4.5 firmware checks the gzip CRC and reports a mismatch as
+     * CURLE_BAD_CONTENT_ENCODING. */
+    bool damaged_crc = rc == (int)CURLE_BAD_CONTENT_ENCODING;
+    if ((damaged_nul || damaged_crc) && !was_post && !g_load.stopped) {
+        if (damaged_nul)
+            printf("[mini_browser] net: damaged page (NUL byte at %u of %u), loading it again uncompressed\n",
+                   (unsigned)((const char *)memchr(m.buf, 0, m.len) - m.buf), (unsigned)m.len);
+        else
+            printf("[mini_browser] net: compressed page failed its check, loading it again uncompressed\n");
         int ci = g_cache_ready ? cache_find(cache_hash(g_fetch_meta.effective_url)) : -1;
         if (ci >= 0) cache_drop(ci, true);
         ci = g_cache_ready ? cache_find(cache_hash(b->url_buf)) : -1;

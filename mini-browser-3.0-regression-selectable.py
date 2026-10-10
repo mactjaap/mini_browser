@@ -88,6 +88,7 @@ CONFIG = {
         "jsonld_page": "phase45-jsonld.html",
         "refresh_page": "phase45-refresh.html",
         "refresh_target": "phase5-info.php",
+        "spacing_page": "phase45-spacing.html",
         "max_links": 384,
     },
 
@@ -3465,11 +3466,35 @@ def v45_meta_refresh(badge):
     return [f"{cfg['refresh_page']} moved on to {cfg['refresh_target']}"]
 
 
+def v45_spacing(badge):
+    """An empty <pre></pre> and <br><br> leave one empty line (4.4 dropped it)."""
+    page = CONFIG["v45"]["spacing_page"]
+    badge.clear_log()
+    v41_open_page(badge, page)
+    lines = [l.strip() for l in latest_content_block(badge)]
+    require_content(lines, "SPACE A", "END SPACING")
+    def gap(a, b):
+        i, j = lines.index(a), lines.index(b)
+        return j - i == 2 and lines[i + 1] == ""
+    problems = []
+    if not gap("SPACE A", "SPACE B"):
+        problems.append("no empty line for <pre></pre>")
+    if not gap("SPACE C", "SPACE D"):
+        problems.append("no empty line for <br><br>")
+    if lines.index("SPACE F") - lines.index("SPACE E") != 1:
+        problems.append("an empty line between two paragraphs")
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    return ["<pre></pre> gives one empty line", "<br><br> gives one empty line",
+            "paragraphs stay compact"]
+
+
 def v45_cases(badge):
     return [
         ("4.5 Heavy page: scripts and styles left out while loading", lambda: v45_heavy_page(badge)),
         ("4.5 JavaScript-only page: simplified view from JSON-LD", lambda: v45_jsonld(badge)),
         ("4.5 Meta refresh is followed", lambda: v45_meta_refresh(badge)),
+        ("4.5 Empty <pre> and <br><br> give an empty line", lambda: v45_spacing(badge)),
     ]
 
 

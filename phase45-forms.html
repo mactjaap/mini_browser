@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><title>Mini Browser 4.5 form controls</title></head>
+<body>
+<h1>Form controls test</h1>
+<p>START FORM CONTROLS</p>
+<form action="phase45-forms.html" method="get">
+<p>Name: <input type="text" name="name" value="Badge"></p>
+<p>E-mail: <input type="email" name="mail" value="me@example.org"></p>
+<p>PIN: <input type="password" name="pin" value="1234"></p>
+<p><input type="checkbox" name="news" value="yes"> Send me the newsletter</p>
+<p><input type="checkbox" name="terms" checked> I agree</p>
+<p>Size:
+<input type="radio" name="size" value="s"> Small
+<input type="radio" name="size" value="m" checked> Medium
+<input type="radio" name="size" value="l"> Large</p>
+<p>Country: <select name="country">
+<option value="be">Belgium</option>
+<option value="de">Germany</option>
+<option value="nl" selected>Netherlands</option>
+<option value="uk">United Kingdom</option>
+<option disabled>-- disabled --</option>
+<option>Other</option>
+</select></p>
+<p>Message:</p>
+<textarea name="msg">Hello &amp; welcome</textarea>
+<p><input type="submit" value="Send"></p>
+</form>
+<p>END FORM CONTROLS</p>
+</body></html>

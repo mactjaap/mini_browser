@@ -1,0 +1,21 @@
+group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds,screenshot
+news,NOS,nos.nl,200,https://nos.nl,262144,327680,yes,55,5900,,8,01-nos.png
+news,NU.nl,nu.nl,200,https://nu.nl,1214,7855,no,0,10,js,8,02-nu-nl.png
+news,de Volkskrant,volkskrant.nl,200,https://volkskrant.nl,262144,316131,yes,218,12205,,15,03-de-volkskrant.png
+news,BBC News,bbc.com/news,200,https://bbc.com/news,172186,372457,no,231,10366,,13,04-bbc-news.png
+news,The Guardian,theguardian.com,200,https://theguardian.com,262144,1015808,yes,169,10216,,13,05-the-guardian.png
+news,Reuters,reuters.com,401,,,,,,131,,10,06-reuters.png
+news,CNN lite,lite.cnn.com,200,https://lite.cnn.com,23528,333139,no,105,7163,,12,07-cnn-lite.png
+news,NPR text,text.npr.org,200,https://text.npr.org,4374,6013,no,28,1391,,10,08-npr-text.png
+news,DW News,dw.com/en,200,https://dw.com/en,105795,279976,no,158,6780,js,12,09-dw-news.png
+news,AP News,apnews.com,403,,,,,,129,,8,10-ap-news.png
+tech,Tweakers,tweakers.net,200,https://tweakers.net,138454,398355,no,332,10275,,13,11-tweakers.png
+tech,Hacker News,news.ycombinator.com,200,https://news.ycombinator.com,34689,34762,no,229,3346,,14,12-hacker-news.png
+tech,Lobsters,lobste.rs,200,https://lobste.rs,59223,59536,no,281,4021,,11,13-lobsters.png
+tech,LWN.net,lwn.net,200,https://lwn.net,31659,31873,no,97,17493,,10,14-lwn-net.png
+tech,Ars Technica,arstechnica.com,200,https://arstechnica.com,183136,354339,no,199,10446,,14,15-ars-technica.png
+tech,The Register,theregister.com,200,https://theregister.com,262144,352729,yes,108,5040,,12,16-the-register.png
+tech,Heise,heise.de,200,https://heise.de,262144,393216,yes,149,17449,,11,17-heise.png
+tech,GitHub,github.com/mactjaap/mini_browser,200,https://github.com/mactjaap/mini_browser,254620,521931,no,195,32682,,27,18-github.png
+tech,Wikipedia,en.wikipedia.org/wiki/ESP32,200,https://en.wikipedia.org/wiki/ESP32,262144,294912,yes,244,26097,,19,19-wikipedia.png
+tech,Stack Overflow,stackoverflow.com/questions/tagged/esp32,403,,,,,,153,,20,20-stack-overflow.png

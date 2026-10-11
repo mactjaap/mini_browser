@@ -1,0 +1,3 @@
+group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds
+news,NU.nl,nu.nl,200,https://minibrowser.macip.net,8114,8114,no,11,5186,cookie,9
+tech,Lobsters,lobste.rs,200,https://lobste.rs,58846,59159,no,278,3835,,12

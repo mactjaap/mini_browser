@@ -1,0 +1,11 @@
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-encoding: gzip
+content-security-policy: default-src 'none'; img-src 'self' data:; script-src 'self' 'inline-speculation-rules'; style-src 'self' 'unsafe-inline'
+content-type: text/html; charset=utf-8
+etag: "dm12fcdgaxex19nb-gzip"
+last-modified: Sat, 10 Oct 2026 09:54:00 GMT
+strict-transport-security: max-age=31536000
+vary: Accept-Encoding
+date: Sat, 10 Oct 2026 09:54:46 GMT
+

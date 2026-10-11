@@ -90,6 +90,11 @@ CONFIG = {
         "refresh_target": "phase5-info.php",
         "spacing_page": "phase45-spacing.html",
         "max_links": 384,
+        # 4.5-dev3: form controls and tables (upload these pages too).
+        "forms_page": "phase45-forms.html",
+        "tables_page": "phase45-tables.html",
+        "max_forms": 6,
+        "max_form_fields": 24,
     },
 
     # Mini Browser 4.4: find, focus, zoom, simplified view, saved pages, share.
@@ -1958,9 +1963,16 @@ def phase2_tables(badge):
         "😀",
         "END TABLES",
     )
-    if "|" not in joined:
-        raise RuntimeError("Table cell separators were not emitted")
-    return ["Table rows/cells survived with text separators and Unicode"]
+    # 4.5-dev3: a simple table is shown as columns (cells padded with
+    # spaces); others keep the " | " separators.  Either way the cells of a
+    # row stay on one line.
+    lines = [l for l in content]
+    def same_line(*words):
+        return any(all(w in l for w in words) for l in lines)
+    if not (same_line("Alpha", "123") and same_line("Beta", "456")):
+        raise RuntimeError("Table cells of one row were not kept on one line")
+    style = "' | ' separators" if "|" in joined else "aligned columns"
+    return [f"Table rows/cells survived ({style}) with Unicode"]
 
 
 def phase2_nested_formatting(badge):
@@ -2012,27 +2024,27 @@ def phase2_form_limits(badge):
     require_content(content, "START FORM LIMITS", "END FORM LIMITS")
 
     links, actions, forms = phase2_parser_counts(badge)
-    if forms != 4:
-        raise RuntimeError(f"MAX_FORMS expected 4, parser reported {forms}")
-
-    # Each accepted form contains 10 editable inputs followed by a submit.
-    # MAX_FORM_FIELDS=8 means only the first eight fields are retained; the
-    # later submit is intentionally outside the accepted field budget.
-    if actions != 32:
-        raise RuntimeError(
-            f"Expected 4 forms x 8 editable actions = 32, got {actions}"
-        )
+    # The page has six forms of 10 editable inputs and a submit.  4.5-dev3
+    # raised the limits from 4 forms of 8 fields to 6 forms of 24 fields.
+    max_forms = CONFIG["v45"]["max_forms"]
+    max_fields = CONFIG["v45"]["max_form_fields"]
+    want_forms = min(6, max_forms)
+    want_actions = want_forms * min(11, max_fields)
+    if forms != want_forms:
+        raise RuntimeError(f"MAX_FORMS={max_forms}: expected {want_forms} forms, parser reported {forms}")
+    if actions != want_actions:
+        raise RuntimeError(f"Expected {want_forms} forms x {min(11, max_fields)} actions = {want_actions}, got {actions}")
 
     numbered = numbered_actions(content)
-    if len(numbered) != 32:
+    if len(numbered) != want_actions:
         raise RuntimeError(
-            f"Expected 32 visible form-field actions, found {len(numbered)}"
+            f"Expected {want_actions} visible form actions, found {len(numbered)}"
         )
 
     return [
-        "Six input forms safely capped at MAX_FORMS=4",
-        "Ten fields/form safely capped at MAX_FORM_FIELDS=8",
-        "Resulting action count remained bounded and deterministic at 32",
+        f"Six input forms, MAX_FORMS={max_forms}: {forms} kept",
+        f"Eleven controls/form, MAX_FORM_FIELDS={max_fields}: {want_actions} actions",
+        "Resulting action count remained bounded and deterministic",
     ]
 
 
@@ -3489,12 +3501,83 @@ def v45_spacing(badge):
             "paragraphs stay compact"]
 
 
+def v45_tables(badge):
+    """4.5-dev3: a simple table as aligned columns; others as before."""
+    page = CONFIG["v45"]["tables_page"]
+    badge.clear_log()
+    v41_open_page(badge, page)
+    lines = latest_content_block(badge)
+    require_content(lines, "START TABLES", "END TABLES")
+    def line_with(*words):
+        for l in lines:
+            if all(w in l for w in words):
+                return l
+        raise RuntimeError(f"No line with {words}")
+    a = line_with("Amsterdam", "Netherlands", "931,298")
+    b = line_with("Brussels", "Belgium", "1,222,637")
+    if "|" in a or "|" in b:
+        raise RuntimeError(f"Simple table still has ' | ': {a!r}")
+    if a.index("Netherlands") != b.index("Belgium"):
+        raise RuntimeError(f"Columns not aligned: {a!r} / {b!r}")
+    line_with("short", "|", "short")          # too wide: stays as before
+    return ["Simple table shown as aligned columns",
+            "A table too wide for the screen keeps its ' | ' separators"]
+
+
+def v45_forms(badge):
+    """4.5-dev3: checkbox, radio buttons, drop-down list, password, textarea."""
+    page = CONFIG["v45"]["forms_page"]
+    badge.clear_log()
+    v41_open_page(badge, page)
+    text = "\n".join(latest_content_block(badge))
+    def number(pattern, what):
+        m = re.search(pattern, text)
+        if not m:
+            raise RuntimeError(f"{what} not shown as expected")
+        return m.group(1)
+    news = number(r"\[(\d+)\]\[ \] Send me the newsletter", "unchecked checkbox")
+    number(r"\[\d+\]\[x\] I agree", "checked checkbox")
+    large = number(r"\[(\d+)\]\( \) Large", "radio button")
+    country = number(r"\[(\d+)\] country: \[Netherlands v\]", "drop-down list")
+    number(r"\[\d+\] pin: (\*\*\*\*)", "password (as ****)")
+    number(r"\[\d+\] msg: (Hello & welcome)", "textarea")
+    send = number(r"\[(\d+)\] \[Send\]", "submit button")
+
+    def activate(n):
+        badge.type_text(n)
+        badge.settle(0.2)
+        badge.enter()
+    badge.clear_log()
+    activate(news)
+    badge.wait_for(r"form: checkbox news=yes checked", 10)
+    activate(large)
+    badge.wait_for(r"form: radio size=l checked", 10)
+    activate(country)
+    badge.wait_for(r"form: choosing country", 10)
+    badge.press(0x52)                          # Up: Germany
+    badge.enter()
+    badge.wait_for(r"form: select country=de", 10)
+    badge.clear_log()
+    activate(send)
+    line = badge.wait_for(r"HTTP 200.*" + re.escape(page) + r"\?", 60)
+    wanted = ["news=yes", "terms=on", "size=l", "country=de", "pin=1234", "msg=Hello+%26+welcome"]
+    missing = [w for w in wanted if w not in line]
+    if missing:
+        raise RuntimeError(f"Submitted URL misses {missing}: {line}")
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    return ["Checkbox, radio buttons and drop-down list shown and changed",
+            "Password shown as ****, textarea as a field",
+            "Submitted: " + "&".join(wanted)]
+
+
 def v45_cases(badge):
     return [
         ("4.5 Heavy page: scripts and styles left out while loading", lambda: v45_heavy_page(badge)),
         ("4.5 JavaScript-only page: simplified view from JSON-LD", lambda: v45_jsonld(badge)),
         ("4.5 Meta refresh is followed", lambda: v45_meta_refresh(badge)),
         ("4.5 Empty <pre> and <br><br> give an empty line", lambda: v45_spacing(badge)),
+        ("4.5 Tables shown as columns", lambda: v45_tables(badge)),
+        ("4.5 Form controls: checkbox, radio, drop-down list", lambda: v45_forms(badge)),
     ]
 
 

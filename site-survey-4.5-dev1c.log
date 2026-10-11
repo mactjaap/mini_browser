@@ -1,0 +1,567 @@
+Init: Free main memory: 243668, free PSRAM pages: 428/511, free framebuffer pages: 239/399 running processes 1
+Launching: Mini Browser
+W (889528) ELF: No VMEM info found
+W (889568) task: Start ELF file entrypoint at 0x4a0b7150
+[mini_browser] enter main (version 4.5-dev1, built Oct 10 2026 12:05:48)
+BADGEVMS: Video device created successfully
+BADGEVMS_VideoInit: Starting initialization...
+BADGEVMS_VideoInit: Adding display mode 720x720, format=SDL_PIXELFORMAT_RGB565
+BADGEVMS_VideoInit: Successfully added display ID 1
+W (889628) compositor: Allocated framebuffer at 0x4ff57728, pixels at 0x48f10000, size 17, dimensions 720 x 720
+W (889638) compositor: Allocated framebuffer at 0x4ff57898, pixels at 0x49110000, size 17, dimensions 720 x 720
+W (889638) wifi: Already connected
+[mini_browser] no saved bookmarks at APPS:[mini_browser]bookmarks.txt
+[mini_browser] history: none saved yet
+[mini_browser] cookies: none saved
+[mini_browser] cache: 0 entries, 0 KB of 2048 KB
+[mini_browser] net: progress, stop, gzip and keep-alive available
+[mini_browser] clock: set from the server Date header
+[mini_browser] cache: stored https://minibrowser.macip.net (8114 bytes, 12 KB used, 1 entries)
+[UTF8] CURL: 8114 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 7501 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 7463 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 8114 bytes, 11 links from https://minibrowser.macip.net
+[mini_browser] page title: Mini Browser for WHY2025 badge
+[mini_browser] parser: links=11 actions=15 forms=2
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=0
+[mini_browser] cookies: count=0
+
+--- CONTENT START ---
+Mini Browser
+
+[[MBIMG0]]
+
+Welcome to Mini Browser, a compact web browser for the
+WHY2025 badge. It is designed to explore lightweight and
+server-rendered websites while staying small enough to run
+comfortably on the badge. 
+
+It supports links, bookmarks, Back/Forward history, simple
+GET and POST forms, bounded cookie support, PNG/JPEG/GIF
+images, inline image rendering, multiple display modes,
+56,352 Unicode glyphs, word-aware wrapping, RTL/Bidi text,
+Arabic shaping, monochrome emoji, real bold text, HTTP/TLS
+page information and full-page screenshots.
+
+The current version is Mini Browser 4.4. It adds find in
+page, a simplified view for long articles, text zoom, a
+focus ring for links and fields, pages saved for offline
+reading, sharing a page as a QR code, a page information
+screen with a lock for secure pages, and a built-in help
+page: press WHY+/ (the /? key) to see every key. 
+
+Version 4.3 brought loading progress with a stop key
+(Esc), clear error pages, an instant Back/Forward cache,
+compressed pages, cookies that stay after a restart, a 2
+MB disk cache, downloads, and images that load after the
+text so you can start reading at once. Version 4.1 added
+the omnibox (one bar for addresses and searches, with
+suggestions), a history that survives a restart, and up to
+five tabs. 
+
+= Search the small web
+[1] q: 
+[2] [Search Wiby]
+
+Wiby is a search engine focused on simple, lightweight
+websites and is a good match for Mini Browser. 
+
+
+= Search with Google
+[3] q: 
+[4] [Search Google]
+
+Google can also be searched directly from Mini Browser.
+Search result pages may be more complex than Wiby because
+Google is designed for modern web browsers. 
+
+
+= Recommended
+* [5]Wiby - search the classic web
+* [6]Marginalia Search - lightweight search
+* [7]FrogFind - search and simplify pages
+* [8]Hacker News - technology news and discussion
+* [9]NPR Text - text-oriented news
+* [10]TEXTFILES.COM - historic text files
+* [11]curl - curl project website
+* [12]ifconfig.co - network information
+
+= How to browse
+Links and form controls have numbers. Type a number and
+press Enter to activate it. Use Up and Down to scroll;
+hold an arrow for continuous scrolling. J and K also
+scroll one line at a time. 
+Press WHY+L and type a web address or just some words. An
+address such as wiby.me opens directly; words such as
+esp32 badge become a Google search. While you type,
+matching bookmarks and visited pages appear under the bar:
+use Down and Up to pick one and Enter to open it, or Esc
+to cancel. 
+WHY+T opens a new tab with your bookmarks and recent
+pages. WHY+Tab or WHY+1 to WHY+5 switch tabs, WHY+A shows
+all tabs and WHY+W closes one. 
+While a page loads, the bar shows its progress; press Esc
+to stop. If a page cannot be loaded, an error page tells
+you why; press R or Enter to try again. The text appears
+first and the images follow; the bar shows [img 2/5] while
+they arrive. 
+Press WHY+F to find a word on the page: matches light up
+while you type, n and Shift+N jump to the next and
+previous match, Esc turns them off. Tab and Shift+Tab move
+a ring over the links and fields, Enter opens the one with
+the ring. On a long article a chip offers a simplified
+view: press WHY+V to read just the article, without menus
+and sidebars. WHY+= and WHY+- make the text bigger or
+smaller, WHY+0 returns to 100%. 
+WHY+P saves the text of a page to read later without a
+network; WHY+D lists your saved pages and downloads. WHY+U
+shows a QR code of the page address, so you can open it on
+your phone. WHY+I shows whether the connection is secure,
+how long the page took and which cookies the site set.
+Forgot a key? Press WHY+/ for help. 
+
+= Browser keys
+* WHY+/ - help with all the keys
+* WHY+L - omnibox: type an address or a search
+* WHY+E - enter a new URL
+* WHY+C - edit the current URL
+* WHY+H - home
+* WHY+R - reload
+* WHY+B - back
+* WHY+G - forward
+* Esc - stop loading
+* WHY+T - new tab
+* WHY+W - close tab
+* WHY+Tab - next tab
+* WHY+1 ... WHY+5 - go to tab 1 to 5
+* WHY+A - tab overview
+* WHY+F - find in page (n next, Shift+N previous)
+* Tab / Shift+Tab - next / previous link or field
+* WHY+V - simplified view
+* WHY+= / WHY+- / WHY+0 - bigger / smaller / normal text
+* WHY+K - add or remove bookmark
+* WHY+M - bookmarks
+* WHY+Y - history of visited pages
+* WHY+P - save the page for offline reading
+* WHY+D - downloads and saved pages
+* WHY+U - share the page as a QR code
+* WHY+I - page information
+* WHY+X - clear: history (on the history page), downloads
+and saved pages (on the downloads page), cookies and cache
+(on page information)
+* WHY+O - display mode options
+* WHY+S - capture the visible 716x716 viewport
+* WHY+Z - capture the complete rendered page
+* WHY+Q - quit
+
+= Screenshots
+Press WHY+S to capture the visible 716x716 Mini Browser
+view, or WHY+Z to capture the complete rendered page.
+Screenshots are transmitted over USB serial. The
+repository includes badge_screenshot.py, a standalone
+macOS/Linux receiver that validates the CRC/FEC-protected
+transfer and saves it as a PNG. 
+
+./badge_screenshot.py /dev/cu.wchusbserial10
+./badge_screenshot.py /dev/cu.wchusbserial10 --full-page
+
+Physical WHY+S and WHY+Z screenshots do not require custom
+firmware. An optional customized WHY2025 firmware adds
+host-to-badge keyboard control, so a computer can operate
+Mini Browser remotely. It also includes scripts for
+automated browser tests and automatic screenshots. 
+[13] Customized WHY2025 firmware and test tools  
+
+= About Mini Browser
+Mini Browser combines a built-in ASCII font with an
+external GNU Unifont-based MBCJ font containing 56,352
+usable glyphs across 101 ranges. Text wrapping preserves
+complete words where possible, while CJK and overlong
+tokens safely fall back to glyph wrapping. Hebrew and
+Arabic are rendered right-to-left, with contextual Arabic
+shaping. HTML b and strong text are rendered as genuine
+bold text. 
+Unordered list markers deliberately remain ASCII *
+characters, so basic list rendering does not depend on the
+external Unicode font. 
+Mini Browser intentionally has no JavaScript engine, CSS
+layout engine or full HTML DOM. It focuses on ordinary
+server-rendered HTML, text content, links, PNG, JPEG and
+GIF images and simple GET and POST forms. Pages that need
+JavaScript often still read well in the simplified view
+(WHY+V). 
+[14]Full documentation 
+[15]Source code on GitHub 
+
+
+Mini Browser 4.4 - WHY2025 BadgeVMS 
+
+--- CONTENT END ---
+[mini_browser] page stats: received=8114 kept=8114 dropped=0 cut=no text=7501 links=11/384 jsonld=0
+[mini_browser] image: fetching https://minibrowser.macip.net/img/mb.png
+[mini_browser] cache: stored https://minibrowser.macip.net/img/mb.png (26622 bytes, 40 KB used, 2 entries)
+[mini_browser] image: decoded source=320x320 retained=240x240 RGB565=115200 bytes
+[mini_browser] image: loaded compressed=26622 bytes
+[mini_browser] images: 1 of 1 loaded in 1782 ms
+[mini_browser] display: mode=Colors + Image images_seen=1 images_retained=1 images_loaded=1
+Init: Free main memory: 158996, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+Init: Free main memory: 157796, free PSRAM pages: 349/511, free framebuffer pages: 175/399 running processes 2
+[mini_browser] cache: stored https://lobste.rs (58846 bytes, 100 KB used, 3 entries)
+[mini_browser] net: 8332 bytes received, 58846 bytes after decoding
+[mini_browser] bfcache: stored https://minibrowser.macip.net (1 images)
+[UTF8] CURL: 58846 bytes, 0 invalid byte(s)
+[UTF8] PAGE TEXT: 20299 bytes, 0 invalid byte(s)
+[UTF8] WRAPPED: 19893 bytes, 0 invalid byte(s)
+[mini_browser] HTTP 200, 58846 bytes, 278 links from https://lobste.rs
+[mini_browser] page title: Lobsters
+[mini_browser] parser: links=278 actions=302 forms=0
+[mini_browser] visual: explicit_colors=0
+[mini_browser] visual: explicit_styles=0
+[mini_browser] visual: explicit_backgrounds=1
+[mini_browser] cookies: count=0
+
+--- CONTENT START ---
+= [1] Lobsters  
+* [2]Active
+* [3]Recent
+* [4]Comments
+* [5]Search
+* [6]Login
+1.
+[7]14 
+[8]oh, apparently it's not possible to portably check for
+string-to-float conversion errors in standard c 
+* [9]c
+[10]sebsite.pw
+[11]
+[[MBIMG0]]
+
+authored by  [12]seb 2026-10-10 00:37:18  |  caches
+* [13]Archive.org
+* [14]Ghostarchive
+|  [15] no comments   
+[16] 0 
+2.
+[17]26 
+[18]No Man Is an Island 
+* [19]philosophy
+* [20]vibecoding
+[21]borretti.me
+[22]
+[23] Image: image
+via  [24]facundoolano 2026-10-09 20:37:07  |  caches
+* [25]Archive.org
+* [26]Ghostarchive
+|  [27] 3 comments   
+[28] 3 
+3.
+[29]70 
+[30]Programming Isn’t Special 
+* [31]art
+* [32]vibecoding
+[33]blog.glyph.im
+[34]
+[35] Image: image
+via  [36]hugoarnal 2026-10-09 06:09:10  |  caches
+* [37]Archive.org
+* [38]Ghostarchive
+|  [39] 42 comments   
+[40] 42 
+4.
+[41]33 
+[42]A tale of four theorem provers, or: A (reasonably)
+opinionated comparison of Isabelle/HOL, Lean, HOL4, and
+Agda 
+* [43]design
+* [44]plt
+[45]blueberrywren.dev
+[46]
+[47] Image: image
+authored by  [48]blueberrywren 2026-10-09 09:30:28  | 
+caches
+* [49]Archive.org
+* [50]Ghostarchive
+|  [51] 8 comments   
+[52] 8 
+5.
+[53]45 
+[54]Python 3.15.0 
+* [55]python
+* [56]release
+[57]python.org
+[58]
+[59] Image: image
+via  [60]kaycebasques 2026-10-09 12:07:02  |  caches
+* [61]Archive.org
+* [62]Ghostarchive
+|  [63] 4 comments   
+[64] 4 
+6.
+[65]33 
+[66]Why Are Coding Agents So Dumb? 
+* [67]rant
+* [68]vibecoding
+[69]mtlynch.io
+[70]
+[71] Image: image
+authored by  [72]mtlynch 2026-10-09 09:22:04  |  caches
+* [73]Archive.org
+* [74]Ghostarchive
+|  [75] 17 comments   
+[76] 17 
+7.
+[77]43 
+[78]Unison Cloud is now open source 
+* [79]release
+[80]unison-lang.org
+[81]
+[82] Image: image
+via  [83]bontaq 2026-10-09 10:32:51  |  caches
+* [84]Archive.org
+* [85]Ghostarchive
+|  [86] 2 comments   
+[87] 2 
+8.
+[88]40 
+[89]Cloudflare shutting down Deno is news, not just PR 
+[90]☶
+* [91]meta
+[92]
+[93] Image: image
+authored by  [94]conartist6 2026-10-09 16:20:03   |  [95]
+8 comments   
+[96] 8 
+9.
+[97]3 
+[98]Adding Go's defer to the TypeScript Compiler 
+* [99]compilers
+* [100]go
+* [101]javascript
+[102]healeycodes.com
+[103]
+[104] Image: image
+via  [105]nemin 2026-10-10 00:34:40  |  caches
+* [106]Archive.org
+* [107]Ghostarchive
+|  [108] 4 comments   
+[109] 4 
+10.
+[110]19 
+[111]Branches in branch-free code 
+* [112]assembly
+* [113]c
+* [114]compilers
+* [115]rust
+* [116]zig
+[117]00f.net
+[118]
+[119] Image: image
+via  [120]rrampage 2026-10-09 14:31:17  |  caches
+* [121]Archive.org
+* [122]Ghostarchive
+|  [123] no comments   
+[124] 0 
+11.
+[125]18 
+[126]There are many themes, but this one is yours 
+* [127]a11y
+* [128]design
+* [129]vibecoding
+[130]earendil.com
+[131]
+[132] Image: image
+authored by  [133]mitsuhiko 2026-10-09 07:08:09  |  caches
+* [134]Archive.org
+* [135]Ghostarchive
+|  [136] 5 comments   
+[137] 5 
+12.
+[138]7 
+[139]Lifeguard: A static analyzer for Python lazy imports
+compatibility 
+* [140]python
+[141]github.com/facebook
+[142]
+[143] Image: image
+authored by  [144]zem 2026-10-09 16:44:50  |  caches
+* [145]Archive.org
+* [146]Ghostarchive
+|  [147] no comments   
+[148] 0 
+13.
+[149]12 
+[150]Deepthi Sigireddi from Supabase 
+* [151]databases
+* [152]person
+[153]theconsensus.dev
+[154]
+[155] Image: image
+authored by  [156]eatonphil 2026-10-09 08:56:41  |  caches
+* [157]Archive.org
+* [158]Ghostarchive
+|  [159] 1 comment   
+[160] 1 
+14.
+[161]16 
+[162]"Robot" Is A Social Construct: Why Your Dishwasher Is
+Not A Robot 
+* [163]philosophy
+[164]robotgirlgang.com
+[165]
+[166] Image: image
+via  [167]icefox 2026-10-09 09:14:17  |  caches
+* [168]Archive.org
+* [169]Ghostarchive
+|  [170] 5 comments   
+[171] 5 
+15.
+[172]1 
+[173]Voxlocal: a minimal voice agent written in Rust 
+* [174]ai
+* [175]programming
+* [176]rust
+[177]samkhawase.com
+[178]
+[179] Image: image
+authored by  [180]flyingsnake 2026-10-10 03:42:06  | 
+caches
+* [181]Archive.org
+* [182]Ghostarchive
+|  [183] no comments   
+[184] 0 
+16.
+[185]2 
+[186]1-click MMI execution in Android 
+* [187]android
+* [188]security
+[189]karansaini.com
+[190]
+[191] Image: image
+via  [192]rrampage 2026-10-10 02:20:53  |  caches
+* [193]Archive.org
+* [194]Ghostarchive
+|  [195] 1 comment   
+[196] 1 
+17.
+[197]13 
+[198]What are you doing this weekend?  [199]☶
+* [200]ask
+* [201]programming
+[202]
+[203] Image: image
+authored by  [204]caius 2026-10-09 07:53:09   |  [205] 30
+comments   
+[206] 30 
+18.
+[207]2 
+[208]There's little that's "inevitable" about AI 
+* [209]vibecoding
+[210]deadsimpletech.com
+[211]
+[212] Image: image
+via  [213]cgrinds 2026-10-10 04:08:30  |  caches
+* [214]Archive.org
+* [215]Ghostarchive
+|  [216] no comments   
+[217] 0 
+19.
+[218]14 
+[219]Vectorized CLZ and CTZ 
+* [220]performance
+[221]purplesyringa.moe
+[222]
+[223] Image: image
+via  [224]fanf 2026-10-09 12:45:44  |  caches
+* [225]Archive.org
+* [226]Ghostarchive
+|  [227] no comments   
+[228] 0 
+20.
+[229]16 
+[230]Spinlocks Considered Harmful (2020) 
+* [231]performance
+[232]matklad.github.io
+[233]
+[234] Image: image
+via  [235]Qyriad 2026-10-09 08:33:23  |  caches
+* [236]Archive.org
+* [237]Ghostarchive
+|  [238] 1 comment   
+[239] 1 
+21.
+[240]15 
+[241]A minimal kernel in Swift, running in QEMU 
+* [242]osdev
+* [243]swift
+[244]carette.xyz
+[245]
+[246] Image: image
+via  [247]hashemi 2026-10-09 07:17:01  |  caches
+* [248]Archive.org
+* [249]Ghostarchive
+|  [250] 1 comment   
+[251] 1 
+22.
+[252]62 
+[253]Bevy 0.20 
+* [254]games
+* [255]release
+* [256]rust
+[257]bevy.org
+[258]
+[259] Image: image
+via  [260]BD103 2026-10-08 18:21:57  |  caches
+* [261]Archive.org
+* [262]Ghostarchive
+|  [263] 2 comments   
+[264] 2 
+23.
+[265]11 
+[266]The importance of communities around software 
+* [267]culture
+[268]lumi.codeberg.page
+[269]
+[270] Image: image
+via  [271]stilic 2026-10-09 16:27:20  |  caches
+* [272]Archive.org
+* [273]Ghostarchive
+|  [274] no comments   
+[275] 0 
+24.
+[276]13 
+[277]HIP and ROCm as first-class citizens in Guix 
+* [278]nix
+[279]hpc.guix.info
+[280]
+[281] Image: image
+via  [282]untrusem 2026-10-09 08:01:43  |  caches
+* [283]Archive.org
+* [284]Ghostarchive
+|  [285] no comments   
+[286] 0 
+25.
+[287]7 
+[288]Equality Saturation: An “Incomplete” Project 
+* [289]compilers
+[290]blog.sigplan.org
+[291]
+[292] Image: image
+via  [293]dbremner 2026-10-09 12:49:54  |  caches
+* [294]Archive.org
+* [295]Ghostarchive
+|  [296] no comments   
+[297] 0 
+[298]Page 2 
+[299]About [300]Tags [301]Filter [302]Moderation Log 
+
+--- CONTENT END ---
+[mini_browser] page stats: received=59159 kept=58846 dropped=313 cut=no text=20299 links=278/384 jsonld=0
+Mini Browser: Unicode font opened: APPS:[mini_browser]unifont_cjk.bin (101 ranges)
+[mini_browser] image: fetching https://lobste.rs/avatars/seb-16.png
+[mini_browser] cache: stored https://lobste.rs/avatars/seb-16.png (336 bytes, 104 KB used, 4 entries)
+[mini_browser] image: decoded source=16x16 retained=16x16 RGB565=512 bytes
+[mini_browser] image: loaded compressed=336 bytes
+[mini_browser] images: 1 of 1 loaded in 1317 ms
+[mini_browser] display: mode=Colors + Image images_seen=25 images_retained=25 images_loaded=1

@@ -1,0 +1,21 @@
+group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds
+news,NOS,nos.nl,200,https://nos.nl,262144,327680,yes,55,5468,cookie,8
+news,NU.nl,nu.nl,200,https://nu.nl,1214,7855,no,0,10,js,8
+news,de Volkskrant,volkskrant.nl,200,https://volkskrant.nl,262144,310535,yes,217,12253,,14
+news,BBC News,bbc.com/news,200,https://bbc.com/news,173249,378657,no,231,10501,,13
+news,The Guardian,theguardian.com,200,https://theguardian.com,262144,991232,yes,174,10837,,13
+news,Reuters,reuters.com,401,,,,,,131,,12
+news,CNN lite,lite.cnn.com,200,https://lite.cnn.com,23537,333148,no,105,7058,,12
+news,NPR text,text.npr.org,200,https://text.npr.org,4444,6083,no,28,1447,,11
+news,Al Jazeera,aljazeera.com,200,https://aljazeera.com,78740,469468,no,119,5906,,14
+news,AP News,apnews.com,200,https://apnews.com,262144,433576,yes,384,17285,,11
+tech,Tweakers,tweakers.net,200,https://tweakers.net,137978,394236,no,332,9987,,14
+tech,Hacker News,news.ycombinator.com,200,https://news.ycombinator.com,34589,34662,no,229,3353,,16
+tech,Lobsters,lobste.rs,200,https://lobste.rs,58800,59113,no,0,0,js,11
+tech,LWN.net,lwn.net,200,https://minibrowser.macip.net,8114,0,no,11,5186,cookie,9
+tech,Ars Technica,arstechnica.com,200,https://arstechnica.com,182674,353889,no,199,10397,,17
+tech,The Register,theregister.com,200,https://theregister.com,262144,351821,yes,108,5080,,12
+tech,Heise,heise.de,200,https://heise.de,262144,393216,yes,151,17349,,11
+tech,GitHub,github.com/mactjaap/mini_browser,200,https://github.com/mactjaap/mini_browser,254620,521931,no,195,32682,,25
+tech,Wikipedia,en.wikipedia.org/wiki/ESP32,200,https://en.wikipedia.org/wiki/ESP32,262144,294912,yes,244,26088,,19
+tech,Stack Overflow,stackoverflow.com/questions/tagged/esp32,403,,,,,,166,,20

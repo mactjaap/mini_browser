@@ -1,0 +1,486 @@
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><title>Welcome to LWN.net [LWN.net]</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8">
+<META NAME="robots" CONTENT="noai, noimageai">
+        <link rel="icon" href="https://static.lwn.net/images/favicon.png"
+              type="image/png">
+        <link rel="alternate" type="application/rss+xml" title="LWN.net headlines" href="https://lwn.net/headlines/rss">
+        <link rel="stylesheet" href="/CSS/lwn">
+<style>div.MakeALink { display: none }</style>
+
+        
+        </head>
+        <body>
+        <a name="t"></a>
+<div id="menu"><a href="/" aria-label="Return to the front page">
+            <img src="https://static.lwn.net/images/logo/barepenguin-70.webp" class="logo"
+                 border="0" alt="LWN.net Logo">
+            <span class="logo">LWN<br>.net</span>
+            <span class="logobl">News from the source</span></a>
+            <a href="/" aria-label="Return to the front page">
+            <img src="https://static.lwn.net/images/lcorner-ss.png" class="sslogo"
+                 border="0" alt="LWN"></a><div class="navmenu-container">
+           <ul class="navmenu">
+        <li><a class="navmenu" href="#t"><b>Content</b></a><ul><li><a href="/current/">Weekly Edition</a></li><li><a href="/Archives/">Archives</a></li><li><a href="/Search/">Search</a></li><li><a href="/Kernel/">Kernel</a></li><li><a href="/Security/">Security</a></li><li><a href="/Calendar/">Events calendar</a></li><li><a href="/Comments/unread">Unread comments</a></li><li><hr></li><li><a href="/op/FAQ.lwn">LWN FAQ</a></li><li><a href="/op/AuthorGuide.lwn">Write for us</a></li></ul></li>
+</ul></div>
+</div> <!-- menu -->
+<div class="topnav-spacer"></div>
+<div class="top-banner not-print"><!-- no top ad served --></div>
+<div class="topnav-container">
+<div class="not-handset"><form action="https://lwn.net/Login/" method="post" name="loginform"
+                 class="loginform">
+        <label><b>User:</b> <input type="text" name="uname" value="" size="8" id="uc" /></label> 
+		<label><b>Password:</b> <input type="password" name="pword" size="8" id="pc" /></label> <input type="hidden" name="target" value="/" /> <input type="submit" name="submit" value="Log in" /></form> |
+           <form action="https://lwn.net/subscribe/" method="post" class="loginform">
+           <input type="submit" name="submit" value="Subscribe" />
+           </form> |
+           <form action="https://lwn.net/Login/newaccount" method="post" class="loginform">
+           <input type="submit" name="submit" value="Register" />
+           </form>
+        </div>
+               <div class="handset-only">
+               <a href="/Login/"><b>Log in</b></a> /
+               <a href="/subscribe/"><b>Subscribe</b></a> /
+               <a href="/Login/newaccount"><b>Register</b></a>
+               </div>
+               </div><div class="maincolumn flexcol">
+<div class="middlecolumn">
+<div class="PageHeadline">
+<h1>Welcome to LWN.net</h1>
+</div>
+<div class="ArticleText"><main>
+<blockquote style="margin-top: 0">
+       LWN.net is a reader-supported news site dedicated to producing the best
+       coverage from within the Linux and free software development communities.
+       See <a href="/op/FAQ.lwn">the LWN FAQ</a> for more information, and
+       please consider <a href="/subscribe/Info">subscribing</a> to gain full
+       access and support our activities.
+       </blockquote>
+       <p>
+       <div class="FPBox"><div class="FPLeft">
+<h2 class="Headline">[<span class="Subscription">$</span>] Adding kernel control-flow-integrity checking to GCC</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 9, 2026 17:06 UTC (Fri) by corbet</span>
+        <p>
+        While many developers are struggling to keep up with the flood of
+vulnerability reports, others are still focused on preventing those reports
+from happening in the first place.  Control-flow integrity (CFI) is the
+term for preventing (or at least detecting) exploits that divert the flow
+of control from its intended paths.  At the 2026 <a
+href="https://gnu-tools-cauldron.org/">GNU Tools Cauldron</a>, Kees Cook
+presented his changes to the GCC compiler suite to support forward-edge CFI
+for the kernel.
+
+        <p>
+        <a href="/Articles/1098670/">Full Story</a> (<a href="/Articles/1098670/#Comments">comments: 2</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] The state of systemd: 2026 edition</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 9, 2026 14:58 UTC (Fri) by jzb</span>
+        <p>
+        <p>At the 2026 <a href="https://all-systems-go.io/">All Systems Go!</a>
+conference, systemd maintainers Luca Boccassi and Zbigniew Jędrzejewski-Szmek
+delivered the traditional "state of the project" session with an overview of the
+systemd project's accomplishments in the past year. That was followed by a
+maintainer round table where Boccassi, Jędrzejewski-Szmek, Daan De&nbsp;Meyer, and
+project leader Lennart Poettering fielded questions about systemd's size,
+health, and if it might replace Kubernetes. (It will not.)</p>
+
+        <p>
+        <a href="/Articles/1099024/">Full Story</a> (<a href="/Articles/1099024/#Comments">comments: 2</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] An update on Rust's project goals</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 8, 2026 17:00 UTC (Thu) by daroc</span>
+        <p>
+        <p>
+Tomáš Šedovič is a program manager at the Rust Foundation. He co-leads the
+<a href="https://rust-lang.org/governance/teams/#team-goals">
+goals team</a>, which helps
+organize the Rust project's
+<a href="https://goals.rust-lang.org/2026/goals.html">
+overall goals</a>, including making sure that the people
+who have agreed to work on one have the support they need.
+At Kangrejos 2026, he provided an overview of the Rust project's goal processes
+aimed at ensuring that the Rust for Linux developers were aware of how the
+project organizes, tracks, and amends goals.
+The
+<a href="https://rust-for-linux.com/">
+Rust for Linux project</a>
+has inspired several current project goals, so he thought that getting an inside
+view of the process might be helpful.
+</p>
+
+        <p>
+        <a href="/Articles/1098617/">Full Story</a> (<a href="/Articles/1098617/#Comments">comments: 4</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] The [vx]swap showdown</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Kernel] Posted Oct 8, 2026 13:43 UTC (Thu) by corbet</span>
+        <p>
+        The kernel's swap layer has undergone <a href="/Articles/1057102/">some
+significant changes</a> over the course of the last year and a number of
+longstanding problems have been addressed.  One problem that has <i>not</i>
+yet been solved in the mainline is the direct tie between slots in the swap
+cache and space in persistent swap files, which can cause highly
+inefficient resource use.  There are two competing solutions for this
+problem, neither of which has, as yet, reached readiness for merging; a
+lengthy discussion on possible paths forward shows ongoing disagreement
+over the best path forward.
+
+        <p>
+        <a href="/Articles/1098399/">Full Story</a> (<a href="/Articles/1098399/#Comments">comments: 9</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] LWN.net Weekly Edition for October 8, 2026</h2>
+        
+        <span class="Smaller">Posted Oct 8, 2026 0:22 UTC (Thu)</span><p>
+        The LWN.net Weekly Edition for October 8, 2026 is available.
+<p>
+        <b>Inside this week's LWN.net Weekly Edition</b>
+        <ul>
+<li> <a href="/Articles/1097859/">Front</a>: Kernel bugs; Gentoo's Chromium package; Rust smart pointers; Sashiko; Charon; LAVD scheduler; Python random-number modules.
+            <li> <a href="/Articles/1097861/">Briefs</a>: OpenSSH 10.6; RustConf recordings; Rust 1.99.0; Picard 3.0; Zig 0.17; Quotes; ...
+            <li> <a href="/Articles/1097862/">Announcements</a>: Newsletters, conferences, security updates, patches, and more.
+            </ul>
+<a href="/Articles/1097859/">Read the full article</a>
+<p>
+
+<h2 class="Headline">[<span class="Subscription">$</span>] Analyzing Rust programs with Charon</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 7, 2026 15:19 UTC (Wed) by daroc</span>
+        <p>
+        <p>
+Nadrieril is a long-time Rust contributor, and the maintainer of the rustc
+pattern-matching infrastructure. During his involvement with Rust, he has
+noticed a problem with the usability of the language: it is difficult to
+automatically extract information from a Rust crate for use with other tooling.
+<a href="https://github.com/AeneasVerif/charon#charon">
+The Charon project</a> aims to fix that by providing a stable API for accessing
+internal information from the Rust compiler.
+</p>
+
+        <p>
+        <a href="/Articles/1097198/">Full Story</a> (<a href="/Articles/1097198/#Comments">comments: 5</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] Evolving the LAVD scheduler from gaming to servers</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Kernel] Posted Oct 7, 2026 13:33 UTC (Wed) by corbet</span>
+        <p>
+        The <a href="/Articles/922405/">extensible scheduler class</a>, which
+enables the creation of custom CPU schedulers with BPF, has led to a burst
+of innovation in this area; <a
+href="https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_lavd#scx_lavd">the
+LAVD scheduler</a> has, perhaps, been one of the most noteworthy schedulers
+to emerge.  Though it was originally <a href="/Articles/1051430/">designed
+for gaming applications</a>, the LAVD scheduler has since grown to serve
+other types of workloads as well.  At the 2026 edition of <a
+href="https://kernel-recipes.org/en/2026/">Kernel Recipes</a>, Changwoo Min
+and Gavin Guo presented an overview of this scheduler and how it has
+evolved over time.
+
+        <p>
+        <a href="/Articles/1097209/">Full Story</a> (<a href="/Articles/1097209/#Comments">comments: none</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] Python's two modules for random numbers</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 6, 2026 15:02 UTC (Tue) by TreyHunner</span>
+        <p>
+        Python's <a
+href="https://docs.python.org/3/library/random.html"><tt>random</tt></a>
+and <a
+href="https://docs.python.org/3/library/secrets.html"><tt>secrets</tt></a>
+modules both include utilities for obtaining random values, but only one of them is suitable for generating passwords and security tokens.
+For much of Python's history, <tt>random</tt> was used for passwords and tokens anyway, despite documentation that called it unsuitable for cryptography.
+In 2015, Python's core team debated whether to fix that misuse by making <tt>random</tt> secure by default.
+Instead, in 2016, Python 3.6 added a second module: <tt>secrets</tt>.  The
+<tt>random</tt> module is still misused at times, so it is instructive
+to look into how the random-number modules should be used.
+
+        <p>
+        <a href="/Articles/1097468/">Full Story</a> (<a href="/Articles/1097468/#Comments">comments: 13</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] Last rites for Gentoo's Chromium package</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Distributions] Posted Oct 6, 2026 13:44 UTC (Tue) by jzb</span>
+        <p>
+        <p><a href="https://www.chromium.org/Home/">Chromium</a>, the open-source
+upstream project for Google's Chrome web browser, is the browser of choice for
+many Linux users. It has also gained a reputation as being <a
+href="https://lwn.net/Articles/619158/">difficult for Linux distributions to
+package and build</a>: Chromium has a complex build system, the project bundles
+many of its dependencies, and it has frequent releases. All of that, plus user
+complaints, has led the maintainers of the <a
+href="https://packages.gentoo.org/packages/www-client/chromium">Gentoo Chromium
+package</a> to give up on trying to maintain the package.</p>
+
+        <p>
+        <a href="/Articles/1097760/">Full Story</a> (<a href="/Articles/1097760/#Comments">comments: 84</a>)
+<p>
+</div>
+<h2 class="Headline">[<span class="Subscription">$</span>] An update on the Sashiko patch-review system</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Kernel] Posted Oct 5, 2026 15:10 UTC (Mon) by corbet</span>
+        <p>
+        Patch review has long been one of the limiting constraints for the kernel
+project (and most others); there just aren't enough people to properly
+review all of the code that is submitted for inclusion.  The Sashiko
+system, which uses a large language model (LLM) to generate reviews
+automatically, offers the prospect of some relief, and has already become
+an important part of the kernel's development process.  At the 2026 edition
+of <a href="https://kernel-recipes.org/en/2026/">Kernel Recipes</a>, Roman
+Gushchin, the maintainer of Sashiko, provided an overview of how
+the system works and what is being done to improve it.
+
+        <p>
+        <a href="/Articles/1096963/">Full Story</a> (<a href="/Articles/1096963/#Comments">comments: 6</a>)
+<p>
+</div>
+</div>
+<div class="FPRight">
+<h2 class="Headline">Python 3.15 released</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 9, 2026 17:15 UTC (Fri) by jzb</span>
+        <p>
+        <p><a href="https://www.python.org/downloads/release/python-3150/">Version
+3.15</a> of the Python programming language has been released. Notable changes
+in this release include the addition of the <tt>sentinel</tt> and <a
+href="https://lwn.net/Articles/1047238/"><tt>frozendict</tt></a> built-in types,
+the use of UTF-8 encoding by default, <a
+href="https://docs.python.org/3.15/library/site.html#site-start-files">package
+start-up configuration files</a>, as well as improvements in the <a
+href="https://docs.python.org/3/whatsnew/3.15.html#whatsnew315-jit">experimental
+JIT compiler</a>. See the "<a
+href="https://docs.python.org/3/whatsnew/3.15.html">What's new in Python
+3.15</a>" article for an in-depth look at new features in this release, and the
+<a
+href="https://docs.python.org/3/whatsnew/changelog.html#changelog">changelog</a>
+for a full list of changes.</p>
+
+<p></p>
+        <p>
+        <a href="/Articles/1099602/">Comments (none posted)</a>
+<p>
+</div>
+<h2 class="Headline">Let's Encrypt moving to 64-day certificate lifetimes in 2027</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Security] Posted Oct 9, 2026 14:02 UTC (Fri) by jzb</span>
+        <p>
+        <p><a href="https://letsencrypt.org/2026/10/07/64-day-certs.html">Let's
+Encrypt</a>, the nonprofit that provides free TLS certificates for millions of
+sites, has <a
+href="https://letsencrypt.org/2026/10/07/64-day-certs.html">announced</a> that
+it will be moving to certificates with 64-day lifetimes on February&nbsp;10,
+2027:</p>
+
+<blockquote class="bq">
+<p>This means that any certificate we issue or renew on and after that date will
+have a 64 day validity period, and we expect the last 90-day certificate to
+expire on May 11, 2027. We will not revoke valid certificates as a part of this
+process.</p>
+</blockquote>
+
+<p>This is the second stage of Let's Encrypt's plan, <a
+href="https://letsencrypt.org/2025/12/02/from-90-to-45">announced in 2025</a>,
+to move to 45-day certificate lifetimes as required by the the <a
+href="https://cabforum.org/working-groups/server/baseline-requirements/requirements/">CA/Browser
+Forum Baseline Requirements</a>. In 2028, Let's Encrypt will switch to 45-day certificates.</p>
+        <p>
+        <a href="/Articles/1099588/#Comments">Comments (none posted)</a>
+<p>
+</div>
+<h2 class="Headline">Security updates for Friday</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Security] Posted Oct 9, 2026 13:08 UTC (Fri) by jzb</span>
+        <p>
+        Security updates have been issued by <b>AlmaLinux</b> (bind, bind9.16, freerdp, glibc, kbd, mod_auth_openidc, openssl, perl-DBI, python3.12, python3.14, and tftp), <b>Debian</b> (rails and twitter-bootstrap3), <b>Fedora</b> (barman, cockpit, hcloud, libmodsecurity, nginx-mod-modsecurity, perl-DBI, sudo, and xorg-x11-server-Xwayland), <b>Mageia</b> (libxfont2), <b>Oracle</b> (bind9.18, firefox, kernel, nodejs24, perl-DBI, and vim), <b>Red Hat</b> (kernel, libreswan, opentelemetry-collector, osbuild-composer, rhc, and runc), <b>SUSE</b> (alloy, amazon-ecs-init, bind, busybox, distribution, emacs, ghostscript, glibc, GraphicsMagick, hauler, helm, helm3, jackson-annotations, jackson-core, jackson-databind, kernel, libpoppler-cpp3, libxtst, logback, nvidia-open-driver-G07-signed, perl-DBI, php-composer2, pi-coding-agent, portprotonqt, pvetui, python-hpack, python313-GitPython, and wpa_supplicant), and <b>Ubuntu</b> (apache2, bluez, libarchive, libde265, libgit2, libpng1.6, libxml2, linux, linux-aws, linux-aws-6.8, linux-aws-fips, linux-fips, linux-realtime, linux-realtime-6.8, linux-aws-7.0, linux-azure, linux-azure-6.8, linux-azure-fde, linux-azure-fde-6.8, linux-azure-fips, linux-azure-7.0, linux-azure-fde-7.0, linux-gcp, linux-gcp-6.8, linux-gcp-fips, linux-gcp-7.0, linux-hwe-7.0, linux-oracle-7.0, linux-gke, linux-gkeop, linux-ibm, linux-lowlatency, linux-lowlatency-hwe-6.8, linux-nvidia, linux-nvidia-6.8, linux-nvidia-lowlatency, linux-oracle, linux-ibm-6.8, linux-nvidia, and linux-oem-6.17).
+
+        <p>
+        <a href="/Articles/1099587/">Full Story</a> (<a href="/Articles/1099587/#Comments">comments: none</a>)
+<p>
+</div>
+<h2 class="Headline">Security updates for Thursday</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Security] Posted Oct 8, 2026 13:11 UTC (Thu) by jzb</span>
+        <p>
+        Security updates have been issued by <b>AlmaLinux</b> (bind, firefox, freerdp, ghostscript, glibc, kernel, kernel-rt, perl-DBI, python3.12, rust-rpm-sequoia, rust-sequoia-sq, rust-sequoia-sqv, and vim), <b>Debian</b> (gst-plugins-base1.0, python3.11, and xz-utils), <b>Fedora</b> (7zip, chromium, curl, docker-buildx, kernel, Lmod, and sos), <b>Mageia</b> (tesseract), <b>Oracle</b> (dovecot, firefox, freerdp, gd, ghostscript, kernel, librabbitmq, perl-DBI, python3.12, rust-rpm-sequoia, rust-sequoia-sqv, sg3_utils, vim, and virtuoso-opensource), <b>Slackware</b> (xorg-server), <b>SUSE</b> (aliyun-cli, busybox, cadvisor, chromedriver, chromium, crane, distribution-registry, fetchmail, fio, ghostscript, golang-github-prometheus-alertmanager, google-osconfig-agent, govulncheck-vulndb, libsoup, libXtst, openexr, prometheus-blackbox_exporter, python-fsspec, rpcbind, rsyslog, rustup, wireshark, wpa_supplicant, and zcode), and <b>Ubuntu</b> (erlang, golang-golang-x-net, gst-plugins-ugly1.0, lxml, poppler, and sudo).
+
+        <p>
+        <a href="/Articles/1099388/">Full Story</a> (<a href="/Articles/1099388/#Comments">comments: none</a>)
+<p>
+</div>
+<h2 class="Headline">A new Raspberry Pi Desktop release is finally available for x86-64</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Distributions] Posted Oct 7, 2026 13:26 UTC (Wed) by jzb</span>
+        <p>
+        <p>Simon Long has <a
+href="https://www.raspberrypi.com/news/raspberry-pi-desktop-now-available-for-pc-and-mac/">announced</a>
+a long-awaited release of Raspberry Pi OS, based on <a
+href="https://www.debian.org/releases/trixie/">Debian&nbsp;13 ("trixie")</a>,
+for x86-64 systems.</p>
+
+<blockquote class="bq">
+<p>We managed to find the time to update the Desktop for the Buster and Bullseye
+releases of Debian, but then we all just got too busy with other things, and,
+while we left the Bullseye version on the website for anyone who wanted it, we
+simply didn't have time to release any newer versions. But people kept on asking
+for it – we get two or three emails every week asking when the PC Desktop will
+be updated, and we haven't had an answer, because we honestly didn't know when
+we might get a chance to do it. We've continually tried to allocate time to be
+able to work on this, but it hasn't been easy. [...]</p>
+
+<p>Earlier this year, we (or rather Serge) finally got the latest version of the
+Desktop running on top of a Debian Trixie image. It's now based on 64-bit Debian
+(the amd64 architecture) rather than the older 32-bit version, as Debian itself
+has stopped supporting 32-bit for PC architectures. This shouldn't be a major
+problem – most PCs made in the last 15 years or so will quite happily run the
+64-bit version of Debian, as will most Intel-based Macs. (Debian support for
+Apple Silicon is still experimental, so unfortunately those of you with the
+latest and greatest shiny fruit products will not be able to run this.)</p>
+</blockquote>
+
+<p></p>
+        <p>
+        <a href="/Articles/1099206/#Comments">Comments (5 posted)</a>
+<p>
+</div>
+<h2 class="Headline">Security updates for Wednesday</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Security] Posted Oct 7, 2026 13:08 UTC (Wed) by jzb</span>
+        <p>
+        Security updates have been issued by <b>AlmaLinux</b> (bind, dovecot, freerdp, kernel, mariadb-connector-c, mod_auth_openidc, nodejs22, nodejs:22, sudo, and vim), <b>Debian</b> (node-shell-quote, puma, rails, ruby-jwt, and suricata-update), <b>Fedora</b> (chromium, cockpit, flocq, freerdp, gappalib-coq, golang-x-mod, httpd, janus, libical, musescore, python3-docs, python3.14, python3.15, rocq, rocq-stdlib, tesseract, why3, and zenon), <b>Mageia</b> (srt and tor), <b>Oracle</b> (freerdp, kernel, libpcap, mariadb-connector-c, nodejs22, sudo, and vim), <b>Red Hat</b> (expat and grafana), <b>Slackware</b> (openssh), <b>SUSE</b> (chromium, docker-stable, firefox, jupyter-jupyterlab, libtcnative-1-0, tomcat, tomcat10, libtcnative-1-0, tomcat11, openexr, python310, python313-azure-storage-queue, python313-langchain-anthropic, python313-sglang, python313-Werkzeug, and valkey), and <b>Ubuntu</b> (fluidsynth, freerdp3, freetype, golang-1.18, golang-1.21, golang-1.24, gst-plugins-good1.0, libsoup2.4, libsoup3, libwebsockets, linux, linux-aws, linux-gcp, linux-gke, linux-ibm, linux-oracle, linux-realtime, linux-azure, linux-azure-fde, linux-nvidia-tegra, linux-oem-7.0, redis, sg3-utils, tesseract, and u-boot).
+
+        <p>
+        <a href="/Articles/1099202/">Full Story</a> (<a href="/Articles/1099202/#Comments">comments: none</a>)
+<p>
+</div>
+<h2 class="Headline">OpenSSH 10.6 released</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Security] Posted Oct 6, 2026 13:42 UTC (Tue) by jzb</span>
+        <p>
+        <a href="https://www.openssh.org/txt/release-10.6">Version 10.6</a> of OpenSSH
+has been released. The announcement notes that the OpenSSH team has been
+receiving a large number of AI-assisted security bug reports. "<q>We very much
+welcome these reports, especially when combined with human triage, analysis,
+test-cases and particularly when accompanied by proposed fixes</q>". As a
+result, the project expects to be making more frequent releases to get updates
+to users more quickly rather than batching the bug fixes until the next planned
+release.</p>
+
+<p>Notable changes in this release include enabling the hybrid post-quantum
+ssh-mldsa44-ed25519 signature algorithm, addition of a <tt>-p</tt> option for <a
+href="https://man.openbsd.org/sftp"><tt>sftp</tt></a>'s <a
+href="https://man.openbsd.org/sftp#lmkdir"><tt>lmkdir</tt></a>/<a
+href="https://man.openbsd.org/sftp#mkdir"><tt>mkdir</tt></a> commands, as well
+as disabling the LZ77 dictionary coder in <a
+href="https://man.openbsd.org/ssh"><tt>ssh</tt></a> and <a
+href="https://man.openbsd.org/sshd"><tt>sshd</tt></a> to mitigate side-channel
+leaks (which will result in reduced effectiveness of the Compression
+option). The <a
+href="https://man.openbsd.org/scp#R"><tt>scp&nbsp;-R</tt></a> option, which
+allows copies between two remote hosts, is being deprecated due to security
+risks; the option will be ignored in the future. See the announcement for full
+details of all changes and bug fixes.</p>
+
+<p></p>
+        <p>
+        <a href="/Articles/1098980/#Comments">Comments (none posted)</a>
+<p>
+</div>
+<h2 class="Headline">Security updates for Tuesday</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Security] Posted Oct 6, 2026 13:12 UTC (Tue) by jzb</span>
+        <p>
+        Security updates have been issued by <b>AlmaLinux</b> (gd, gimp, kernel, kernel-rt, libpcap, librabbitmq, mariadb-connector-c, osbuild-composer, ruby:2.5, and sudo), <b>Debian</b> (libmodule-cpants-analyse-perl, libpng1.6, libreoffice, roundcube, ruby-oauth2, and sabnzbdplus), <b>Fedora</b> (0install, alt-ergo, apron, brltty, chromium, coccinelle, cri-o1.36, emacs-common-tuareg, flocq, frama-c, freetennis, gappalib-coq, guestfs-tools, haxe, hevea, hivex, kernel, lem, libguestfs, libnbd, nbdkit, not-ocamlfind, ocaml, ocaml-afl-persistent, ocaml-alcotest, ocaml-astring, ocaml-atd, ocaml-augeas, ocaml-b0, ocaml-base, ocaml-base64, ocaml-benchmark, ocaml-bin-prot, ocaml-biniou, ocaml-bisect-ppx, ocaml-bos, ocaml-cairo, ocaml-calendar, ocaml-camlbz2, ocaml-camlidl, ocaml-camlimages, ocaml-camlp-streams, ocaml-camlp5, ocaml-camlp5-buildscripts, ocaml-camlpdf, ocaml-camomile, ocaml-capitalization, ocaml-cinaps, ocaml-cmdliner, ocaml-compiler-libs-janestreet, ocaml-cpdf, ocaml-cppo, ocaml-crowbar, ocaml-cryptokit, ocaml-csexp, ocaml-csv, ocaml-ctypes, ocaml-cudf, ocaml-curl, ocaml-curses, ocaml-dbus, ocaml-domain-name, ocaml-dose3, ocaml-dune, ocaml-easy-format, ocaml-expat, ocaml-extlib, ocaml-facile, ocaml-fieldslib, ocaml-fileutils, ocaml-findlib, ocaml-fmt, ocaml-fpath, ocaml-gen, ocaml-gettext, ocaml-graphics, ocaml-gsl, ocaml-integers, ocaml-intrinsics-kernel, ocaml-jane-street-headers, ocaml-jsonm, ocaml-jst-config, ocaml-lablgl, ocaml-lablgtk, ocaml-lablgtk3, ocaml-labltk, ocaml-lacaml, ocaml-lambda-term, ocaml-libvirt, ocaml-linenoise, ocaml-logs, ocaml-luv, ocaml-lwt, ocaml-mccs, ocaml-mdx, ocaml-menhir, ocaml-merlin, ocaml-mew, ocaml-mew-vi, ocaml-mlgmpidl, ocaml-mlmpfr, ocaml-monolith, ocaml-mtime, ocaml-mysql, ocaml-num, ocaml-obuild, ocaml-ocamlbuild, ocaml-ocamlgraph, ocaml-ocamlnet, ocaml-ocp-indent, ocaml-ocplib-endian, ocaml-ocplib-simplex, ocaml-omake, ocaml-omd, ocaml-opam-0install-cudf, ocaml-opam-file-format, ocaml-ounit, ocaml-parmap, ocaml-parsexp, ocaml-patch, ocaml-pcre2, ocaml-perl4caml, ocaml-postgresql, ocaml-pp, ocaml-pprint, ocaml-ppx-assert, ocaml-ppx-base, ocaml-ppx-bench, ocaml-ppx-bin-prot, ocaml-ppx-cold, ocaml-ppx-compare, ocaml-ppx-custom-printf, ocaml-ppx-derivers, ocaml-ppx-deriving, ocaml-ppx-deriving-yaml, ocaml-ppx-deriving-yojson, ocaml-ppx-enumerate, ocaml-ppx-expect, ocaml-ppx-fields-conv, ocaml-ppx-globalize, ocaml-ppx-hash, ocaml-ppx-here, ocaml-ppx-inline-test, ocaml-ppx-let, ocaml-ppx-optcomp, ocaml-ppx-sexp-conv, ocaml-ppx-stable-witness, ocaml-ppx-variants-conv, ocaml-ppxlib, ocaml-ppxlib-jane, ocaml-psmt2-frontend, ocaml-ptmap, ocaml-pyml, ocaml-qcheck, ocaml-qtest, ocaml-re, ocaml-react, ocaml-res, ocaml-result, ocaml-rresult, ocaml-SDL, ocaml-sedlex, ocaml-sexplib, ocaml-sexplib0, ocaml-sha, ocaml-spdx-licenses, ocaml-sqlite, ocaml-ssl, ocaml-stdcompat, ocaml-stdio, ocaml-stdlib-random, ocaml-store, ocaml-swhid-core, ocaml-testo, ocaml-time-now, ocaml-topkg, ocaml-trie, ocaml-unionfind, ocaml-uucd, ocaml-uucp, ocaml-uunf, ocaml-uuseg, ocaml-uutf, ocaml-variantslib, ocaml-version, ocaml-xml-light, ocaml-xmlm, ocaml-xmlrpc-light, ocaml-yaml, ocaml-yamlx, ocaml-yojson, ocaml-zarith, ocaml-zed, ocaml-zip, ocaml-zmq, ocamlify, ocamlmod, opam, perl-DBI, planets, plplot, prooftree, python3.12, rocq, rocq-stdlib, supermin, unison, utop, virt-top, virt-v2v, why3, xen, z3, and zenon), <b>Oracle</b> (bind, expat, gawk, gdb, ghostscript, gimp, gvfs, kernel, libpcap, libvirt, mod_auth_openidc, openssh, rsync, thunderbird, and webkit2gtk3), <b>Red Hat</b> (vim), <b>Slackware</b> (cups), <b>SUSE</b> (apache-sshd, binutils, cups, docker-stable, java-11-openjdk, libraw-devel, libX11, pcre2, perl-DBI, python-msgpack, python312, python313-tokenizers, rpcbind, rpm, rubygem-rails-html-sanitizer, squid, sssd, terraform-provider-susepubliccloud, valkey, and wpa_supplicant), and <b>Ubuntu</b> (aodh, watcher, edk2, libreoffice, libxmltok, linux, linux-aws, linux-aws-5.15, linux-aws-fips, linux-azure, linux-azure-5.15, linux-azure-fde-5.15, linux-azure-fips, linux-fips, linux-gke, linux-gkeop, linux-hwe-5.15, linux-ibm, linux-ibm-5.15, linux-intel-iot-realtime, linux-intel-iotg, linux-intel-iotg-5.15, linux-kvm, linux-lowlatency, linux-lowlatency-hwe-5.15, linux-oracle, linux-realtime, linux-xilinx-zynqmp, linux-azure-5.4, linux-azure-fde, linux-gcp, linux-gcp-fips, linux-gcp-5.15, linux-oracle-5.15, linux-raspi, rabbitmq-server, and unbound).
+
+        <p>
+        <a href="/Articles/1098979/">Full Story</a> (<a href="/Articles/1098979/#Comments">comments: none</a>)
+<p>
+</div>
+<h2 class="Headline">RustConf recordings</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 5, 2026 15:11 UTC (Mon) by daroc</span>
+        <p>
+        <p>
+The Rust Foundation has posted the
+<a href="https://youtube.com/playlist?list=PLCIkLZab-UIM&si=3D0SOWZ4GWCtD5GC">recordings</a> from
+<a href="https://rustconf.com/">RustConf 2026</a> in Montreal, Canada.
+<a href="https://www.flickr.com/photos/rustfoundation/collections/72157725686653391/">
+Photos</a> of the event are also available. LWN covered
+<a href="https://lwn.net/Archives/ConferenceIndex/#RustConf-2026">
+four talks from RustConf</a> this year.
+</p>
+        <p>
+        <a href="/Articles/1098610/">Comments (none posted)</a>
+<p>
+</div>
+<h2 class="Headline">Picard 3.0 released</h2>
+        
+        <div class="BlurbListing">
+        <span class="Smaller">[Development] Posted Oct 5, 2026 13:21 UTC (Mon) by jzb</span>
+        <p>
+        <p><a href="https://blog.metabrainz.org/2026/10/04/picard-3-0-released/">Version
+3.0</a> of the <a href="https://picard.musicbrainz.org/">MusicBrainz Picard</a>
+tag editor has been released. "<q>This release brings many changes, including an
+upgrade to Qt6, a completely new plugin system, several improvements to the user
+interface, cover art processing, [<a
+href="https://musicbrainz.org/doc/ISRC">International Standard Recording
+Code&nbsp;(ISRC)</a>] submission and many more.</q>"
+
+<p>LWN <a href="https://lwn.net/Articles/1066384/">covered</a> Picard in
+April.</p>
+
+<p></p>
+        <p>
+        <a href="/Articles/1098600/">Comments (none posted)</a>
+<p>
+</div>
+</div>
+       </div>
+       <p><a href="/Articles/?offset=10">--&gt; More news items</a>
+       
+</main></div> <!-- ArticleText -->
+</div> <!-- middlecolumn -->
+<div class="rightcol not-print">
+<!-- no side ad served -->
+</div>
+</div> <!-- maincolumn -->
+
+            <br clear="all">
+            <center>
+            <P>
+            <span class="ReallySmall">
+            Copyright &copy; 2026, Eklektix, Inc.<BR>
+            
+            Comments and public postings are copyrighted by their creators.<br>
+            Linux  is a registered trademark of Linus Torvalds<br>
+            </span>
+            </center>
+            
+            </body></html>

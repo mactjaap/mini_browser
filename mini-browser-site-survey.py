@@ -629,6 +629,12 @@ def main():
                 fname = f"{i:02d}-{re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-').lower()}.png"
                 badge.settle(1.5)              # let images and the bar settle
                 result = capture_screenshot(badge, shot, os.path.join(shot_dir, fname), args.full_page)
+                if result.startswith("damaged") or result == "no screenshot received":
+                    # Too many lines lost on the serial port: try once more.
+                    real_stdout.write("\r" + " " * 100 + f"\r[{i}/{len(sites)}] {name} ... ({result}, again) ")
+                    real_stdout.flush()
+                    badge.settle(2.0)
+                    result = capture_screenshot(badge, shot, os.path.join(shot_dir, fname), args.full_page)
                 if result.startswith("ok"):
                     row["screenshot"] = fname
                 if result.startswith("CRASH"):

@@ -172,7 +172,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.5-dev1"
+#define MINI_BROWSER_VERSION "4.5-dev3"
 
 /* ---------- Limits & layout ---------- */
 /* 4.5: page HTML kept after scripts, styles, SVG and comments are removed
@@ -191,8 +191,11 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #define LINE_SPACING  2
 #define MAX_LINKS     384   /* 4.5: was 128 (news front pages have 300+) */
 #define MAX_ACTIONS   448   /* 4.5: was 160 */
-#define MAX_FORMS       4
-#define MAX_FORM_FIELDS 8
+/* 4.5-dev3: 6 forms of 24 fields (was 4 x 8): checkboxes and radio buttons
+ * made the old limit too small for real forms. */
+#define MAX_FORMS       6
+#define MAX_FORM_FIELDS 24
+#define FORM_OPTIONS_MAX 64     /* <option>s kept per <select> */
 #define FORM_VALUE_MAX 128
 #define POST_BODY_MAX  2048
 
@@ -301,6 +304,23 @@ static const char *display_mode_name(display_mode_t mode) {
         case DISPLAY_COLORS_IMAGES_EXPERIMENTAL: return "Colors + 5 Images (Experimental)";
         default:                                 return "Unknown";
     }
+}
+
+/*
+ * 4.5-dev2: page look.
+ *   LOOK_BADGE  light text on black, cyan links (the Mini Browser look).
+ *   LOOK_WEB    like a normal browser: the page's own <body> background
+ *               (white when it sets none), black text, blue links, and the
+ *               bgcolor="" of tables and cells.
+ * In both looks a text colour that is unreadable on its background (dark
+ * blue on black, light grey on white) is replaced: see readable_color().
+ * WHY+N switches; the choice is kept in APPS:[mini_browser]look.txt.
+ */
+typedef enum { LOOK_BADGE = 0, LOOK_WEB = 1 } page_look_t;
+static page_look_t g_page_look = LOOK_BADGE;
+
+static const char *page_look_name(page_look_t look) {
+    return look == LOOK_WEB ? "web" : "badge";
 }
 
 static int display_inline_image_limit(void) {
@@ -851,7 +871,21 @@ typedef struct {
     char label[64];
     char type[16];
     bool disabled;
+    bool checked;           /* 4.5-dev3: checkbox / radio */
+    uint32_t opt_off;       /* 4.5-dev3: <select>: first option in page_t.strings, */
+    uint16_t opt_count;     /*   stored as value\0label\0 pairs                    */
+    uint16_t opt_sel;
 } form_field_t;
+
+/* 4.5-dev3: kinds of form controls. */
+static bool field_is_text(const char *t) {
+    static const char *const types[] = { "text", "search", "url", "email", "tel", "number", "password",
+        "textarea", "date", "time", "datetime-local", "month", "week" };
+    for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++)
+        if (!strcmp(t, types[i])) return true;
+    return false;
+}
+static bool field_is_choice(const char *t) { return !strcmp(t, "checkbox") || !strcmp(t, "radio"); }
 
 typedef struct {
     char action[URL_MAX];
@@ -908,7 +942,13 @@ typedef struct {
     bool reader_offer;            /* 4.4: show the "Simplified view" chip */
     char refresh[URL_MAX];        /* 4.5: <meta http-equiv="refresh"> target */
     int refresh_delay;            /* its delay in seconds, -1: none */
+    unsigned char body_colors;    /* 4.5-dev2: BODY_* bits: which of these are set */
+    unsigned body_bg, body_text, body_link;   /* 0xRRGGBB from <body> */
 } page_t;
+
+#define BODY_BG   0x01
+#define BODY_TEXT 0x02
+#define BODY_LINK 0x04
 
 #define PAGE_STRINGS_MAX (128 * 1024)
 
@@ -1493,6 +1533,14 @@ static int append_text(char *out, size_t cap, size_t *used, const char *text) {
 #define TEXT_BG_POP         0xE480u
 #define TEXT_BG_INHERIT     0xE481u
 #define TEXT_BG_TRANSPARENT 0xE482u
+/* 4.5-dev2: like TEXT_BG_START, for an old-style bgcolor="" attribute
+ * (<table>, <tr>, <td>, <th>).  Drawn only in the web look. */
+#define TEXT_BG_LEGACY      0xE483u
+/* 4.5-dev3: table structure while a table is parsed (removed again when
+ * the table closes, see table_layout()). */
+#define TEXT_TABLE_ROW      0xE490u
+#define TEXT_TABLE_CELL     0xE491u
+#define TEXT_MARKER_LAST    TEXT_TABLE_CELL
 
 /* Range reserved for internal markers; page text is never allowed into it. */
 #define TEXT_MARKER_PUA_FIRST 0xE400u
@@ -1505,7 +1553,7 @@ static bool is_format_marker(unsigned cp) {
      * TEXT_FORM_OFF; real tabs are expanded or collapsed by the parser). */
     if (cp >= TEXT_BOLD_ON && cp <= TEXT_PRE_OFF)
         return cp != '\n' && cp != '\r';
-    return cp >= TEXT_COLOR_START && cp <= TEXT_BG_TRANSPARENT;
+    return cp >= TEXT_COLOR_START && cp <= TEXT_MARKER_LAST;
 }
 
 /* width="120" / height="80px" -> pixels; percentages and junk -> 0
@@ -1656,7 +1704,7 @@ static int tail_after_last_newline_is_zero_width(const char *out, size_t used) {
                 unsigned cp = ((unsigned)(c & 0x0F) << 12) |
                               ((unsigned)(c1 & 0x3F) << 6) |
                               (unsigned)(c2 & 0x3F);
-                if (cp >= TEXT_COLOR_START && cp <= TEXT_BG_TRANSPARENT) {
+                if (cp >= TEXT_COLOR_START && cp <= TEXT_MARKER_LAST) {
                     i += 3;
                     continue;
                 }
@@ -1708,6 +1756,19 @@ static int sb_column(const sbuf_t *sb) {
 static int parse_html_color(const char *value, unsigned char *rr, unsigned char *gg, unsigned char *bb) {
     if (!value || !rr || !gg || !bb) return 0;
     while (isspace((unsigned char)*value)) value++;
+    /* 4.5-dev2: rgb(r, g, b), rgb(r g b), rgba(r, g, b, a).  A fully
+     * transparent rgba(..., 0) is not a colour. */
+    if (!strncasecmp(value, "rgb", 3)) {
+        const char *q = strchr(value, '(');
+        int r = 0, g = 0, b = 0;
+        float a = 1.0f;
+        int got = q ? sscanf(q + 1, " %d%*[ ,] %d%*[ ,] %d%*[ ,/] %f", &r, &g, &b, &a) : 0;
+        if (got < 3 || (got == 4 && a <= 0.0f)) return 0;
+        *rr = (unsigned char)(r < 0 ? 0 : r > 255 ? 255 : r);
+        *gg = (unsigned char)(g < 0 ? 0 : g > 255 ? 255 : g);
+        *bb = (unsigned char)(b < 0 ? 0 : b > 255 ? 255 : b);
+        return 1;
+    }
     char v[32]; size_t n = 0;
     while (*value && *value != ';' && !isspace((unsigned char)*value) && n + 1 < sizeof(v))
         v[n++] = (char)tolower((unsigned char)*value++);
@@ -1730,12 +1791,39 @@ static int parse_html_color(const char *value, unsigned char *rr, unsigned char 
         {"black",0,0,0},{"white",255,255,255},{"red",255,0,0},{"green",0,128,0},
         {"blue",0,0,255},{"yellow",255,255,0},{"cyan",0,255,255},{"aqua",0,255,255},
         {"magenta",255,0,255},{"fuchsia",255,0,255},{"gray",128,128,128},{"grey",128,128,128},
-        {"orange",255,165,0},{"purple",128,0,128}
+        {"orange",255,165,0},{"purple",128,0,128},
+        /* 4.5-dev2: more of the CSS names seen on real pages */
+        {"navy",0,0,128},{"maroon",128,0,0},{"olive",128,128,0},{"teal",0,128,128},
+        {"silver",192,192,192},{"lime",0,255,0},{"darkblue",0,0,139},{"darkred",139,0,0},
+        {"darkgreen",0,100,0},{"darkgray",169,169,169},{"darkgrey",169,169,169},
+        {"lightgray",211,211,211},{"lightgrey",211,211,211},{"dimgray",105,105,105},
+        {"dimgrey",105,105,105},{"gainsboro",220,220,220},{"whitesmoke",245,245,245},
+        {"beige",245,245,220},{"ivory",255,255,240},{"linen",250,240,230},
+        {"lightyellow",255,255,224},{"lightblue",173,216,230},{"steelblue",70,130,180},
+        {"crimson",220,20,60},{"gold",255,215,0},{"brown",165,42,42},{"pink",255,192,203},
+        {"indigo",75,0,130},{"lavender",230,230,250},{"orangered",255,69,0},
+        {"darkorange",255,140,0},{"firebrick",178,34,34},{"royalblue",65,105,225},
+        {"midnightblue",25,25,112},{"slategray",112,128,144},{"slategrey",112,128,144}
     };
     for (size_t i=0;i<sizeof(colors)/sizeof(colors[0]);i++) if (!strcmp(v, colors[i].name)) {
         *rr=colors[i].r; *gg=colors[i].g; *bb=colors[i].b; return 1;
     }
     return 0;
+}
+
+/* 4.5-dev2: an old HTML colour attribute (bgcolor="", text="", link="").
+ * Browsers also accept six hex digits without the '#'. */
+static int parse_attr_color(const char *value, unsigned char *r, unsigned char *g, unsigned char *b) {
+    if (parse_html_color(value, r, g, b)) return 1;
+    if (!value) return 0;
+    while (isspace((unsigned char)*value)) value++;
+    size_t n = 0;
+    while (isxdigit((unsigned char)value[n])) n++;
+    if (n != 6 || (value[n] && !isspace((unsigned char)value[n]))) return 0;
+    char tmp[8] = "#";
+    memcpy(tmp + 1, value, 6);
+    tmp[7] = 0;
+    return parse_html_color(tmp, r, g, b);
 }
 
 static int style_color_value(const char *style, unsigned char *r, unsigned char *g, unsigned char *b) {
@@ -1771,10 +1859,37 @@ typedef struct {
     int valid_count;
 } inline_style_t;
 
-/* Parse one inline background-color declaration. Return values:
+/* 4.5-dev2: the colour in a background: shorthand ("#fff url(x) no-repeat",
+ * "url(x) center / cover rgb(0,0,0)").  0 none, 1 colour, 2 transparent. */
+static int css_background_shorthand(const char *val, size_t vn,
+                                    unsigned char *r, unsigned char *g, unsigned char *b) {
+    char tmp[128];
+    if (vn >= sizeof(tmp)) vn = sizeof(tmp) - 1;
+    memcpy(tmp, val, vn);
+    tmp[vn] = 0;
+    const char *q = tmp;
+    while (*q) {
+        while (isspace((unsigned char)*q)) q++;
+        if (!*q) break;
+        if (!strncasecmp(q, "transparent", 11)) return 2;
+        if (strncasecmp(q, "url(", 4) && parse_html_color(q, r, g, b)) return 1;
+        int depth = 0;          /* skip the token; "rgb(1, 2, 3)" is one */
+        while (*q && (depth > 0 || !isspace((unsigned char)*q))) {
+            if (*q == '(') depth++;
+            else if (*q == ')' && depth > 0) depth--;
+            q++;
+        }
+    }
+    return !strcasecmp(tmp, "none") ? 2 : 0;
+}
+
+/* Parse the inline background colour (background-color: or the colour in
+ * background:).  The last valid declaration wins.  Return values:
  * 0 = absent/invalid, 1 = RGB color, 2 = transparent. */
 static int style_background_value(const char *style, unsigned char *r, unsigned char *g, unsigned char *b) {
     if (!style) return 0;
+    int result = 0;
+    unsigned char cr = 0, cg = 0, cb = 0;
     const char *p = style;
     while (*p) {
         while (*p == ';' || isspace((unsigned char)*p)) p++;
@@ -1787,17 +1902,32 @@ static int style_background_value(const char *style, unsigned char *r, unsigned 
         const char *val = p;
         while (*p && *p != ';') p++;
         size_t nn = (size_t)(name_end - name), vn = (size_t)(p - val);
-        if (nn == 16 && !strncasecmp(name, "background-color", 16)) {
-            while (vn && isspace((unsigned char)*val)) { val++; vn--; }
+        while (vn && isspace((unsigned char)*val)) { val++; vn--; }
+        while (vn && isspace((unsigned char)val[vn - 1])) vn--;
+        /* drop "!important" */
+        if (vn >= 10 && !strncasecmp(val + vn - 10, "!important", 10)) {
+            vn -= 10;
             while (vn && isspace((unsigned char)val[vn - 1])) vn--;
-            if (vn == 11 && !strncasecmp(val, "transparent", 11)) return 2;
-            char tmp[32];
-            if (vn >= sizeof(tmp)) return 0;
-            memcpy(tmp, val, vn); tmp[vn] = 0;
-            return parse_html_color(tmp, r, g, b) ? 1 : 0;
+        }
+        int kind = 0;
+        if (nn == 16 && !strncasecmp(name, "background-color", 16)) {
+            if (vn == 11 && !strncasecmp(val, "transparent", 11)) kind = 2;
+            else {
+                char tmp[48];
+                if (vn < sizeof(tmp)) {
+                    memcpy(tmp, val, vn); tmp[vn] = 0;
+                    kind = parse_html_color(tmp, &cr, &cg, &cb) ? 1 : 0;
+                }
+            }
+        } else if (nn == 10 && !strncasecmp(name, "background", 10)) {
+            kind = css_background_shorthand(val, vn, &cr, &cg, &cb);
+        }
+        if (kind) {
+            result = kind;
+            if (kind == 1) { *r = cr; *g = cg; *b = cb; }
         }
     }
-    return 0;
+    return result;
 }
 
 static bool css_value_eq(const char *v, size_t n, const char *wanted) {
@@ -1930,6 +2060,17 @@ static bool sb_action_marker(sbuf_t *sb, int action_index) {
     return n > 0 && (size_t)n < sizeof(marker) && sb_bytes(sb, marker, (size_t)n);
 }
 
+/* 4.5-dev3: option i of a <select>: its value and label. */
+static bool select_option(const page_t *page, const form_field_t *field, int i,
+                          const char **value, const char **label) {
+    if (!page || !page->strings || !field || i < 0 || i >= field->opt_count) return false;
+    const char *v = page->strings + field->opt_off;
+    for (int k = 0; k < i; k++) { v += strlen(v) + 1; v += strlen(v) + 1; }
+    if (value) *value = v;
+    if (label) *label = v + strlen(v) + 1;
+    return true;
+}
+
 static int refresh_page_text(page_t *page) {
     if (!page || !page->text_template) return 0;
     size_t cap = strlen(page->text_template) +
@@ -1954,8 +2095,29 @@ static int refresh_page_text(page_t *page) {
                     const form_t *form = &page->forms[action->form_index];
                     if (action->field_index >= 0 && action->field_index < form->field_count) {
                         const form_field_t *field = &form->fields[action->field_index];
-                        snprintf(line, sizeof(line), "%c[%d] %s: %s%c\n",
-                                 TEXT_FORM_ON, action_index + 1, field->name, field->value, TEXT_FORM_OFF);
+                        const char *label = NULL;
+                        if (!strcmp(field->type, "checkbox")) {
+                            /* 4.5-dev3: inline, the page's own text follows */
+                            snprintf(line, sizeof(line), "%c[%d][%c]%c ", TEXT_FORM_ON, action_index + 1,
+                                     field->checked ? 'x' : ' ', TEXT_FORM_OFF);
+                        } else if (!strcmp(field->type, "radio")) {
+                            snprintf(line, sizeof(line), "%c[%d](%c)%c ", TEXT_FORM_ON, action_index + 1,
+                                     field->checked ? '*' : ' ', TEXT_FORM_OFF);
+                        } else if (!strcmp(field->type, "select") &&
+                                   select_option(page, field, field->opt_sel, NULL, &label)) {
+                            snprintf(line, sizeof(line), "%c[%d] %s: [%.90s v]%c\n",
+                                     TEXT_FORM_ON, action_index + 1, field->name, label, TEXT_FORM_OFF);
+                        } else if (!strcmp(field->type, "password")) {
+                            static char stars[FORM_VALUE_MAX];
+                            size_t n = strlen(field->value);
+                            memset(stars, '*', n);
+                            stars[n] = 0;
+                            snprintf(line, sizeof(line), "%c[%d] %s: %s%c\n",
+                                     TEXT_FORM_ON, action_index + 1, field->name, stars, TEXT_FORM_OFF);
+                        } else {
+                            snprintf(line, sizeof(line), "%c[%d] %s: %s%c\n",
+                                     TEXT_FORM_ON, action_index + 1, field->name, field->value, TEXT_FORM_OFF);
+                        }
                     }
                 } else if (action->type == ACTION_FORM_SUBMIT &&
                            action->form_index >= 0 && action->form_index < page->form_count) {
@@ -2011,7 +2173,7 @@ static void extract_html_title(const char *html, char *out, size_t cap) {
 static void extract_button_label(const char *start, const char *end, char *out, size_t cap) {
     size_t used = 0;
     bool spacing = false;
-    if (!cap) return;
+    if (!out || !cap) return;
     for (const char *p = start; p < end && used + 1 < cap; p++) {
         if (*p == '<') {
             const char *tag_end = find_tag_end(p + 1, end);
@@ -2076,8 +2238,9 @@ static const html_tag_info_t g_html_tags[] = {
     {"em", TF_STYLE | TF_COLOR}, {"i", TF_STYLE | TF_COLOR},
     {"a", TF_STYLE | TF_COLOR}, {"font", TF_COLOR},
     {"li",    TF_BREAK_AFTER | TF_SCOPE | TF_PCLOSER},
-    {"tr",    TF_BREAK_BEFORE | TF_BREAK_AFTER | TF_SCOPE},
-    {"table", TF_BREAK_AFTER | TF_SCOPE | TF_PCLOSER},
+    /* 4.5-dev2: TF_STYLE so a row's or table's bgcolor="" / background is kept */
+    {"tr",    TF_BREAK_BEFORE | TF_BREAK_AFTER | TF_SCOPE | TF_STYLE},
+    {"table", TF_BREAK_AFTER | TF_SCOPE | TF_PCLOSER | TF_STYLE},
     {"ul",    TF_SCOPE | TF_PCLOSER}, {"ol", TF_SCOPE | TF_PCLOSER},
     {"pre",   TF_PCLOSER}, {"form", TF_PCLOSER}, {"hr", TF_PCLOSER},
 };
@@ -2124,7 +2287,12 @@ typedef struct {
     int push_depth;
     struct { bool ordered; int item; } lists[PARSE_LIST_MAX];
     int list_depth;
+    /* 4.5-dev3: open tables, for table_layout() */
+    struct { size_t start; bool nested; } tables[8];
+    int table_depth;            /* may exceed 8: deeper ones are not tracked */
 } html_parser_t;
+
+static void table_layout(sbuf_t *sb, size_t start, bool nested);
 
 static void parse_emit_close_markers(html_parser_t *ps, const open_element_t *el) {
     sbuf_t *sb = &ps->sb;
@@ -2154,6 +2322,14 @@ static void parse_emit_close_markers(html_parser_t *ps, const open_element_t *el
 
     if (el->flags & TF_BREAK_AFTER)
         sb_line_break(sb);
+
+    /* 4.5-dev3: the table is complete: lay it out as columns, or remove
+     * the row/cell markers (nested or too wide: as before, with " | "). */
+    if (!strcmp(el->tag, "table") && ps->table_depth > 0) {
+        ps->table_depth--;
+        if (ps->table_depth < 8)
+            table_layout(sb, ps->tables[ps->table_depth].start, ps->tables[ps->table_depth].nested);
+    }
 }
 
 /* Pop elements down to (and including) index; emits each one's close. */
@@ -2243,11 +2419,21 @@ static bool parse_emit_push_markers(html_parser_t *ps, const char *tag, unsigned
         /* Phase 2B: background-color; missing/invalid inherits, transparent overrides. */
         unsigned char br = 0, bg = 0, bb = 0;
         int bg_kind = has_style ? style_background_value(style_value, &br, &bg, &bb) : 0;
+        /* 4.5-dev2: <table|tr|td|th bgcolor="...">, drawn in the web look only */
+        char bgattr[32] = "";
+        bool legacy = false;
+        if (!bg_kind && (!strcmp(tag, "td") || !strcmp(tag, "th") || !strcmp(tag, "tr") ||
+                         !strcmp(tag, "table")) &&
+            tag_attribute(attributes, tag_end, "bgcolor", bgattr, sizeof(bgattr)) == 1 &&
+            parse_attr_color(bgattr, &br, &bg, &bb)) {
+            bg_kind = 1;
+            legacy = true;
+        }
         if (bg_kind == 2) {
             n += utf8_encode(TEXT_BG_TRANSPARENT, tmp + n);
         } else if (bg_kind == 1) {
             unsigned rgb = ((unsigned)br << 16) | ((unsigned)bg << 8) | bb;
-            n += utf8_encode(TEXT_BG_START, tmp + n);
+            n += utf8_encode(legacy ? TEXT_BG_LEGACY : TEXT_BG_START, tmp + n);
             for (int i = 5; i >= 0; i--)
                 n += utf8_encode(TEXT_BG_NIBBLE + ((rgb >> (4 * i)) & 0x0F), tmp + n);
         } else {
@@ -2379,7 +2565,43 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
     const char *after_tag = tag_end + 1;
 
     if (ps->in_head && !html_head_tag(tag)) ps->in_head = false;
-    if (!strcmp(tag, "body")) ps->in_head = false;
+    if (!strcmp(tag, "body")) {
+        ps->in_head = false;
+        /* 4.5-dev2: the page colours for the web look: <body bgcolor text
+         * link> and style="background...; color...". style="" wins. */
+        static char value[192];
+        unsigned char r, g, b;
+        if (tag_attribute(attributes, tag_end, "bgcolor", value, sizeof value) == 1 &&
+            parse_attr_color(value, &r, &g, &b)) {
+            page->body_bg = ((unsigned)r << 16) | ((unsigned)g << 8) | b;
+            page->body_colors |= BODY_BG;
+        }
+        if (tag_attribute(attributes, tag_end, "text", value, sizeof value) == 1 &&
+            parse_attr_color(value, &r, &g, &b)) {
+            page->body_text = ((unsigned)r << 16) | ((unsigned)g << 8) | b;
+            page->body_colors |= BODY_TEXT;
+        }
+        if (tag_attribute(attributes, tag_end, "link", value, sizeof value) == 1 &&
+            parse_attr_color(value, &r, &g, &b)) {
+            page->body_link = ((unsigned)r << 16) | ((unsigned)g << 8) | b;
+            page->body_colors |= BODY_LINK;
+        }
+        if (tag_attribute(attributes, tag_end, "style", value, sizeof value) == 1) {
+            if (style_background_value(value, &r, &g, &b) == 1) {
+                page->body_bg = ((unsigned)r << 16) | ((unsigned)g << 8) | b;
+                page->body_colors |= BODY_BG;
+            }
+            if (style_color_value(value, &r, &g, &b)) {
+                page->body_text = ((unsigned)r << 16) | ((unsigned)g << 8) | b;
+                page->body_colors |= BODY_TEXT;
+            }
+        }
+        if (page->body_colors)
+            printf("[mini_browser] body colors: background=%s%06x text=%s%06x link=%s%06x\n",
+                   page->body_colors & BODY_BG ? "#" : "-", page->body_bg,
+                   page->body_colors & BODY_TEXT ? "#" : "-", page->body_text,
+                   page->body_colors & BODY_LINK ? "#" : "-", page->body_link);
+    }
     if (!strcmp(tag, "head")) { ps->in_head = true; return; }
 
     /* 4.5: <meta http-equiv="refresh" content="0; url=...">, the redirect
@@ -2439,6 +2661,18 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
     if (!strcmp(tag, "td") || !strcmp(tag, "th")) {
         if (!sb_at_line_start(sb) && sb->buf[sb->len - 1] != ' ')
             sb_text(sb, " | ");
+        char m[4];
+        sb_bytes(sb, m, utf8_encode(TEXT_TABLE_CELL, m));     /* 4.5-dev3 */
+    } else if (!strcmp(tag, "tr")) {
+        char m[4];
+        sb_bytes(sb, m, utf8_encode(TEXT_TABLE_ROW, m));
+    } else if (!strcmp(tag, "table")) {
+        for (int i = 0; i < ps->table_depth && i < 8; i++) ps->tables[i].nested = true;
+        if (ps->table_depth < 8) {
+            ps->tables[ps->table_depth].start = sb->len;
+            ps->tables[ps->table_depth].nested = false;
+        }
+        ps->table_depth++;
     }
 
     open_element_t *el = NULL;
@@ -2530,10 +2764,16 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
             sanitize_text_inplace(field.name);
             sanitize_text_inplace(field.value);
 
-            bool editable = !strcmp(field.type, "text") || !strcmp(field.type, "search") || !strcmp(field.type, "url");
+            bool editable = field_is_text(field.type);
             bool hidden = !strcmp(field.type, "hidden");
             bool submit = !strcmp(field.type, "submit");
-            if ((editable && field.name[0]) || (hidden && field.name[0]) || submit) {
+            bool choice = field_is_choice(field.type);   /* 4.5-dev3 */
+            if (choice) {
+                field.checked = tag_attribute(attributes, tag_end, "checked", NULL, 0) != 0;
+                if (!field.value[0]) snprintf(field.value, sizeof(field.value), "on");
+            }
+            if ((editable && field.name[0]) || (hidden && field.name[0]) || submit ||
+                (choice && field.name[0])) {
                 int field_index = form->field_count++;
                 form->fields[field_index] = field;
                 if (submit) {
@@ -2543,11 +2783,87 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
                         int action = add_action(page, ACTION_FORM_SUBMIT, -1, ps->current_form, field_index);
                         if (action >= 0) sb_action_marker(sb, action);
                     }
-                } else if (editable && !field.disabled) {
+                } else if ((editable || choice) && !field.disabled) {
                     int action = add_action(page, ACTION_FORM_FIELD, -1, ps->current_form, field_index);
                     if (action >= 0) sb_action_marker(sb, action);
                 }
             }
+        }
+    } else if (!strcmp(tag, "textarea") && ps->current_form >= 0) {
+        /* 4.5-dev3: a textarea is edited like a one-line text field; its
+         * text between the tags is the start value, not page text. */
+        const char *window_end = after_tag + 16384 < ps->html_end ? after_tag + 16384 : ps->html_end;
+        const char *close = find_ci_n(after_tag, window_end, "</textarea");
+        form_t *form = &page->forms[ps->current_form];
+        if (close && form->field_count < MAX_FORM_FIELDS) {
+            form_field_t *field = &form->fields[form->field_count];
+            memset(field, 0, sizeof(*field));
+            snprintf(field->type, sizeof(field->type), "textarea");
+            tag_attribute(attributes, tag_end, "name", field->name, sizeof(field->name));
+            field->disabled = tag_attribute(attributes, tag_end, "disabled", NULL, 0) != 0;
+            sanitize_text_inplace(field->name);
+            extract_button_label(after_tag, close, field->value, sizeof(field->value));
+            if (field->name[0]) {
+                int field_index = form->field_count++;
+                if (!field->disabled) {
+                    int action = add_action(page, ACTION_FORM_FIELD, -1, ps->current_form, field_index);
+                    if (action >= 0) sb_action_marker(sb, action);
+                }
+            }
+        }
+        if (close) {
+            const char *close_end = find_tag_end(close + 2, ps->html_end);
+            *cursor_io = close_end ? close_end + 1 : ps->html_end;
+        }
+    } else if (!strcmp(tag, "select") && ps->current_form >= 0) {
+        /* 4.5-dev3: <select> with its <option>s (value + label) kept in the
+         * page's string pool; the options are not page text. */
+        const char *window_end = after_tag + 65536 < ps->html_end ? after_tag + 65536 : ps->html_end;
+        const char *close = find_ci_n(after_tag, window_end, "</select");
+        form_t *form = &page->forms[ps->current_form];
+        if (close && form->field_count < MAX_FORM_FIELDS) {
+            form_field_t *field = &form->fields[form->field_count];
+            memset(field, 0, sizeof(*field));
+            snprintf(field->type, sizeof(field->type), "select");
+            tag_attribute(attributes, tag_end, "name", field->name, sizeof(field->name));
+            field->disabled = tag_attribute(attributes, tag_end, "disabled", NULL, 0) != 0;
+            sanitize_text_inplace(field->name);
+            static char value[FORM_VALUE_MAX], label[96];   /* static: small app stack */
+            int selected = -1;
+            for (const char *p = find_ci_n(after_tag, close, "<option"); p && field->opt_count < FORM_OPTIONS_MAX;
+                 p = find_ci_n(p + 7, close, "<option")) {
+                const char *oend = find_tag_end(p + 7, close);
+                if (!oend) break;
+                const char *next = memchr(oend + 1, '<', (size_t)(close - oend - 1));
+                if (!next) next = close;
+                extract_button_label(oend + 1, next, label, sizeof label);
+                if (tag_attribute(p + 7, oend, "value", value, sizeof value) == 0)
+                    snprintf(value, sizeof value, "%s", label);
+                sanitize_text_inplace(value);
+                bool disabled = tag_attribute(p + 7, oend, "disabled", NULL, 0) != 0;
+                if (disabled) continue;
+                long voff = page_store_string(page, value);
+                if (voff < 0) break;
+                if (page_store_string(page, label) < 0) break;
+                if (!field->opt_count) field->opt_off = (uint32_t)voff;
+                if (tag_attribute(p + 7, oend, "selected", NULL, 0)) selected = field->opt_count;
+                field->opt_count++;
+            }
+            if (field->name[0] && field->opt_count) {
+                field->opt_sel = (uint16_t)(selected >= 0 ? selected : 0);
+                const char *v = page->strings + field->opt_off;
+                for (int i = 0; i < field->opt_sel; i++) { v += strlen(v) + 1; v += strlen(v) + 1; }
+                snprintf(field->value, sizeof(field->value), "%s", v);
+                int field_index = form->field_count++;
+                if (!field->disabled) {
+                    int action = add_action(page, ACTION_FORM_FIELD, -1, ps->current_form, field_index);
+                    if (action >= 0) sb_action_marker(sb, action);
+                }
+            }
+        }
+        if (close) {
+            const char *close_end = find_tag_end(close + 2, ps->html_end);
+            *cursor_io = close_end ? close_end + 1 : ps->html_end;
         }
     } else if (!strcmp(tag, "button") && ps->current_form >= 0) {
         form_t *form = &page->forms[ps->current_form];
@@ -2794,6 +3110,8 @@ __attribute__((noinline)) static page_t *html_to_page(const char *html, const ch
         printf("[mini_browser] parser: template limit reached, page truncated\n");
     }
 
+    /* 4.5-dev3: <td>/<tr> outside a table leave markers: remove them. */
+    if (ps->sb.buf) table_layout(&ps->sb, 0, true);
     page->text_template = ps->sb.buf;
     free(ps);
     if (!refresh_page_text(page)) {
@@ -2848,8 +3166,11 @@ static int form_serialize(const form_t *form, int submit_field_index,
         const form_field_t *field = &form->fields[i];
         if (field->disabled || !field->name[0]) continue;
         bool submit = !strcmp(field->type, "submit");
-        bool successful = !strcmp(field->type, "text") || !strcmp(field->type, "search") ||
-                          !strcmp(field->type, "url") || !strcmp(field->type, "hidden") ||
+        /* 4.5-dev3: also the new text types, a <select> with options and a
+         * checked checkbox or radio button. */
+        bool successful = field_is_text(field->type) || !strcmp(field->type, "hidden") ||
+                          (!strcmp(field->type, "select") && field->opt_count > 0) ||
+                          (field_is_choice(field->type) && field->checked) ||
                           (submit && i == submit_field_index);
         if (!successful) continue;
 
@@ -2930,7 +3251,9 @@ typedef enum {
     ACTIVATE_POST,
     ACTIVATE_FORM_UNSUPPORTED,
     ACTIVATE_URL_TOO_LONG,
-    ACTIVATE_IMAGE
+    ACTIVATE_IMAGE,
+    ACTIVATE_FORM_CHANGED,   /* 4.5-dev3: checkbox / radio toggled */
+    ACTIVATE_SELECT          /* 4.5-dev3: choose an option of a <select> */
 } activate_result_t;
 
 static int hex_value(char c) {
@@ -3022,6 +3345,20 @@ static activate_result_t activate_page_action(
 
     if (action->type == ACTION_FORM_FIELD) {
         form_field_t *field = &form->fields[action->field_index];
+        *edit_form = action->form_index;
+        *edit_field = action->field_index;
+        if (!strcmp(field->type, "checkbox")) {
+            field->checked = !field->checked;
+            return ACTIVATE_FORM_CHANGED;
+        }
+        if (!strcmp(field->type, "radio")) {
+            for (int i = 0; i < form->field_count; i++)      /* one per name */
+                if (!strcmp(form->fields[i].type, "radio") && !strcmp(form->fields[i].name, field->name))
+                    form->fields[i].checked = false;
+            field->checked = true;
+            return ACTIVATE_FORM_CHANGED;
+        }
+        if (!strcmp(field->type, "select")) return ACTIVATE_SELECT;
         snprintf(edit_buf, edit_cap, "%s", field->value);
         *edit_cursor = strlen(edit_buf);
         *edit_form = action->form_index;
@@ -3101,6 +3438,170 @@ static int wrap_token_width(const char *s, size_t start, size_t end) {
     }
 
     return width;
+}
+
+/*
+ * 4.5-dev3: lay out a parsed table as aligned columns.
+ *
+ * sb[start..) holds the table as the parser wrote it: a ROW marker at every
+ * <tr>, a CELL marker at every <td>/<th>, cells separated by " | " and rows
+ * by line breaks, plus the zero-width style/colour markers.  A simple table
+ * - not nested, every cell one line of plain text (no form field, image or
+ * <pre>), at least two rows with two cells, and the columns fitting the
+ * screen width - is rewritten with the cells padded to the column widths
+ * and two spaces between columns.  Anything else stays as it was, only
+ * without the ROW/CELL markers.
+ */
+#define TABLE_MAX_ROWS 200
+#define TABLE_MAX_COLS 12
+typedef struct { size_t start, end, vis_start, vis_end; int cols; } table_cell_t;
+
+static void table_strip(char *buf, size_t start, size_t *len) {
+    size_t o = start;
+    for (size_t i = start; i < *len; ) {
+        unsigned char c = (unsigned char)buf[i];
+        if (c == 0xEE && i + 2 < *len) {
+            size_t j = i;
+            unsigned cp = utf8_next(buf, *len, &j);
+            if (cp == TEXT_TABLE_ROW || cp == TEXT_TABLE_CELL) { i = j; continue; }
+        }
+        buf[o++] = buf[i++];
+    }
+    *len = o;
+    buf[o] = 0;
+}
+
+static void table_layout(sbuf_t *sb, size_t start, bool nested) {
+    if (!sb || !sb->buf || start > sb->len) return;
+    static table_cell_t cells[TABLE_MAX_ROWS][TABLE_MAX_COLS];   /* static: small app stack */
+    static int ncells[TABLE_MAX_ROWS];
+    static int colw[TABLE_MAX_COLS];
+    const char *b = sb->buf;
+    size_t len = sb->len;
+    bool ok = !nested;
+    /* = k_max_cols (defined further down) */
+    const int max_cols = (VIEW_W - 2 * PAD_LR) / ((FONT_W_COLS + FONT_COL_GAP) * g_page_scale);
+    int rows = -1;                       /* no row yet */
+    int cur = -1;                        /* cell being read in row `rows` */
+    size_t prefix_end = len;             /* text before the first row/cell */
+
+    for (size_t i = start; i < len && ok; ) {
+        size_t at = i;
+        unsigned cp = utf8_next(b, len, &i);
+        if (cp == TEXT_TABLE_ROW || (cp == TEXT_TABLE_CELL && rows < 0)) {
+            if (prefix_end == len) prefix_end = at;
+            if (cur >= 0 && rows >= 0) cells[rows][cur].end = at;
+            if (rows >= 0 && ncells[rows] == 0) rows--;      /* empty row: reuse it */
+            if (++rows >= TABLE_MAX_ROWS) { ok = false; break; }
+            ncells[rows] = 0;
+            cur = -1;
+            if (cp == TEXT_TABLE_ROW) continue;
+        }
+        if (cp == TEXT_TABLE_CELL) {
+            if (cur >= 0) {
+                size_t e = at;                               /* drop the " | " separator */
+                if (e >= cells[rows][cur].start + 3 && !memcmp(b + e - 3, " | ", 3)) e -= 3;
+                cells[rows][cur].end = e;
+            }
+            if (ncells[rows] >= TABLE_MAX_COLS) { ok = false; break; }
+            cur = ncells[rows]++;
+            cells[rows][cur].start = i;
+            cells[rows][cur].end = len;
+            continue;
+        }
+        if (cur < 0) continue;
+        if (cp == TEXT_ACTION_START || cp == TEXT_IMAGE_MARK || cp == TEXT_PRE_ON) ok = false;
+    }
+    if (ok && rows >= 0 && cur >= 0) cells[rows][cur].end = len;
+    if (ok && rows >= 0 && ncells[rows] == 0) rows--;
+
+    /* Cell widths; a line break inside a cell's text makes it not simple. */
+    int nrows = rows + 1, ncols = 0, wide_rows = 0;
+    if (ok) {
+        memset(colw, 0, sizeof colw);
+        for (int r = 0; r < nrows && ok; r++) {
+            if (ncells[r] >= 2) wide_rows++;
+            if (ncells[r] > ncols) ncols = ncells[r];
+            for (int c = 0; c < ncells[r]; c++) {
+                table_cell_t *cell = &cells[r][c];
+                /* the visible part: from the first to the last glyph that is
+                 * not a space; spaces and line breaks around it are dropped */
+                cell->vis_start = cell->vis_end = cell->start;
+                bool seen = false;
+                for (size_t i = cell->start; i < cell->end; ) {
+                    size_t at = i;
+                    unsigned cp = utf8_next(b, cell->end, &i);
+                    if (cp != ' ' && cp != '\n' && wrap_glyph_width(cp)) {
+                        if (!seen) cell->vis_start = at;
+                        seen = true;
+                        cell->vis_end = i;
+                    }
+                }
+                int px = 0;
+                for (size_t i = cell->vis_start; i < cell->vis_end && ok; ) {
+                    unsigned cp = utf8_next(b, cell->vis_end, &i);
+                    if (cp == '\n') ok = false;                 /* a multi-line cell */
+                    px += wrap_glyph_width(cp);
+                }
+                cell->cols = (px + CH_W - 1) / CH_W;
+                if (cell->cols > colw[c]) colw[c] = cell->cols;
+            }
+        }
+        int total = 0;
+        for (int c = 0; c < ncols; c++) total += colw[c] + (c ? 2 : 0);
+        if (wide_rows < 2 || total > max_cols) ok = false;
+    }
+
+    if (!ok) {
+        table_strip(sb->buf, start, &sb->len);
+        return;
+    }
+
+    /* Build the new text: prefix, then each row on its own line. */
+    size_t cap = (len - start) + (size_t)nrows * ((size_t)max_cols + 4) + 16;
+    char *out = (char *)malloc(cap);
+    if (!out) { table_strip(sb->buf, start, &sb->len); return; }
+    size_t o = 0;
+    #define TL_PUT(p, n) do { size_t n_ = (n); if (o + n_ < cap) { memcpy(out + o, (p), n_); o += n_; } } while (0)
+    if (prefix_end > start && prefix_end <= len) {
+        TL_PUT(b + start, prefix_end - start);
+        bool visible = false;
+        for (size_t i = start; i < prefix_end; ) {
+            unsigned cp = utf8_next(b, prefix_end, &i);
+            if (cp != '\n' && cp != ' ' && wrap_glyph_width(cp)) visible = true;
+        }
+        if (visible && o && out[o - 1] != '\n') TL_PUT("\n", 1);
+    }
+    /* The rows go between <pre> markers, so wrapping keeps the padding
+     * (it collapses runs of spaces elsewhere). */
+    char pre = TEXT_PRE_ON;
+    TL_PUT(&pre, 1);
+    for (int r = 0; r < nrows; r++) {
+        for (int c = 0; c < ncells[r]; c++) {
+            table_cell_t *cell = &cells[r][c];
+            /* the cell without line breaks (they sit in the trailing part) */
+            for (size_t i = cell->start; i < cell->end; i++) {
+                bool outside = i < cell->vis_start || i >= cell->vis_end;
+                if (b[i] == '\n' || (outside && b[i] == ' ')) continue;
+                TL_PUT(b + i, 1);
+            }
+            if (c < ncells[r] - 1) {
+                int pad = colw[c] - cell->cols + 2;
+                for (int k = 0; k < pad; k++) TL_PUT(" ", 1);
+            }
+        }
+        if (r == nrows - 1) { pre = TEXT_PRE_OFF; TL_PUT(&pre, 1); }
+        TL_PUT("\n", 1);
+    }
+    #undef TL_PUT
+    out[o] = 0;
+    sb->len = start;
+    sb->buf[start] = 0;
+    if (!sb_bytes(sb, out, o)) {
+        /* cannot happen in practice (the old text was as long); keep safe */
+        sb->failed = false;
+    }
+    free(out);
 }
 
 /* Phase 3 GIF Test3: used by wrapping to preserve inline-image control
@@ -4641,10 +5142,16 @@ static int decode_web_image_bounded(const unsigned char *buf, size_t len,
         return 0;
     }
 
+    /* 4.5-dev2: images with transparency (PNG alpha, GIF) are decoded with
+     * alpha and laid on the page background: white in the web look, black in
+     * the badge look.  Before, the transparent pixels kept whatever colour
+     * they had (often black: black boxes behind logos on a white page). */
+    unsigned comp = (is_gif || channels == 2 || channels == 4) ? 4U : 3U;
+    unsigned matte = g_page_look == LOOK_WEB ? 255U : 0U;
     size_t pixels = (size_t)w * (size_t)h;
-    if (pixels > IMAGE_DECODE_MAX_BYTES / 3U) {
+    if (pixels > IMAGE_DECODE_MAX_BYTES / comp) {
         printf("[mini_browser] image: rejected %dx%d: RGB decode would need %u bytes (budget %u)\n",
-               w, h, (unsigned)(pixels * 3U), (unsigned)IMAGE_DECODE_MAX_BYTES);
+               w, h, (unsigned)(pixels * comp), (unsigned)IMAGE_DECODE_MAX_BYTES);
         return 0;
     }
 
@@ -4657,9 +5164,9 @@ static int decode_web_image_bounded(const unsigned char *buf, size_t len,
     unsigned char *rgb = NULL;
     if (is_gif) {
         rgb = mb_stbi_load_gif_first_frame_from_memory(
-            buf, (int)len, &w, &h, &channels, 3);
+            buf, (int)len, &w, &h, &channels, (int)comp);
     } else {
-        rgb = stbi_load_from_memory(buf, (int)len, &w, &h, &channels, 3);
+        rgb = stbi_load_from_memory(buf, (int)len, &w, &h, &channels, (int)comp);
     }
     if (!rgb) {
         printf("[mini_browser] image: stb decode failed: %s\n",
@@ -4692,10 +5199,16 @@ static int decode_web_image_bounded(const unsigned char *buf, size_t len,
         int sy = (int)(((long long)y * h) / dh);
         for (int x = 0; x < dw; x++) {
             int sx = (int)(((long long)x * w) / dw);
-            size_t off = ((size_t)sy * (size_t)w + (size_t)sx) * 3U;
+            size_t off = ((size_t)sy * (size_t)w + (size_t)sx) * comp;
             unsigned r = rgb[off + 0];
             unsigned g = rgb[off + 1];
             unsigned b = rgb[off + 2];
+            if (comp == 4U) {
+                unsigned a = rgb[off + 3];
+                r = (r * a + matte * (255U - a)) / 255U;
+                g = (g * a + matte * (255U - a)) / 255U;
+                b = (b * a + matte * (255U - a)) / 255U;
+            }
 
             small[(size_t)y * (size_t)dw + (size_t)x] =
                 (uint16_t)(((r & 0xF8U) << 8) |
@@ -5390,6 +5903,85 @@ static void draw_unicode_char_ex(SDL_Renderer *r, int x, int y, unsigned cp, boo
 }
 
 
+/* ---------- 4.5-dev2: page colours ----------
+ * g_pc holds the colours of the page being drawn.  It is active only while
+ * page content is drawn (browser_render_page, the full-page screenshot), so
+ * the bar, menus and dialogs keep the badge colours in both looks. */
+typedef struct {
+    bool active;
+    unsigned bg, text, link, heading, form, rule, focus;
+} page_colors_t;
+static page_colors_t g_pc;
+
+#define MIN_CONTRAST 3.0f   /* WCAG: 3:1 for large text; the 5x7 font at 2x is bold enough */
+
+static float rgb_luminance(unsigned rgb) {
+    /* sRGB to linear with gamma 2.0 instead of 2.4: no powf() needed, and
+     * close enough for "readable or not". */
+    float r = (float)((rgb >> 16) & 0xFF) / 255.0f;
+    float g = (float)((rgb >> 8) & 0xFF) / 255.0f;
+    float b = (float)(rgb & 0xFF) / 255.0f;
+    return 0.2126f * r * r + 0.7152f * g * g + 0.0722f * b * b;
+}
+
+static float rgb_contrast(unsigned a, unsigned b) {
+    float la = rgb_luminance(a) + 0.05f, lb = rgb_luminance(b) + 0.05f;
+    return la > lb ? la / lb : lb / la;
+}
+
+/* fg when it is readable on bg; else fallback; else black or white. */
+static unsigned readable_color(unsigned fg, unsigned bg, unsigned fallback) {
+    static unsigned last_fg = 0xFFFFFFFFu, last_bg, last_fallback, last_out;
+    if (fg == last_fg && bg == last_bg && fallback == last_fallback) return last_out;
+    unsigned out = fg;
+    if (rgb_contrast(fg, bg) < MIN_CONTRAST) {
+        if (rgb_contrast(fallback, bg) >= MIN_CONTRAST) out = fallback;
+        else out = rgb_contrast(0x000000u, bg) >= rgb_contrast(0xFFFFFFu, bg) ? 0x000000u : 0xFFFFFFu;
+    }
+    last_fg = fg; last_bg = bg; last_fallback = fallback; last_out = out;
+    return out;
+}
+
+static void page_colors_begin(const page_t *page) {
+    g_pc.active = true;
+    if (g_page_look == LOOK_WEB) {
+        /* Black & White mode: black on white, whatever the page says. */
+        unsigned char set = (page && g_display_mode != DISPLAY_BW) ? page->body_colors : 0;
+        g_pc.bg = (set & BODY_BG) ? page->body_bg : 0xFFFFFFu;
+        g_pc.text = readable_color((set & BODY_TEXT) ? page->body_text : 0x000000u, g_pc.bg, 0x000000u);
+        g_pc.link = readable_color((set & BODY_LINK) ? page->body_link : 0x0000EEu, g_pc.bg, g_pc.text);
+        g_pc.heading = g_pc.text;
+        g_pc.form = readable_color(0x8A4B00u, g_pc.bg, g_pc.text);
+        g_pc.rule = 0xA0A0A0u;
+        g_pc.focus = readable_color(0x1A73E8u, g_pc.bg, g_pc.text);
+    } else {
+        g_pc.bg = 0x000000u;
+        g_pc.text = 0xDCDCDCu;
+        g_pc.link = 0x00DCFFu;
+        g_pc.heading = 0xB95AFFu;
+        g_pc.form = 0xFFCD46u;
+        g_pc.rule = 0x465A64u;
+        g_pc.focus = 0x64EFFEu;
+    }
+}
+
+static void page_colors_end(void) {
+    g_pc.active = false;
+}
+
+/* The page background below the bar (web look; the badge look is black
+ * already).  y0..VIEW_H. */
+static void page_paint_background(SDL_Renderer *r, int y0) {
+    if (!r || !g_pc.active || g_page_look != LOOK_WEB) return;
+    SDL_SetRenderDrawColor(r, (Uint8)(g_pc.bg >> 16), (Uint8)(g_pc.bg >> 8), (Uint8)g_pc.bg, 255);
+    SDL_FRect rc = { 0.0f, (float)y0, (float)VIEW_W, (float)(VIEW_H - y0) };
+    SDL_RenderFillRect(r, &rc);
+}
+
+static void set_draw_rgb(SDL_Renderer *r, unsigned rgb) {
+    SDL_SetRenderDrawColor(r, (Uint8)(rgb >> 16), (Uint8)(rgb >> 8), (Uint8)rgb, 255);
+}
+
 typedef struct {
     unsigned cp;
     bool bold;
@@ -5400,6 +5992,7 @@ typedef struct {
     bool custom_color;
     unsigned char r, g, b;
     bool custom_background;
+    bool bg_legacy;              /* 4.5-dev2: from bgcolor="": web look only */
     unsigned char bg_r, bg_g, bg_b;
     unsigned char dir;
     unsigned char mark;          /* 4.4: MARK_FIND, MARK_FIND_CURRENT, MARK_FOCUS */
@@ -5716,7 +6309,8 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
     /* A real <hr> is represented by one zero-width internal marker. */
     for (int i = 0; i < count; i++) {
         if (g[i].cp == TEXT_HRULE) {
-            SDL_SetRenderDrawColor(r, 70, 90, 100, 255);
+            if (g_pc.active) set_draw_rgb(r, g_pc.rule);
+            else SDL_SetRenderDrawColor(r, 70, 90, 100, 255);
             SDL_RenderLine(r, (float)x, (float)(cy + CH_H / 2),
                            (float)(x + max_w), (float)(cy + CH_H / 2));
             return 1;
@@ -5745,7 +6339,7 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
             if (focus_x0 >= 0 && focus_y != cy) {
                 SDL_FRect ring = { (float)(focus_x0 - 2), (float)(focus_y - 2),
                                    (float)(focus_x1 - focus_x0 + 4), (float)(CH_H + 4) };
-                SDL_SetRenderDrawColor(r, 0x64, 0xEF, 0xFE, 255);
+                set_draw_rgb(r, g_pc.active ? g_pc.focus : 0x64EFFEu);
                 SDL_RenderRect(r, &ring);
                 focus_x0 = -1;
             }
@@ -5765,14 +6359,30 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
         }
 
         /* Phase 2B: paint the background cell first.  This intentionally
-         * follows the rendered text run rather than introducing block geometry. */
-        if (g_display_mode != DISPLAY_BW && g[i].custom_background) {
+         * follows the rendered text run rather than introducing block geometry.
+         * 4.5-dev2: a bgcolor="" background only in the web look. */
+        unsigned cell_bg = g_pc.bg;
+        if (g_display_mode != DISPLAY_BW && g[i].custom_background &&
+            (!g[i].bg_legacy || g_page_look == LOOK_WEB)) {
             SDL_SetRenderDrawColor(r, g[i].bg_r, g[i].bg_g, g[i].bg_b, 255);
             SDL_FRect bg_rect = { (float)cx, (float)cy, (float)char_w, (float)CH_H };
             SDL_RenderFillRect(r, &bg_rect);
+            cell_bg = ((unsigned)g[i].bg_r << 16) | ((unsigned)g[i].bg_g << 8) | g[i].bg_b;
         }
 
-        if (g_display_mode == DISPLAY_BW) {
+        if (g_pc.active) {
+            /* 4.5-dev2: page text in the page look, never unreadable. */
+            unsigned def = g[i].color == TEXT_COLOR_LINK ? g_pc.link :
+                           g[i].color == TEXT_COLOR_HEADING ? g_pc.heading :
+                           g[i].color == TEXT_COLOR_FORM ? g_pc.form : g_pc.text;
+            if (g_display_mode == DISPLAY_BW) {
+                set_draw_rgb(r, g_pc.text);
+            } else {
+                unsigned fg = g[i].custom_color
+                    ? ((unsigned)g[i].r << 16) | ((unsigned)g[i].g << 8) | g[i].b : def;
+                set_draw_rgb(r, readable_color(fg, cell_bg, def));
+            }
+        } else if (g_display_mode == DISPLAY_BW) {
             SDL_SetRenderDrawColor(r, 220, 220, 220, 255);
         } else if (g[i].custom_color) {
             SDL_SetRenderDrawColor(r, g[i].r, g[i].g, g[i].b, 255);
@@ -5811,7 +6421,7 @@ static int draw_visual_line(SDL_Renderer *r, int x, int y,
     if (focus_x0 >= 0) {
         SDL_FRect ring = { (float)(focus_x0 - 2), (float)(focus_y - 2),
                            (float)(focus_x1 - focus_x0 + 4), (float)(CH_H + 4) };
-        SDL_SetRenderDrawColor(r, 0x64, 0xEF, 0xFE, 255);
+        set_draw_rgb(r, g_pc.active ? g_pc.focus : 0x64EFFEu);
         SDL_RenderRect(r, &ring);
     }
     return rows;
@@ -5843,7 +6453,7 @@ static void debug_print_content_clean(const char *s) {
  */
 #define TEXT_STATE_DEPTH 32
 
-typedef struct { bool custom; unsigned char r, g, b; } text_rgb_t;
+typedef struct { bool custom, legacy; unsigned char r, g, b; } text_rgb_t;
 typedef struct {
     bool bold_set, bold, italic_set, italic, underline_set, underline;
     unsigned char align;
@@ -5866,6 +6476,7 @@ typedef struct {
     int background_depth, background_overflow;
     int background_nibbles;
     unsigned background_value;
+    bool background_legacy;       /* 4.5-dev2: the colour being read is a bgcolor="" */
 } text_state_t;
 
 static void text_state_reset(text_state_t *st) {
@@ -5956,9 +6567,10 @@ static bool text_state_apply(text_state_t *st, unsigned cp) {
         return true;
     }
 
-    if (cp == TEXT_BG_START) {
+    if (cp == TEXT_BG_START || cp == TEXT_BG_LEGACY) {
         st->background_nibbles = 0;
         st->background_value = 0;
+        st->background_legacy = cp == TEXT_BG_LEGACY;
         return true;
     }
     if (st->background_nibbles >= 0 && cp >= TEXT_BG_NIBBLE && cp <= TEXT_BG_NIBBLE + 15) {
@@ -5967,6 +6579,7 @@ static bool text_state_apply(text_state_t *st, unsigned cp) {
             text_rgb_push(st->background_stack, &st->background_depth,
                           &st->background_overflow, st->background);
             st->background.custom = true;
+            st->background.legacy = st->background_legacy;
             st->background.r = (unsigned char)((st->background_value >> 16) & 0xFF);
             st->background.g = (unsigned char)((st->background_value >> 8) & 0xFF);
             st->background.b = (unsigned char)(st->background_value & 0xFF);
@@ -6071,6 +6684,7 @@ static int draw_text_ex(SDL_Renderer *r, int x, int y, const char *s, size_t L,
                 line[count].custom_color = st->color.custom;
                 line[count].r = st->color.r; line[count].g = st->color.g; line[count].b = st->color.b;
                 line[count].custom_background = st->background.custom;
+                line[count].bg_legacy = st->background.legacy;
                 line[count].bg_r = st->background.r;
                 line[count].bg_g = st->background.g;
                 line[count].bg_b = st->background.b;
@@ -7638,8 +8252,11 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
     }
+    page_colors_begin(page);                    /* 4.5-dev2: page look */
+    page_paint_background(renderer, slice_top == 0 ? URLBAR_H + 3 : 0);
 
     if (!content_wrapped || !*content_wrapped) {
+        page_colors_end();
         return;
     }
 
@@ -7712,6 +8329,7 @@ static void screenshot_render_full_page_slice(SDL_Renderer *renderer,
         p = nl ? nl + 1 : NULL;
     }
     PAGE_SCALE_END();
+    page_colors_end();
 }
 
 static bool screenshot_stream_full_page(SDL_Renderer *renderer,
@@ -7798,7 +8416,8 @@ typedef enum {
     OVERLAY_IMAGE,       /* image viewer */
     OVERLAY_TABS,        /* WHY+A tab overview */
     OVERLAY_DOWNLOAD,    /* 4.3: "Download this file?" */
-    OVERLAY_SHARE        /* 4.4: QR code of the address (WHY+U) */
+    OVERLAY_SHARE,       /* 4.4: QR code of the address (WHY+U) */
+    OVERLAY_SELECT       /* 4.5-dev3: choose an option of a <select> */
 } overlay_t;
 
 typedef enum {
@@ -7859,6 +8478,7 @@ typedef struct browser_s {
     int sugg_sel;               /* -1 = the typed text itself */
 
     int tab_sel;                /* selected row in the tab overview */
+    int select_sel;             /* 4.5-dev3: highlighted option in the <select> chooser */
 
     /* 4.3: the file offered for download */
     char dl_url[URL_MAX];
@@ -9490,6 +10110,32 @@ static void settings_remove_legacy(void) {
     printf("[mini_browser] zoom: removed the 4.4-dev1 settings file, text at 100%%\n");
 }
 
+/* 4.5-dev2: the page look (WHY+N) is kept in its own small file.  It only
+ * changes colours, never the wrapping, so the serial text the regression
+ * suite reads is the same in both looks. */
+#define LOOK_FILE "APPS:[mini_browser]look.txt"
+
+static void look_load(void) {
+    FILE *f = fopen(LOOK_FILE, "r");
+    if (f) {
+        char line[16] = "";
+        if (fgets(line, sizeof line, f) && !strncmp(line, "web", 3)) g_page_look = LOOK_WEB;
+        fclose(f);
+    }
+    printf("[mini_browser] page look: %s\n", page_look_name(g_page_look));
+    fflush(stdout);
+}
+
+static void look_save(void) {
+    FILE *f = fopen(LOOK_FILE, "w");
+    if (!f) {
+        printf("[mini_browser] page look: could not save %s\n", LOOK_FILE);
+        return;
+    }
+    fprintf(f, "%s\n", page_look_name(g_page_look));
+    fclose(f);
+}
+
 /* Re-wrap a page's text for the current zoom. */
 static char *rewrap_page(const page_t *pg) {
     return pg && pg->text ? wrap_text(pg->text, k_max_cols) : NULL;
@@ -10266,6 +10912,9 @@ static const char k_help_html[] =
     HELP_KEY("Enter", "open the link or field with the ring (without one: reload)")
     "In a form field: type the text, Left/Right/Home/End/Backspace/Delete edit, "
     "Enter keeps it, Esc cancels. Then open the [Submit] button.<br>"
+    "A checkbox [ ] or radio button ( ) changes when you open it: [x], (*). "
+    "A list [Netherlands v] opens a chooser: Up/Down, Enter takes, Esc cancels. "
+    "A password is shown as ****.<br>"
     "An image link opens the image viewer; Esc closes it.</p>"
 
     "<br><h2>Find in page</h2><p>"
@@ -10329,7 +10978,12 @@ static const char k_help_html[] =
 
     "<br><h2>Display and screenshots</h2><p>"
     HELP_KEY("WHY+O", "options: 1 black and white, 2 colors, 3 colors + one image "
-                      "(default), 4 colors + 5 images (experimental); Esc closes")
+                      "(default), 4 colors + 5 images (experimental), 5 page look; "
+                      "Esc closes")
+    HELP_KEY("WHY+N", "page look: badge (light text on black) or web (like a normal "
+                      "browser: the page's own background or white, black text, blue "
+                      "links). Kept after a restart. Text that would be unreadable on "
+                      "its background is shown in a readable colour in both looks")
     HELP_KEY("WHY+S", "screenshot of the screen, sent on the USB serial port")
     HELP_KEY("WHY+Z", "screenshot of the whole page")
     "</p>"
@@ -10352,6 +11006,8 @@ static const char k_help_html[] =
     "- Scripts, styles and SVG are left out while a page loads; up to "
     "256 KB of the rest is shown (WHY+I says how much was left out).<br>"
     "- A page that redirects with a refresh tag is followed automatically.<br>"
+    "- Simple tables are shown as columns; tables in tables, or too wide "
+    "for the screen, as rows with | between the cells.<br>"
     "- The badge has no clock: cookie and cache times start from the "
     "first web page that sends the date.<br>"
     "- The last 3 pages are kept for a fast WHY+B / WHY+G.</p>"
@@ -10846,6 +11502,12 @@ static void browser_render_options(browser_t *b) {
     oy += (CH_H + LINE_SPACING);
     draw_text(ren, PAD_LR, oy, "JPEG/PNG/GIF - Press 1/2/3/4, Esc to cancel", w);
     oy += 2 * (CH_H + LINE_SPACING);
+    snprintf(option_line, sizeof(option_line), "5. Page look: %s",
+             g_page_look == LOOK_WEB ? "Web (light, like a normal browser)" : "Badge (dark)");
+    draw_text(ren, PAD_LR, oy, option_line, w);
+    oy += (CH_H + LINE_SPACING);
+    draw_text(ren, PAD_LR, oy, "   Press 5 (or WHY+N anywhere) to switch", w);
+    oy += 2 * (CH_H + LINE_SPACING);
     snprintf(option_line, sizeof(option_line), "Text size: %d%%  (WHY+= bigger, WHY+- smaller,",
              g_page_scale * 50);
     draw_text(ren, PAD_LR, oy, option_line, w);
@@ -10880,7 +11542,9 @@ static const char *browser_visible_start(browser_t *b, text_state_t *state) {
 static void browser_render_page(browser_t *b) {
     SDL_Renderer *ren = b->ren;
     draw_ui(ren, b->barline);
-    if (!b->content_wrapped) return;
+    page_colors_begin(b->page);                 /* 4.5-dev2: page look */
+    page_paint_background(ren, URLBAR_H + 3);
+    if (!b->content_wrapped) { page_colors_end(); return; }
 
     /* 4.4: matches and focus belong to this text (zoom re-wraps it). */
     if (g_find.shown && g_find.content != b->content_wrapped) find_compute(b->content_wrapped);
@@ -10931,6 +11595,7 @@ static void browser_render_page(browser_t *b) {
         p = nl ? nl + 1 : NULL;
     }
     PAGE_SCALE_END();
+    page_colors_end();
 }
 
 /* Wrap s in a colour marker so draw_text() draws it in rgb. */
@@ -10945,6 +11610,52 @@ static void colored_text(char *out, size_t cap, unsigned rgb, const char *s) {
     size_t pn = utf8_encode(TEXT_COLOR_POP, pop);
     pop[pn] = 0;
     snprintf(out, cap, "%s%s%s", tmp, s, pop);
+}
+
+static form_field_t *browser_edit_field(browser_t *b);
+static void browser_refresh_form_text(browser_t *b);
+
+/* 4.5-dev3: the <select> chooser, over the page. */
+__attribute__((noinline)) static void browser_render_select(browser_t *b) {
+    static char line[200], label[160];
+    SDL_Renderer *ren = b->ren;
+    form_field_t *field = browser_edit_field(b);
+    if (!field || !field->opt_count) return;
+    const int step = CH_H + LINE_SPACING;
+    const int rows = field->opt_count < 14 ? field->opt_count : 14;
+    const int x = 40, w = VIEW_W - 80, h = (rows + 4) * step + 20;
+    const int y = (VIEW_H - h) / 2;
+    SDL_FRect box = { (float)x, (float)y, (float)w, (float)h };
+    SDL_SetRenderDrawColor(ren, 0x11, 0x18, 0x26, 255);
+    SDL_RenderFillRect(ren, &box);
+    SDL_SetRenderDrawColor(ren, 0x64, 0xEF, 0xFE, 255);
+    SDL_RenderRect(ren, &box);
+
+    int top = b->select_sel - rows / 2;          /* keep the highlight in view */
+    if (top > field->opt_count - rows) top = field->opt_count - rows;
+    if (top < 0) top = 0;
+    int ty = y + 10;
+    snprintf(label, sizeof label, "%s  (%d of %d)", field->name, b->select_sel + 1, field->opt_count);
+    colored_text(line, sizeof line, 0xFFFB96, label);
+    draw_text(ren, x + 14, ty, line, w - 28);
+    ty += 2 * step;
+    for (int i = top; i < top + rows; i++, ty += step) {
+        const char *text = NULL;
+        if (!select_option(b->page, field, i, NULL, &text)) break;
+        if (i == b->select_sel) {
+            SDL_FRect sel = { (float)(x + 6), (float)(ty - 2), (float)(w - 12), (float)(CH_H + 4) };
+            SDL_SetRenderDrawColor(ren, 0x18, 0x28, 0x3C, 255);
+            SDL_RenderFillRect(ren, &sel);
+            SDL_SetRenderDrawColor(ren, 0x64, 0xEF, 0xFE, 255);
+            SDL_RenderRect(ren, &sel);
+        }
+        snprintf(label, sizeof label, "%s %s", i == field->opt_sel ? "*" : " ", text);
+        colored_text(line, sizeof line, i == b->select_sel ? 0xFFFFFF : 0xE5E7EB, label);
+        draw_text(ren, x + 14, ty, line, w - 28);
+    }
+    ty += step;
+    colored_text(line, sizeof line, 0x9CA3AF, "Up/Down choose  Enter take  Esc cancel");
+    draw_text(ren, x + 14, ty, line, w - 28);
 }
 
 /* WHY+A tab overview (WHY2025 style). */
@@ -11022,6 +11733,7 @@ __attribute__((noinline)) static void browser_render(browser_t *b) {
     else if (b->overlay == OVERLAY_TABS) browser_render_tabs(b);
     else if (b->overlay == OVERLAY_DOWNLOAD) { browser_render_page(b); browser_render_download(b); }
     else if (b->overlay == OVERLAY_SHARE) browser_render_share(b);
+    else if (b->overlay == OVERLAY_SELECT) { browser_render_page(b); browser_render_select(b); }
     else browser_render_page(b);
 
     /* 4.4: offer the simplified view on long articles (until scrolled). */
@@ -11069,6 +11781,7 @@ static void browser_handle_text(browser_t *b, const char *t) {
         return;
     }
     if (!t) return;
+    if (b->overlay == OVERLAY_SELECT) return;   /* 4.5-dev3: the chooser takes no text */
 
     /* One TEXT_INPUT event can carry several characters (paste, IME, a
      * batched key repeat): handle all of them, not just the first. */
@@ -11105,6 +11818,26 @@ static void browser_handle_text(browser_t *b, const char *t) {
     }
 }
 
+/* 4.5-dev2: switch between the badge look and the web look. */
+static void browser_set_look(browser_t *b, page_look_t look) {
+    g_page_look = look;
+    look_save();
+    /* Transparent image pixels were laid on the old background: decode the
+     * images again (from the disk cache) and drop the back/forward copies. */
+    bool had_images = false;
+    for (int i = 0; i < MAX_INLINE_IMAGES; i++)
+        if (g_inline_images[i].loaded) had_images = true;
+    image_release_all();
+    bfcache_clear();
+    if (had_images && b->page && b->content_wrapped) bg_start(b);
+    browser_set_status(b, look == LOOK_WEB ? "PAGE LOOK: WEB (light)" : "PAGE LOOK: BADGE (dark)", 1500);
+    /* "switched to": the site survey waits for this line, and must not
+     * mistake the "page look: badge" printed at start for it. */
+    printf("[mini_browser] page look: switched to %s\n", page_look_name(g_page_look));
+    fflush(stdout);
+    b->dirty = true;
+}
+
 static void browser_handle_options_key(browser_t *b, SDL_Scancode sc) {
     display_mode_t selected = g_display_mode;
     bool changed = false;
@@ -11113,6 +11846,12 @@ static void browser_handle_options_key(browser_t *b, SDL_Scancode sc) {
     else if (sc == SDL_SCANCODE_2) { selected = DISPLAY_COLORS; changed = true; }
     else if (sc == SDL_SCANCODE_3) { selected = DISPLAY_COLORS_IMAGE; changed = true; }
     else if (sc == SDL_SCANCODE_4) { selected = DISPLAY_COLORS_IMAGES_EXPERIMENTAL; changed = true; }
+    else if (sc == SDL_SCANCODE_5) {   /* 4.5-dev2: page look */
+        b->overlay = g_viewer_image.loaded ? OVERLAY_IMAGE : OVERLAY_NONE;
+        b->inhibit_text_once = true;
+        browser_set_look(b, g_page_look == LOOK_WEB ? LOOK_BADGE : LOOK_WEB);
+        return;
+    }
     else if (sc == SDL_SCANCODE_ESCAPE) {
         b->overlay = g_viewer_image.loaded ? OVERLAY_IMAGE : OVERLAY_NONE;
         b->inhibit_text_once = true;
@@ -11395,6 +12134,10 @@ static void browser_handle_accel_key(browser_t *b, SDL_Scancode sc) {
             printf("[mini_browser] full-page screenshot requested; clean page queued\n");
             break;
 
+        case SDL_SCANCODE_N:   /* 4.5-dev2: page look badge <-> web */
+            browser_set_look(b, g_page_look == LOOK_WEB ? LOOK_BADGE : LOOK_WEB);
+            break;
+
         case SDL_SCANCODE_O:
             b->overlay = OVERLAY_OPTIONS;
             printf("[mini_browser] options opened; current mode=%s\n",
@@ -11462,6 +12205,27 @@ static void browser_activate(browser_t *b) {
             }
             break;
         }
+        case ACTIVATE_FORM_CHANGED: {          /* 4.5-dev3 */
+            form_field_t *field = browser_edit_field(b);
+            if (field) {
+                printf("[mini_browser] form: %s %s=%s %s\n", field->type, field->name, field->value,
+                       field->checked ? "checked" : "not checked");
+                browser_set_status(b, field->checked ? "CHECKED" : "NOT CHECKED", 1000);
+            }
+            b->sel_action = action_index;      /* keep the ring on it */
+            browser_refresh_form_text(b);
+            break;
+        }
+        case ACTIVATE_SELECT: {                /* 4.5-dev3 */
+            form_field_t *field = browser_edit_field(b);
+            if (field) {
+                b->select_sel = field->opt_sel;
+                b->sel_action = action_index;
+                b->overlay = OVERLAY_SELECT;
+                printf("[mini_browser] form: choosing %s (%d options)\n", field->name, field->opt_count);
+            }
+            break;
+        }
         case ACTIVATE_FORM_UNSUPPORTED:
             browser_set_status(b, "FORM METHOD/ENCODING NOT SUPPORTED", 2000);
             break;
@@ -11471,6 +12235,30 @@ static void browser_activate(browser_t *b) {
         default:
             break;
     }
+}
+
+/* 4.5-dev3: the page text again after a form control changed. */
+static void browser_refresh_form_text(browser_t *b) {
+    page_t *page = b->page;
+    if (page && refresh_page_text(page)) {
+        char *wrapped = wrap_text(page->text, k_max_cols);
+        if (wrapped) {
+            int keep_scroll = b->scroll_lines;
+            browser_set_content(b, wrapped);
+            b->scroll_lines = keep_scroll;
+            browser_clamp_scroll(b);
+        }
+    }
+    b->dirty = true;
+}
+
+/* 4.5-dev3: the form control being changed (checkbox, radio, select). */
+static form_field_t *browser_edit_field(browser_t *b) {
+    page_t *page = b->page;
+    if (!page || b->form_edit_form < 0 || b->form_edit_form >= page->form_count) return NULL;
+    form_t *form = &page->forms[b->form_edit_form];
+    if (b->form_edit_field < 0 || b->form_edit_field >= form->field_count) return NULL;
+    return &form->fields[b->form_edit_field];
 }
 
 static void browser_commit_form_field(browser_t *b) {
@@ -11545,6 +12333,37 @@ static void browser_handle_key(browser_t *b, const SDL_KeyboardEvent *key) {
             printf("[mini_browser] download: cancelled %s\n", b->dl_name);
             browser_set_status(b, "DOWNLOAD CANCELLED", 1500);
         }
+        return;
+    }
+
+    /* 4.5-dev3: <select> chooser: Up/Down/PageUp/PageDown/Home/End,
+     * Enter chooses, Esc cancels. */
+    if (b->overlay == OVERLAY_SELECT && sc != SC_ACCELERATOR && !b->accel_down) {
+        /* No inhibit_text_once: these keys send no text, so it would eat the
+         * next digit typed after the chooser.  Text is ignored while it is
+         * open (browser_handle_text). */
+        form_field_t *field = browser_edit_field(b);
+        if (!field || !field->opt_count) { b->overlay = OVERLAY_NONE; return; }
+        int last = field->opt_count - 1;
+        if (sc == SDL_SCANCODE_UP && b->select_sel > 0) b->select_sel--;
+        else if (sc == SDL_SCANCODE_DOWN && b->select_sel < last) b->select_sel++;
+        else if (sc == SDL_SCANCODE_PAGEUP) b->select_sel = b->select_sel > 10 ? b->select_sel - 10 : 0;
+        else if (sc == SDL_SCANCODE_PAGEDOWN) b->select_sel = b->select_sel + 10 < last ? b->select_sel + 10 : last;
+        else if (sc == SDL_SCANCODE_HOME) b->select_sel = 0;
+        else if (sc == SDL_SCANCODE_END) b->select_sel = last;
+        else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
+            const char *value = NULL;
+            if (select_option(b->page, field, b->select_sel, &value, NULL)) {
+                field->opt_sel = (uint16_t)b->select_sel;
+                snprintf(field->value, sizeof(field->value), "%s", value);
+                printf("[mini_browser] form: select %s=%s\n", field->name, field->value);
+            }
+            b->overlay = OVERLAY_NONE;
+            browser_refresh_form_text(b);
+        } else if (sc == SDL_SCANCODE_ESCAPE) {
+            b->overlay = OVERLAY_NONE;
+        }
+        b->dirty = true;
         return;
     }
 
@@ -11884,6 +12703,7 @@ int main(void) {
     cookie_load();     /* 4.3 */
     cache_init();      /* 4.3 */
     settings_remove_legacy();   /* 4.4-dev2: zoom is no longer saved */
+    look_load();                /* 4.5-dev2: badge or web look */
 
 #if defined(ESP_PLATFORM)
     esp_log_level_set("ESP_CURL",        ESP_LOG_ERROR);

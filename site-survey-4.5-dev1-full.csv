@@ -1,0 +1,6 @@
+group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds,screenshot
+news,NOS,nos.nl,200,https://nos.nl,262144,327680,yes,55,5455,,8,01-nos.png
+news,BBC News,bbc.com/news,200,https://bbc.com/news,172843,380730,no,231,10414,,15,02-bbc-news.png
+tech,Tweakers,tweakers.net,200,https://tweakers.net,138078,397092,no,332,10337,,12,03-tweakers.png
+tech,Ars Technica,arstechnica.com,200,https://arstechnica.com,183170,354494,no,199,10460,,16,04-ars-technica.png
+tech,Wikipedia,en.wikipedia.org/wiki/ESP32,200,https://en.wikipedia.org/wiki/ESP32,262144,294912,yes,244,26176,,19,05-wikipedia.png

@@ -29,6 +29,7 @@ badge_screenshot.py (same folder) to check and repair the transfer.
     ./mini-browser-site-survey.py --label 4.5-dev1-look --view 10
     ./mini-browser-site-survey.py --label 4.5-dev1-shots --screenshots
     ./mini-browser-site-survey.py --sheet 4.5-dev1-shots     (only rebuild index.html)
+    ./mini-browser-site-survey.py --label 4.5-dev2-web --screenshots --look web
 
 It needs the custom firmware with the serial keyboard bridge (as the
 regression suite) and reuses the regression suite's serial code.  All
@@ -38,6 +39,7 @@ site-survey-<label>.csv and a table on the screen.
 
 import argparse
 import csv
+import subprocess
 import importlib.util
 import os
 import re
@@ -104,15 +106,72 @@ def take_lines(badge):
     return lines
 
 
+class ShotProgress:
+    """How much of the picture has arrived, for the progress bar.
+
+    The picture is sent as RLE records of 5 bytes (2-byte count + RGB) cut
+    into chunks of chunk_size bytes, chunk n starting at byte n*chunk_size.
+    Adding up the counts of the records received so far gives the pixels
+    received; the picture has width*height pixels.  A record cut in two by
+    a chunk border is counted when both halves are there; a lost chunk
+    (repaired from parity at the end) is simply missing from the sum."""
+
+    def __init__(self, header):
+        self.size = header.chunk_size
+        self.total = max(1, header.width * header.height)
+        self.pixels = 0
+        self.done = set()
+        self.first_byte = {}       # chunk -> its first byte
+        self.waiting_low = {}      # chunk -> low count byte of a record cut at its end
+
+    def add(self, seq, payload):
+        if seq in self.done or not payload:
+            return
+        self.done.add(seq)
+        start = seq * self.size
+        end = start + len(payload)
+        self.first_byte[seq] = payload[0]
+        r = start + (-start) % 5               # first record that starts in this chunk
+        while r < end:
+            if r + 1 < end:
+                self.pixels += payload[r - start] | (payload[r - start + 1] << 8)
+            elif seq + 1 in self.first_byte:   # next chunk already here
+                self.pixels += payload[r - start] | (self.first_byte[seq + 1] << 8)
+            else:
+                self.waiting_low[seq] = payload[r - start]
+            r += 5
+        if seq - 1 in self.waiting_low:        # finish the previous chunk's record
+            self.pixels += self.waiting_low.pop(seq - 1) | (payload[0] << 8)
+
+    def fraction(self):
+        return min(1.0, self.pixels / self.total)
+
+
+def fmt_time(seconds):
+    seconds = int(max(0, seconds))
+    h, rest = divmod(seconds, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def progress_bar(fraction, width=30):
+    full = int(fraction * width)
+    return "[" + "=" * full + (">" if full < width else "") + " " * max(0, width - full - 1) + "]"
+
+
 def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
     """WHY+S (or WHY+Z) and receive the IMG transfer from the serial log.
     Returns a short status text."""
-    take_lines(badge)
+    if any("caused an unhandled exception" in l for l in take_lines(badge)):
+        return "CRASH (before the screenshot)"
     badge.why("Z" if full_page else "S")
     state = None
     tried = []
     records = 0
     shown = 0.0
+    asked = time.monotonic()
+    progress = None
+    begun = None
     last_activity = time.monotonic()
     end_wait = None
     error = None
@@ -122,14 +181,24 @@ def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
             last_activity = time.monotonic()
         for raw in lines:
             line = raw.strip()
+            if "caused an unhandled exception" in line:
+                return "CRASH"
             kind, value = shot.parse_line(line, state)
             if kind == "data":
                 records += 1
+                if progress is not None:
+                    m = shot.DATA_RE.search(line)
+                    if m:
+                        seq = int(m.group(1))
+                        cands = state.data_chunks.get(seq)
+                        if cands:
+                            progress.add(seq, cands[-1])
             if kind == "fail":
                 return f"failed: {value}"
             if kind == "begin":
                 state = shot.TransferState(value)
                 tried, end_wait = [], None
+                progress, begun, records = ShotProgress(value), time.monotonic(), 0
             elif kind == "end" and state is not None:
                 end = shot.parse_end(value, state.header)
                 if end is not None and end not in tried:
@@ -143,13 +212,22 @@ def capture_screenshot(badge, shot, path, full_page=False, timeout=180.0):
                     h = state.header
                     rgb = shot.decode_rle5(compressed, h.width, h.height)
                     shot.write_png_rgb(Path(path), h.width, h.height, rgb)
-                    return f"ok ({h.width}x{h.height}, {repaired} repaired)"
+                    took = fmt_time(time.monotonic() - asked)
+                    return f"ok ({h.width}x{h.height}, {repaired} repaired, {took})"
                 end_wait = end_wait or time.monotonic() + 2.0
         now = time.monotonic()
-        if state is not None and now - shown >= 2.0:      # progress on the screen
-            h = state.header
-            total = (h.width * h.height * 5) // 48 // 25 + 1   # rough: RLE ~1/25 of raw
-            sys.__stdout__.write(f"\r  screenshot {h.width}x{h.height}: {records} records received ")
+        if now - shown >= 1.0:                            # progress on the screen
+            if state is None:
+                line = f"  {'rendering the whole page' if full_page else 'screenshot'} ... {fmt_time(now - asked)}"
+            else:
+                h = state.header
+                frac = progress.fraction()
+                spent = now - begun
+                eta = f"ETA {fmt_time(spent / frac - spent)}" if frac > 0.01 else "ETA --:--"
+                kbps = records * h.chunk_size / 1024 / spent if spent > 0 else 0.0
+                line = (f"  {progress_bar(frac)} {frac * 100:5.1f}%  {h.width}x{h.height}  "
+                        f"{kbps:4.1f} KB/s  {fmt_time(spent)}  {eta}")
+            sys.__stdout__.write("\r" + line.ljust(98)[:98])
             sys.__stdout__.flush()
             shown = now
         if end_wait and now > end_wait:
@@ -238,7 +316,7 @@ def text_of(content):
     return sum(1 for ch in joined if not ch.isspace())
 
 
-def restart_browser(badge):
+def restart_browser(badge, note="(Mini Browser crashed and was started again) "):
     """After a crash: Enter in the BadgeVMS menu starts Mini Browser again."""
     badge.settle(3.0)
     for attempt in range(3):
@@ -248,11 +326,71 @@ def restart_browser(badge):
             badge.wait_for(r"\[mini_browser\] enter main", 20)
             badge.wait_for(r"^--- CONTENT END ---$", 60)   # its home page
             badge.settle(2.0)
-            sys.__stdout__.write("(Mini Browser crashed and was started again) ")
+            sys.__stdout__.write(note)
             return True
         except TimeoutError:
             continue
     sys.__stdout__.write("(Mini Browser crashed; start it again on the badge) ")
+    return False
+
+
+def ensure_browser(badge):
+    """Make sure Mini Browser is running.  A badge that was just booted sits
+    in the BadgeVMS menu: Enter starts the selected app (Mini Browser).
+
+    1. Listen for 4 s: the menu prints "... running processes 1", a
+       running app "... running processes 2" or Mini Browser's own lines.
+    2. Still unknown: WHY+O (options) - Mini Browser answers "options
+       opened" and Esc closes it again.
+    3. No answer: press Enter and wait for Mini Browser's home page."""
+    badge.clear_log()
+    state = None
+    deadline = time.monotonic() + 4.0
+    while state is None and time.monotonic() < deadline:
+        with badge.lock:
+            lines = list(badge.lines)
+        for line in lines:
+            m = re.search(r"running processes (\d+)", line)
+            if m:
+                state = "menu" if m.group(1) == "1" else "app"
+            if "[mini_browser]" in line:
+                state = "app"
+        time.sleep(0.2)
+    if state is None:
+        badge.clear_log()
+        badge.why("O")
+        try:
+            badge.wait_for(r"\[mini_browser\] options opened", 5)
+            state = "app"
+            badge.press(0x29)                  # Esc: close the options again
+            badge.settle(1.0)
+        except TimeoutError:
+            state = "menu"
+    if state == "app":
+        return True
+    sys.__stdout__.write("Badge is in the BadgeVMS menu: starting Mini Browser (Enter) ... ")
+    sys.__stdout__.flush()
+    ok = restart_browser(badge, note="started\n")
+    if not ok:
+        sys.__stdout__.write("\n")
+    return ok
+
+
+def set_look(badge, want):
+    """4.5-dev2: WHY+N switches the page look (badge <-> web).  Press it until
+    Mini Browser reports "page look: switched to <want>".  Mini Browser must
+    be running (not still starting) - the browser's own start line
+    "page look: badge" is not taken as an answer."""
+    for attempt in range(4):
+        badge.clear_log()
+        badge.why("N")
+        try:
+            line = badge.wait_for(r"\[mini_browser\] page look: switched to (web|badge)", 8)
+        except TimeoutError:
+            continue                    # key not seen (browser busy or starting): again
+        if line.rstrip().endswith(want):
+            badge.settle(1.0)
+            return True
     return False
 
 
@@ -298,7 +436,13 @@ def survey_site(reg, badge, group, name, address):
 
     content = []
     try:
-        badge.wait_for(r"^--- CONTENT END ---$", 60)
+        line = badge.wait_for(r"^--- CONTENT END ---$|caused an unhandled exception", 60)
+        if "caused an unhandled exception" in line:
+            row["status"] = "CRASH"
+            row["flags"] = "crash"
+            row["seconds"] = f"{time.monotonic() - started:.0f}"
+            restart_browser(badge)
+            return row
         content = reg.latest_content_block(badge)
     except TimeoutError:
         pass
@@ -327,6 +471,45 @@ def survey_site(reg, badge, group, name, address):
     row["flags"] = " ".join(flags)
     row["seconds"] = f"{time.monotonic() - started:.0f}"
     return row
+
+
+def keep_previous_run(label):
+    """An earlier run with this label (its .csv, .log and screenshot folder)
+    is renamed to site-survey-<label>-old-<date>-<time>, not overwritten."""
+    base = os.path.join(HERE, f"site-survey-{label}")
+    parts = [p for p in (base + ".csv", base + ".log", base) if os.path.exists(p)]
+    if not parts:
+        return
+    stamp = time.strftime("%Y%m%d-%H%M", time.localtime(max(os.path.getmtime(p) for p in parts)))
+    old = f"{base}-old-{stamp}"
+    n = 2
+    while any(os.path.exists(old + ext) for ext in (".csv", ".log", "")):
+        old = f"{base}-old-{stamp}-{n}"
+        n += 1
+    for p in parts:
+        os.rename(p, old + p[len(base):])
+    sys.__stdout__.write(f"Earlier run kept as {os.path.basename(old)} (.csv, .log, screenshots)\n")
+
+
+def report_crashes(crashes, log_path, label):
+    """Where did Mini Browser crash?  badge_crash.py (same folder) turns the
+    crash report in the log into function names; it needs the ELF files of
+    the firmware build and riscv32-esp-elf-addr2line (. ~/esp-idf/export.sh)."""
+    out = sys.__stdout__
+    out.write(f"\nMini Browser crashed {len(crashes)} time(s): {', '.join(crashes)} "
+              f"(started again each time)\n")
+    tool = os.path.join(HERE, "badge_crash.py")
+    report = os.path.join(HERE, f"site-survey-{label}-crashes.txt")
+    try:
+        r = subprocess.run([sys.executable, tool, log_path], capture_output=True, text=True, timeout=120)
+        text = (r.stdout + r.stderr).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        text = f"badge_crash.py could not run: {exc}"
+    with open(report, "w", encoding="utf-8") as f:
+        f.write(f"Crashes at: {', '.join(crashes)}\n\n{text}\n")
+    out.write(f"Crash details: {report}\n")
+    out.write("  (if it says addr2line was not found: . ~/esp-idf/export.sh and run\n"
+              f"   ./badge_crash.py {os.path.basename(log_path)})\n")
 
 
 def print_table(rows, out=sys.__stdout__):
@@ -370,6 +553,12 @@ def main():
                         help="take a WHY+S screenshot of every site into site-survey-<label>/")
     parser.add_argument("--full-page", action="store_true",
                         help="with --screenshots: whole-page WHY+Z screenshots (slow on long pages)")
+    parser.add_argument("--look", choices=("web", "badge"),
+                        help="4.5-dev2+: page look for the run: web (light, like a normal "
+                             "browser) or badge (dark).  Stays set on the badge afterwards")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="replace an earlier run with the same label (default: the earlier "
+                             "run is kept as site-survey-LABEL-old-DATE-TIME)")
     parser.add_argument("--sheet", metavar="LABEL",
                         help="rebuild site-survey-LABEL/index.html from site-survey-LABEL.csv (no badge needed)")
     args = parser.parse_args()
@@ -398,6 +587,8 @@ def main():
 
     log_path = os.path.join(HERE, f"site-survey-{args.label}.log")
     csv_path = os.path.join(HERE, f"site-survey-{args.label}.csv")
+    if not args.overwrite:
+        keep_previous_run(args.label)
     real_stdout = sys.stdout
     reg = load_regression()
     reg.VIEW_DELAY = 0
@@ -410,13 +601,26 @@ def main():
     sys.stdout = log                       # the badge's serial output goes to the log
     badge = reg.Badge()
     rows = []
+    crashes = []
     try:
         badge.settle(1.0)
+        if not ensure_browser(badge):
+            real_stdout.write("Mini Browser did not start. Start it on the badge and run again. Stopped.\n")
+            return 1
+        if args.look:
+            if not set_look(badge, args.look):
+                real_stdout.write(f"Page look: could not switch to {args.look}. Is Mini Browser "
+                                  f"4.5-dev2 (or later) running and showing a page? Stopped.\n")
+                return 1
+            real_stdout.write(f"Page look: {args.look}\n")
+            real_stdout.flush()
         for i, (group, name, address) in enumerate(sites, 1):
             real_stdout.write(f"[{i}/{len(sites)}] {name} ({address}) ... ")
             real_stdout.flush()
             row = survey_site(reg, badge, group, name, address)
             rows.append(row)
+            if row["status"] == "CRASH":
+                crashes.append(name)
             if args.view > 0:
                 real_stdout.write(f"(on screen for {args.view:g} s) ")
                 real_stdout.flush()
@@ -427,6 +631,14 @@ def main():
                 result = capture_screenshot(badge, shot, os.path.join(shot_dir, fname), args.full_page)
                 if result.startswith("ok"):
                     row["screenshot"] = fname
+                if result.startswith("CRASH"):
+                    # Mini Browser crashed while making the screenshot: note
+                    # it, start it again from the BadgeVMS menu, go on.
+                    row["flags"] = (row["flags"] + " crash").strip()
+                    crashes.append(name)
+                    real_stdout.write("\r" + " " * 100 + "\r")
+                    restart_browser(badge)
+                real_stdout.write("\r" + " " * 100 + f"\r[{i}/{len(sites)}] {name} ({address}) ... ")
                 real_stdout.write(f"[screenshot {result}] ")
                 real_stdout.flush()
             real_stdout.write(f"{row['status']}, {row['text']} characters"
@@ -444,6 +656,8 @@ def main():
         w.writerows(rows)
     print_table(rows, real_stdout)
     print(f"\nResults: {csv_path}\nSerial log: {log_path}")
+    if crashes:
+        report_crashes(crashes, log_path, args.label)
     if shot is not None:
         write_contact_sheet(rows, shot_dir, args.label)
         print(f"Screenshots: {os.path.join(shot_dir, 'index.html')}")

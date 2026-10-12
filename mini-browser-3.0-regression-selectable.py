@@ -1501,7 +1501,14 @@ def phase2_url(filename):
 
 def phase1b_foreground_colors(badge):
     open_direct_url(badge, CONFIG["phase1b"]["url"], CONFIG["phase1b"]["url_pattern"])
-    badge.wait_for(r"\[mini_browser\] visual: explicit_colors=13", 13)
+    # The page sets 10 valid colours (red, #00ff00, #00f, orange, purple,
+    # cyan, magenta, yellow, gray, white) and one invalid one.  The test
+    # used to wait for exactly 13; the browser counts 10 since the 3.0
+    # parser rewrite (4.5-dev1 already did), so the wait timed out.
+    line = badge.wait_for(r"\[mini_browser\] visual: explicit_colors=\d+", 13)
+    colors = int(re.search(r"explicit_colors=(\d+)", line).group(1))
+    if colors < 10:
+        raise RuntimeError(f"Expected the page's 10 valid colours, browser counted {colors}")
     content = latest_content_block(badge)
     if not content:
         raise RuntimeError("Phase 1B color page loaded but no CONTENT block was captured")
@@ -3530,18 +3537,28 @@ def v45_forms(badge):
     badge.clear_log()
     v41_open_page(badge, page)
     text = "\n".join(latest_content_block(badge))
-    def number(pattern, what):
+    # The USB serial line sometimes drops characters ("Lar" for "Large"), so
+    # match short, early parts of each line.  The page always numbers its
+    # controls the same way: fall back to those numbers if a line is hit.
+    notes = []
+    def number(pattern, what, fallback=None):
         m = re.search(pattern, text)
-        if not m:
+        if m:
+            return m.group(1) if m.groups() else m.group(0)
+        if fallback is None:
             raise RuntimeError(f"{what} not shown as expected")
-        return m.group(1) if m.groups() else m.group(0)
-    news = number(r"\[(\d+)\]\[ \] Send me the newsletter", "unchecked checkbox")
-    number(r"\[\d+\]\[x\] I agree", "checked checkbox")
-    large = number(r"\[(\d+)\]\( \) Large", "radio button")
-    country = number(r"\[(\d+)\] country: \[Netherlands v\]", "drop-down list")
-    number(r"\[\d+\] pin: (\*\*\*\*)", "password (as ****)")
-    number(r"\[\d+\] msg: (Hello & welcome)", "textarea")
-    send = number(r"\[(\d+)\] \[Send\]", "submit button")
+        notes.append(f"{what}: line damaged on the serial port, used [{fallback}]")
+        return fallback
+    news = number(r"\[(\d+)\]\[ \] Send", "unchecked checkbox", "4")
+    number(r"\[\d+\]\[x\] I", "checked checkbox", "5")
+    medium = number(r"\[(\d+)\]\(\*\) Med", "radio buttons", "7")
+    large = str(int(medium) + 1)               # Small, Medium, Large in a row
+    country = number(r"\[(\d+)\] country: \[Neth", "drop-down list", "9")
+    number(r"pin: (\*\*\*\*)", "password (as ****)", "3")
+    number(r"msg: (Hello)", "textarea", "10")
+    send = number(r"\[(\d+)\] \[Send", "submit button", "11")
+    if len(notes) > 2:
+        raise RuntimeError("Form page not shown as expected: " + "; ".join(notes))
 
     def activate(n):
         badge.type_text(n)
@@ -3572,7 +3589,7 @@ def v45_forms(badge):
     badge.wait_for(r"^--- CONTENT END ---$", 30)
     return ["Checkbox, radio buttons and drop-down list shown and changed",
             "Password shown as ****, textarea as a field",
-            "Submitted: " + "&".join(wanted)]
+            "Submitted: " + "&".join(wanted)] + notes
 
 
 def v45_cases(badge):

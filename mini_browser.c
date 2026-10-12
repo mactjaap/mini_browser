@@ -2290,6 +2290,7 @@ typedef struct {
     /* 4.5-dev3: open tables, for table_layout() */
     struct { size_t start; bool nested; } tables[8];
     int table_depth;            /* may exceed 8: deeper ones are not tracked */
+    int noscript_depth;         /* 4.5-dev3: inside <noscript> */
 } html_parser_t;
 
 static void table_layout(sbuf_t *sb, size_t start, bool nested);
@@ -2527,6 +2528,8 @@ static void parse_text(html_parser_t *ps, const char **cursor_io) {
 static void parse_close_tag(html_parser_t *ps, const char *tag) {
     sbuf_t *sb = &ps->sb;
 
+    if (!strcmp(tag, "noscript") && ps->noscript_depth > 0) ps->noscript_depth--;
+
     if (!strcmp(tag, "head")) { ps->in_head = false; return; }
     if (!strcmp(tag, "form")) { ps->current_form = -1; sb_line_break(sb); return; }
     if (!strcmp(tag, "pre")) {
@@ -2564,6 +2567,7 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
     sbuf_t *sb = &ps->sb;
     const char *after_tag = tag_end + 1;
 
+    if (!strcmp(tag, "noscript")) ps->noscript_depth++;     /* 4.5-dev3 */
     if (ps->in_head && !html_head_tag(tag)) ps->in_head = false;
     if (!strcmp(tag, "body")) {
         ps->in_head = false;
@@ -2625,6 +2629,15 @@ static void parse_open_tag(html_parser_t *ps, const char *tag,
                 }
                 size_t n = strlen(u);
                 if (n && (u[0] == '\'' || u[0] == '"')) { u++; n -= 2; }   /* url='...' */
+                /* 4.5-dev3: a refresh inside <noscript> is how a JavaScript
+                 * page says "please turn on JavaScript" (Google's search
+                 * results send it to /httpservice/retry/enablejs).  Mini
+                 * Browser has no JavaScript but shows such pages fine, so
+                 * stay on the page. */
+                if (ps->noscript_depth > 0 || strstr(u, "enablejs")) {
+                    printf("[mini_browser] meta refresh in <noscript> ignored: %.*s\n", (int)(n < 120 ? n : 120), u);
+                    n = 0;
+                }
                 if (n > 0 && n < sizeof page->refresh && page->refresh_delay < 0) {
                     memcpy(page->refresh, u, n);
                     page->refresh[n] = 0;

@@ -3597,13 +3597,28 @@ def v45_forms(badge):
 def v45_anubis(badge):
     """4.5-dev4: an Anubis challenge is asked for again with the plain name."""
     page = CONFIG["v45"]["anubis_page"]
-    badge.clear_log()
-    badge.why("E")
-    badge.settle(0.5)
-    badge.type_text("minibrowser.macip.net/" + page)
-    badge.settle(0.2)
-    badge.enter()
-    badge.wait_for(r"anubis: challenge from", 60)
+    # Typing the address over the serial "keyboard" sometimes loses a key
+    # ("minibwser.macip.net": no such host).  Then type it again, slower.
+    for attempt in range(3):
+        badge.clear_log()
+        badge.why("E")
+        badge.settle(0.5)
+        badge.type_text("minibrowser.macip.net/" + page, key_delay=0.15 + 0.1 * attempt)
+        badge.settle(0.2)
+        badge.enter()
+        line = badge.wait_for(r"anubis: challenge from|fetch error \d+|HTTP \d+.*" + re.escape(page), 60)
+        if "anubis" in line:
+            break
+        if "fetch error" in line or "minibrowser.macip.net" not in line:
+            badge.settle(1.0)
+            continue
+        # No challenge: Mini Browser already uses its plain name for this
+        # host (the test ran before since Mini Browser started).
+        badge.wait_for(r"^--- CONTENT END ---$", 30)
+        require_content(latest_content_block(badge), "START ANUBIS", "END ANUBIS")
+        return ["Host already let in earlier in this session: page shown with the plain name"]
+    else:
+        raise RuntimeError("Could not open the page: the typed address kept arriving damaged")
     badge.wait_for(r"anubis: \S+ let MiniBrowser in", 60)
     badge.wait_for(r"^--- CONTENT END ---$", 30)
     badge.settle(0.8)

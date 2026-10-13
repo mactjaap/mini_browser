@@ -93,6 +93,8 @@ CONFIG = {
         # 4.5-dev3: form controls and tables (upload these pages too).
         "forms_page": "phase45-forms.html",
         "tables_page": "phase45-tables.html",
+        # 4.5-dev4: behaves like an Anubis gate (PHP; upload it too).
+        "anubis_page": "phase45-anubis.php",
         "max_forms": 6,
         "max_form_fields": 24,
     },
@@ -3592,6 +3594,25 @@ def v45_forms(badge):
             "Submitted: " + "&".join(wanted)] + notes
 
 
+def v45_anubis(badge):
+    """4.5-dev4: an Anubis challenge is asked for again with the plain name."""
+    page = CONFIG["v45"]["anubis_page"]
+    badge.clear_log()
+    badge.why("E")
+    badge.settle(0.5)
+    badge.type_text("minibrowser.macip.net/" + page)
+    badge.settle(0.2)
+    badge.enter()
+    badge.wait_for(r"anubis: challenge from", 60)
+    badge.wait_for(r"anubis: \S+ let MiniBrowser in", 60)
+    badge.wait_for(r"^--- CONTENT END ---$", 30)
+    badge.settle(0.8)
+    badge.view(page)
+    require_content(latest_content_block(badge), "START ANUBIS", "END ANUBIS")
+    return ["Anubis challenge recognised",
+            "Asked again as \"MiniBrowser\" (no Mozilla) and let in"]
+
+
 def v45_cases(badge):
     return [
         ("4.5 Heavy page: scripts and styles left out while loading", lambda: v45_heavy_page(badge)),
@@ -3600,6 +3621,7 @@ def v45_cases(badge):
         ("4.5 Empty <pre> and <br><br> give an empty line", lambda: v45_spacing(badge)),
         ("4.5 Tables shown as columns", lambda: v45_tables(badge)),
         ("4.5 Form controls: checkbox, radio, drop-down list", lambda: v45_forms(badge)),
+        ("4.5 Anubis check: asked again with the plain name", lambda: v45_anubis(badge)),
     ]
 
 

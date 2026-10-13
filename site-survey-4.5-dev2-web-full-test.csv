@@ -1,4 +1,0 @@
-group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds,screenshot
-tech,Hacker News,news.ycombinator.com,200,https://news.ycombinator.com,34629,34702,no,229,3248,,14,01-hacker-news.png
-tech,LWN.net,lwn.net,200,https://lwn.net,31569,31739,no,97,17502,,11,02-lwn-net.png
-tech,Wikipedia,en.wikipedia.org/wiki/ESP32,200,https://en.wikipedia.org/wiki/ESP32,262144,294912,yes,244,26090,,19,

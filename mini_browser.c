@@ -172,7 +172,7 @@ static stbi_uc *mb_stbi_load_gif_first_frame_from_memory(
 #endif
 
 /* ---------- Mini Browser version ---------- */
-#define MINI_BROWSER_VERSION "4.5-dev3"
+#define MINI_BROWSER_VERSION "4.5-dev4"
 
 /* ---------- Limits & layout ---------- */
 /* 4.5: page HTML kept after scripts, styles, SVG and comments are removed
@@ -4777,6 +4777,63 @@ static double g_net_wire_bytes;
 /* 4.5: ask for the next page without compression (after a damaged one). */
 static bool g_net_no_decode;
 
+/*
+ * 4.5: Anubis (anti-scraper "proof of work" gate, e.g. 68kmla.org) only
+ * challenges clients that call themselves "Mozilla"; its standard policy lets
+ * clients that say plainly what they are pass.  A page that turns out to be
+ * an Anubis challenge is asked for once more with a plain User-Agent, and its
+ * host keeps getting that one for the rest of the session.  Sites whose admin
+ * blocks such clients stay blocked: nothing is faked.
+ */
+#define UA_BROWSER "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") " \
+                   "Gecko/20100101 (compatible; MiniBrowser/" MINI_BROWSER_VERSION \
+                   "; +https://github.com/mactjaap/mini_browser/; HTTP/1.1)"
+#define UA_PLAIN   "User-Agent: MiniBrowser/" MINI_BROWSER_VERSION \
+                   " (text browser; BadgeVMS; ESP32; +https://github.com/mactjaap/mini_browser)"
+#define PLAIN_UA_HOSTS 8
+static char g_plain_ua_hosts[PLAIN_UA_HOSTS][96];
+static int g_plain_ua_count;
+static void url_host(const char *url, char *out, size_t cap);
+
+static bool plain_ua_for(const char *url) {
+    char host[96];
+    url_host(url, host, sizeof host);
+    for (int i = 0; i < g_plain_ua_count; i++)
+        if (!strcasecmp(g_plain_ua_hosts[i], host)) return true;
+    return false;
+}
+
+static void plain_ua_add(const char *url) {
+    if (plain_ua_for(url)) return;
+    char host[96];
+    url_host(url, host, sizeof host);
+    if (!host[0]) return;
+    int slot = g_plain_ua_count < PLAIN_UA_HOSTS ? g_plain_ua_count++ : PLAIN_UA_HOSTS - 1;
+    snprintf(g_plain_ua_hosts[slot], sizeof g_plain_ua_hosts[slot], "%s", host);
+}
+
+static void plain_ua_remove(const char *url) {
+    char host[96];
+    url_host(url, host, sizeof host);
+    for (int i = 0; i < g_plain_ua_count; i++)
+        if (!strcasecmp(g_plain_ua_hosts[i], host)) {
+            memmove(g_plain_ua_hosts[i], g_plain_ua_hosts[i + 1],
+                    (size_t)(g_plain_ua_count - i - 1) * sizeof g_plain_ua_hosts[0]);
+            g_plain_ua_count--;
+            return;
+        }
+}
+
+/* An Anubis challenge page: "Making sure you're not a bot!", "Protected by
+ * Anubis From Techaro", files under /.within.website/x/cmd/anubis/. */
+static bool page_is_anubis(const char *buf, size_t len) {
+    if (!buf || !len) return false;
+    const char *end = buf + len;
+    return find_ci_n(buf, end, "anubis") &&
+           (find_ci_n(buf, end, "techaro") || find_ci_n(buf, end, ".within.website") ||
+            find_ci_n(buf, end, "not a bot"));
+}
+
 static int fetch_one(const char *url, const char *post_body, mem_t *m, long *http_status) {
     /* 4.3: a copy on flash that is still fresh needs no request at all. */
     static cache_meta_t cached;
@@ -4815,10 +4872,7 @@ static int fetch_one(const char *url, const char *post_body, mem_t *m, long *htt
     /* Explicit request headers. */
     struct curl_slist *hdrs = NULL;
 
-    hdrs = curl_slist_append(hdrs,
-        "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
-        "Gecko/20100101 "
-        "(compatible; MiniBrowser/" MINI_BROWSER_VERSION "; +https://github.com/mactjaap/mini_browser/; HTTP/1.1)");
+    hdrs = curl_slist_append(hdrs, plain_ua_for(url) ? UA_PLAIN : UA_BROWSER);   /* 4.5: Anubis */
 
     hdrs = curl_slist_append(hdrs,
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -9908,7 +9962,8 @@ __attribute__((noinline)) static void browser_download(browser_t *b) {
     net_common_options(curl, false, b);
 
     struct curl_slist *hdrs = NULL;
-    hdrs = curl_slist_append(hdrs, "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
+    hdrs = curl_slist_append(hdrs, plain_ua_for(b->dl_url) ? UA_PLAIN :
+                                   "User-Agent: Mozilla/5.0 (BadgeVMS; ESP32; rv:" MINI_BROWSER_VERSION ") "
                                    "(compatible; MiniBrowser/" MINI_BROWSER_VERSION ")");
     hdrs = curl_slist_append(hdrs, "Accept: */*");
     hdrs = curl_slist_append(hdrs, "Accept-Encoding: identity");
@@ -11021,6 +11076,9 @@ static const char k_help_html[] =
     "- A page that redirects with a refresh tag is followed automatically.<br>"
     "- Simple tables are shown as columns; tables in tables, or too wide "
     "for the screen, as rows with | between the cells.<br>"
+    "- Sites behind an Anubis check (\"Making sure you're not a bot\") are "
+    "asked once more with Mini Browser's own name; most of them let it in. "
+    "Cloudflare and other JavaScript checks cannot be passed.<br>"
     "- The badge has no clock: cookie and cache times start from the "
     "first web page that sends the date.<br>"
     "- The last 3 pages are kept for a fast WHY+B / WHY+G.</p>"
@@ -11246,6 +11304,34 @@ __attribute__((noinline)) static void browser_fetch(browser_t *b) {
         rc = fetch_url(b->url_buf, NULL, &m, &http_status);
         g_net_no_decode = false;
         g_cache_revalidate = false;
+    }
+
+    /* 4.5: an Anubis challenge: ask once more with the plain User-Agent. */
+    if (rc == 0 && !was_post && !g_load.stopped && m.buf &&
+        content_type_is_html(g_fetch_meta.content_type) && page_is_anubis(m.buf, m.len) &&
+        !plain_ua_for(b->url_buf)) {
+        const char *where = g_fetch_meta.effective_url[0] ? g_fetch_meta.effective_url : b->url_buf;
+        char host[96];
+        url_host(where, host, sizeof host);
+        printf("[mini_browser] anubis: challenge from %s, asking again as \"MiniBrowser\" (no Mozilla)\n", host);
+        plain_ua_add(b->url_buf);
+        if (strcmp(where, b->url_buf)) plain_ua_add(where);
+        int ci = g_cache_ready ? cache_find(cache_hash(where)) : -1;
+        if (ci >= 0) cache_drop(ci, true);
+        ci = g_cache_ready ? cache_find(cache_hash(b->url_buf)) : -1;
+        if (ci >= 0) cache_drop(ci, true);
+        mem_reset(&m);
+        http_status = 0;
+        g_cache_revalidate = true;
+        rc = fetch_url(b->url_buf, NULL, &m, &http_status);
+        g_cache_revalidate = false;
+        if (rc == 0 && m.buf && page_is_anubis(m.buf, m.len)) {
+            printf("[mini_browser] anubis: %s still asks for the check: the site blocks text browsers\n", host);
+            plain_ua_remove(b->url_buf);
+            plain_ua_remove(where);
+        } else if (rc == 0) {
+            printf("[mini_browser] anubis: %s let MiniBrowser in\n", host);
+        }
     }
 
     b->pending_post = false;

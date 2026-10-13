@@ -1,8 +1,0 @@
-group,name,address,status,final_url,bytes,received,cut,links,text,flags,seconds,screenshot
-news,DW News,dw.com/en,200,https://dw.com/en,113633,295070,no,169,7715,js,13,
-tech,Ars Technica,arstechnica.com,200,https://arstechnica.com,182670,353945,no,199,10395,,16,
-tech,The Register,theregister.com,200,https://theregister.com,262144,351868,yes,108,5075,,12,
-tech,Heise,heise.de,200,https://heise.de,262144,393216,yes,151,17590,,11,
-tech,GitHub,github.com/mactjaap/mini_browser,200,https://github.com/mactjaap/mini_browser,254620,521931,no,195,32777,,25,
-tech,Wikipedia,en.wikipedia.org/wiki/ESP32,200,https://en.wikipedia.org/wiki/ESP32,262144,294912,yes,244,26096,,19,
-tech,Stack Overflow,stackoverflow.com/questions/tagged/esp32,403,,,,,,166,,20,

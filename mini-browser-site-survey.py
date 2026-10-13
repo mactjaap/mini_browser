@@ -56,11 +56,11 @@ SITES = [
     ("news", "de Volkskrant", "volkskrant.nl"),
     ("news", "BBC News", "bbc.com/news"),
     ("news", "The Guardian", "theguardian.com"),
-    ("news", "Reuters", "reuters.com"),
+    ("tech", "68kMLA forum", "68kmla.org/bb"),   # 4.5: was Reuters (DataDome bot wall, 401)
     ("news", "CNN lite", "lite.cnn.com"),
     ("news", "NPR text", "text.npr.org"),
     ("news", "DW News", "dw.com/en"),
-    ("news", "AP News", "apnews.com"),
+    ("news", "The Conversation", "theconversation.com/global"),  # was AP News (403)
     ("tech", "Tweakers", "tweakers.net"),
     ("tech", "Hacker News", "news.ycombinator.com"),
     ("tech", "Lobsters", "lobste.rs"),
@@ -70,7 +70,7 @@ SITES = [
     ("tech", "Heise", "heise.de"),
     ("tech", "GitHub", "github.com/mactjaap/mini_browser"),
     ("tech", "Wikipedia", "en.wikipedia.org/wiki/ESP32"),
-    ("tech", "Stack Overflow", "stackoverflow.com/questions/tagged/esp32"),
+    ("tech", "Slashdot", "slashdot.org"),        # was Stack Overflow (403)
 ]
 
 COOKIE_WORDS = ("cookie", "consent", "toestemming", "akkoord", "accept all",

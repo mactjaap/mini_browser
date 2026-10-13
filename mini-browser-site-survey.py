@@ -466,7 +466,11 @@ def survey_site(reg, badge, group, name, address):
     head = "\n".join(content[:60]).lower()
     if any(w in head for w in COOKIE_WORDS):
         flags.append("cookie")
-    if any(w in low for w in JS_WORDS) or (row["status"] == "200" and int(row["text"]) < 400):
+    # "js": the page needs JavaScript.  Many readable pages (forums, DW News)
+    # also print "JavaScript is disabled ..." as a notice, so the words only
+    # count when little text came through.
+    text_len = int(row["text"])
+    if (any(w in low for w in JS_WORDS) and text_len < 2000) or (row["status"] == "200" and text_len < 400):
         flags.append("js")
     row["flags"] = " ".join(flags)
     row["seconds"] = f"{time.monotonic() - started:.0f}"
